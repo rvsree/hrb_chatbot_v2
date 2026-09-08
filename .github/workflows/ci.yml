@@ -2,9 +2,10 @@ name: CI
 
 # Runs on every push and PR, on every branch - no AWS credentials are needed
 # here at all, deliberately: this workflow only proves the app still
-# imports and the Docker image still builds, neither of which touches AWS.
-# Deployment (deploy.yml) is the only workflow that needs real credentials,
-# and it's scoped to main only - see that file for why.
+# imports, the test suite still passes, and the Docker image still builds
+# - none of which touches AWS. Deployment (deploy.yml) is the only
+# workflow that needs real credentials, and it's scoped to main only -
+# see that file for why.
 on:
   push:
     branches: ["**"]
@@ -12,8 +13,8 @@ on:
     branches: ["main"]
 
 jobs:
-  import-check:
-    name: App imports cleanly
+  test:
+    name: Test suite
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,14 +24,21 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Import the app
-        # No test suite exists yet (see docs/BACKLOG.md) - this is the
-        # cheapest real regression check available today: a broken import
-        # (a bad merge, a missing dependency, a circular import) fails
-        # loudly here instead of silently at the next deploy.
+        # Cheapest possible check, run first: a broken import (a bad
+        # merge, a missing dependency, a circular import) fails loudly
+        # here instead of silently at the next deploy, before spending
+        # time running the full suite below.
         run: python -c "import src.hrb_chatbot.main"
+
+      - name: Run the test suite
+        # No test here needs an API key or network call (see
+        # docs/TESTING-GUIDE.md) - every one runs against a fake client,
+        # so this step needs no secrets, matching this whole workflow's
+        # "no AWS credentials at all" design.
+        run: python -m pytest -v
 
   docker-build:
     name: Docker image builds
