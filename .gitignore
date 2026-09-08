@@ -1,0 +1,31 @@
+# Secrets - never commit real API keys
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+
+# IDE
+.idea/
+*.iml
+
+# Runtime data - generated locally, not source code (uploaded files, ChromaDB's
+# persistent binary index, SQLite metadata db). resources/kb_docs/ is the
+# source-controlled sample set; data/uploads/ is just a runtime copy of it.
+data/
+*.sqlite3
+uvicorn.log
+
+# Microsoft Word lock files - regenerated every time a .docx is opened, never
+# real content. Keeps reappearing if these get opened again - excluded
+# permanently rather than deleted by hand each time.
+~$*.docx

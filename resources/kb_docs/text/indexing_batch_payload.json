@@ -1,0 +1,88 @@
+{
+    "files": [
+        {
+            "filename": "JPMC Healthcare Benefits.pdf",
+            "namespace": "hr-benefits",
+            "title": "Health Benefits",
+            "tags": "healthcare, medical, dental, vision",
+            "chunk_size": 1000,
+            "chunk_overlap": 150,
+            "chunk_profile": "sentence",
+            "doc_type": "application/pdf",
+            "language": "en",
+            "model_version": "text-embedding-3-small",
+            "model_dim": 1536
+        },		
+        {
+            "filename": "JPMC Empower 401(k) Savings Plan.pdf",
+            "namespace": "hr-benefits",
+            "title": "401k Savings Plan",
+            "tags": "401k, savings",
+            "chunk_size": 1000,
+            "chunk_overlap": 150,
+            "chunk_profile": "sentence",
+            "doc_type": "application/pdf",
+            "language": "en",
+            "model_version": "text-embedding-3-small",
+            "model_dim": 1536
+        },	
+		{
+            "filename": "JPMC Guild Tuition Assistance.pdf",
+            "namespace": "hr-benefits",
+            "title": "Guild Tuition Assistance",
+            "tags": "tuition assistance",
+            "chunk_size": 1000,
+            "chunk_overlap": 150,
+            "chunk_profile": "sentence",
+            "doc_type": "application/pdf",
+            "language": "en",
+            "model_version": "text-embedding-3-small",
+            "model_dim": 1536
+        },
+        {
+            "filename": "JPMC Paid TimeOff.pdf",
+            "namespace": "hr-benefits",
+            "title": "Timeoff Policies",
+            "tags": "timeoff, leave",
+            "chunk_size": 1000,
+            "chunk_overlap": 150,
+            "chunk_profile": "sentence",
+            "doc_type": "application/pdf",
+            "language": "en",
+            "model_version": "text-embedding-3-small",
+            "model_dim": 1536
+        },
+        {
+            "filename": "JPMC Unpaid TimeOff.pdf",
+            "namespace": "hr-benefits",
+            "title": "Timeoff Policies",
+            "tags": "timeoff, leave",
+            "chunk_size": 1000,
+            "chunk_overlap": 150,
+            "chunk_profile": "sentence",
+            "doc_type": "application/pdf",
+            "language": "en",
+            "model_version": "text-embedding-3-small",
+            "model_dim": 1536
+        },
+        {
+            "filename": "JPMC Sedgwick Unpaid Timeoff.pdf",
+            "namespace": "hr-benefits",
+            "title": "Sedgwick Leave Policies",
+            "tags": "sedgwick, timeoff, leave",
+            "chunk_size": 1000,
+            "chunk_overlap": 150,
+            "chunk_profile": "sentence",
+            "doc_type": "application/pdf",
+            "language": "en",
+            "model_version": "text-embedding-3-small",
+            "model_dim": 1536
+        }	
+    ],
+    "strategy": "auto",
+    "notify_on_complete": false,
+    "metadata": {
+        "uploaded_by": "admin",
+        "upload_reason": "policy_update_2024"
+    }
+}
