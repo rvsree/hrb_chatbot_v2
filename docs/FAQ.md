@@ -5,9 +5,12 @@ this project actually does today** (verified against the real code, not
 assumed) and **the broader answer** (what a production system typically
 does, and why) - written so the two are never confused with each other.
 Use this list itself as an interview prep checklist: each heading below is
-a question worth being able to answer cold. Section 4 switches to a mock
-Q&A format specifically for performance and evaluation-metric questions,
-the kind an FDE interview round tends to probe hardest.
+a question worth being able to answer cold. Sections 4 and 5 switch to a
+mock-interview Q&A format for performance and evaluation-metric
+questions - golden datasets, A/B testing, eval tooling, and (section 5's
+closing table) a real diagnostic framework for turning "the metric is bad"
+into "here's the specific layer to fix" - the kind of question an FDE
+interview round tends to probe hardest.
 
 ---
 
@@ -269,3 +272,113 @@ enough to compute a real Precision@K/Recall@K today - extending the
 golden dataset with chunk-level ground truth (or the specific sentence/
 section a fact came from) is the concrete next step before those metrics
 could actually be computed here, not just defined.
+
+---
+
+## 5. Mock interview, continued: golden datasets, A/B testing, eval tooling, and where to actually fix a bad metric
+
+### "In your own words - what is a golden dataset, and what's it actually for?"
+
+A fixed, hand-curated set of (input, expected output) pairs that acts as
+ground truth - the thing every future change gets measured against
+instead of eyeballing "does this feel better." Without one, "I improved
+the prompt" is a feeling; with one, it's "Precision@3 went from 0.62 to
+0.71 on the same 22 questions, and none of the other 21 regressed."
+
+Concretely, this project's own
+`resources/golden_dataset/golden_dataset.json` is one: 22 cases, each
+with a real question, the document it should be grounded in, and either
+an expected answer/keywords or (for the adversarial cases) an explicit
+expectation that the system *shouldn't* confidently answer at all. Every
+fact in it was pulled from the real PDF text, not invented - a golden
+dataset built from guessed answers is worse than no golden dataset,
+because it fails silently: a wrong "expected" answer makes a *correct*
+system look broken.
+
+**Use case**: regression testing. Change `chunk_size` from 1000 to 500,
+rerun all 22 cases, compare. If case 3 got better but case 17 (which used
+to retrieve cleanly) now fails, you've caught a real trade-off *before*
+it ships, not after a user complains that a previously-working question
+now gets a wrong answer.
+
+### "How would A/B testing actually work here, concretely - not just 'try two things and see'?"
+
+Two flavors, and it matters which one you mean:
+
+- **Offline A/B (evaluation-time)** - run configuration A and
+  configuration B against the *same* golden dataset, compare a metric
+  deterministically, no live users involved. This is what
+  `tests/hrb_chatbot/test_ab_testing_demo.py` demonstrates the shape of
+  today (chunk_size 300 vs. 1000, comparing chunk count) - swap the metric
+  for something like average Precision@3 across all 22 golden-dataset
+  cases once retrieval is real, and the same test structure holds.
+  Fast, cheap, repeatable - the right place to start.
+- **Online A/B (production traffic)** - route a percentage of *real*
+  user queries to variant B, measure a real outcome (thumbs-up rate,
+  follow-up-question rate, session abandonment), and check the difference
+  is bigger than random noise (a t-test, or something simpler like a
+  confidence interval on the difference) before trusting it. Needs real
+  traffic volume to mean anything - not something a six-document, single-
+  user project like this one has yet, but the natural next step once it
+  does.
+
+**Concrete example use case for this project**: comparing
+`text-embedding-3-small` (1536 dimensions, cheaper) against
+`text-embedding-3-large` (3072 dimensions, pricier) - offline A/B first
+(does Recall@5 actually improve enough on the golden dataset to justify
+2x the embedding cost and needing to re-index everything?), and only
+then, if it's genuinely close, consider an online test.
+
+### "What eval scoring methods or libraries would you actually use?"
+
+Two families, and they trade off cost against nuance:
+
+- **Deterministic / rule-based** - no LLM call, fast, cheap, but rigid.
+  Exact match, keyword/substring presence (exactly what
+  `expected_keywords` in this project's golden dataset already gives you
+  for free), or embedding-similarity between the generated answer and a
+  reference answer (catches paraphrases exact-match would miss, but
+  "similar wording" isn't the same claim as "correct").
+- **LLM-as-judge** - a second model call scores faithfulness,
+  completeness, or relevance against a rubric. More flexible, catches
+  what keyword-matching can't, but costs real money per evaluation run
+  and needs its own calibration (a judge model can be inconsistent
+  between runs, or biased toward longer/more confident-sounding answers).
+
+**Libraries actually built for this**: **RAGAS** is the one purpose-built
+for RAG specifically - faithfulness, answer relevancy, context precision,
+and context recall as first-class metrics, and it's worth naming
+by name in an interview because it's the closest thing to an industry
+standard here. **DeepEval** and **TruLens** cover similar ground with
+different integration styles. **LangSmith's** own dataset + evaluator
+framework is the natural fit *for this project specifically*, since
+LangSmith tracing is already the planned next step for the logging just
+added (`call_logger.py`) - the same traces LangSmith would capture are
+what an evaluator would score. For plain retrieval metrics once
+chunk-level labels exist (see question 3 above), scikit-learn's
+`precision_score`/`recall_score`/`f1_score` are enough - no RAG-specific
+library needed for that part.
+
+### "Given a metric that's bad, how do you know whether to fix chunking, retrieval, generation, context engineering, or the LLM call itself?"
+
+This is the actual skill, more than knowing the metric definitions - a
+bad end-to-end score doesn't say *where* the problem is on its own. Work
+it as a decision tree, checking retrieval before generation, since a
+wrong answer built on the wrong context can't be fixed by prompting
+alone:
+
+| Symptom | Likely layer | What to check first | Example fix |
+|---|---|---|---|
+| Right chunk never shows up in top K at all | **Chunking / indexing** | Is the fact split awkwardly across two chunks? Is a chunk too large and noisy, diluting its embedding? | Adjust `chunk_size`/`chunk_overlap`, or switch to document-structure-based chunking so a section stays whole |
+| Right chunk shows up, but ranked low (e.g. #6 when `top_k=5`) | **Retrieval tuning** | Is `top_k` just too small? Would a reranker (cheap embedding search, then a slower/pricier rerank of the candidates) help? | Raise `top_k`, or add a rerank pass |
+| Right chunks retrieved (Precision@K looks fine), but the answer states facts not in them | **Generation / prompt** | Is the "only use the provided context" instruction actually strong enough? Is temperature too high? | Strengthen the anti-hallucination instruction (Workshop Module 4's own focus), lower `temperature` toward 0 |
+| Retrieval and faithfulness both fine, but a multi-part question only gets a partial answer | **Context engineering** | Is `top_k` too low to cover every sub-topic? Is the question being decomposed into sub-questions at all? | Raise `top_k`, or add query decomposition (Phase 5.1) so each sub-question gets its own retrieval pass |
+| Answer quality is fine but inconsistent across repeated runs of the same question | **LLM call parameters** | What's `temperature` actually set to? | This project already defaults `temperature=0.0` for exactly this reason - see `models/rag.py`'s own field description |
+| Everything above looks fine, but it's *slow* | **Measure, don't guess** | Which stage is actually slow - embedding, vector search, or generation? | Read the per-call duration logs `log_backend_call()` already produces (see question 4's performance answer) before touching anything |
+
+The general rule underneath the table: **retrieval problems have
+generation-layer symptoms, but generation problems never fix retrieval-
+layer causes** - a beautifully-prompted model still can't answer
+correctly from the wrong chunk. Check retrieval quality (would a human,
+looking only at the retrieved chunks, be able to answer the question at
+all?) before touching the prompt.
