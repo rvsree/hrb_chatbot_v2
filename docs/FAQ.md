@@ -5,7 +5,9 @@ this project actually does today** (verified against the real code, not
 assumed) and **the broader answer** (what a production system typically
 does, and why) - written so the two are never confused with each other.
 Use this list itself as an interview prep checklist: each heading below is
-a question worth being able to answer cold.
+a question worth being able to answer cold. Section 4 switches to a mock
+Q&A format specifically for performance and evaluation-metric questions,
+the kind an FDE interview round tends to probe hardest.
 
 ---
 
@@ -64,51 +66,36 @@ need different designs:
 
 ## 2. Where does metadata live, and which store is ideal for filtering during RAG search - is that the vector database?
 
-**What this project does today**: metadata lives in **two different
-places for two different jobs**, and conflating them is the most common
-mistake to watch for:
-- **Per-chunk metadata inside the vector store itself** (`document_id`,
-  `chunk_index`, and for Pinecone also the raw chunk text, since Pinecone
-  has no native "document" field - see `pinecone_client.py`'s docstring).
-  This is what `ChromaDBClient.query()`/`PineconeClient.query()`'s `where`
-  argument filters against - already wired through
-  `BaseVectorDBClient.query()`, not yet called with a real filter anywhere
-  since retrieval (Phase 6) isn't built yet.
-- **Per-document metadata in a separate relational store** (SQLite today,
-  Postgres as a tested alternative) - filename, upload status, timestamps,
-  and the `chunk_ids` list. This is application bookkeeping (what got
-  uploaded, is it indexed yet), not retrieval filtering - nothing here
-  is available inside a vector `where` clause today.
+Short version: **two stores, two different jobs** - not one store doing
+everything, and not really a choice between them.
 
-**Is the vector database the ideal place for metadata? Only for the
-subset that needs to filter the search itself.** The reason is
-mechanical, not stylistic: `where`/`filter` in Chroma and Pinecone is
-applied *during* the approximate-nearest-neighbor search (pre-filtering)
-- exactly the same operation that finds the closest vectors also excludes
-non-matching metadata in the same pass. Filtering *after* the vector
-search instead (fetch everything similar, then throw away rows that don't
-match in application code) wastes most of the ANN search's precision and
-is the wrong default, only excusable at very small scale.
+Right now, this project keeps metadata in two places. The vector store
+itself (Chroma or Pinecone) holds a small amount of metadata on every
+chunk - `document_id`, `chunk_index`, and for Pinecone the raw chunk text
+too, since Pinecone doesn't have a native "document" field the way Chroma
+does. Separately, SQLite (Postgres is the tested alternative) holds one
+row per *document* - filename, upload status, timestamps, the list of
+chunk ids. That second one is really just application bookkeeping - "what
+got uploaded, is it indexed yet" - not something retrieval reaches into.
 
-**Which store is ideal in a real-world application - a genuine "both,"
-not a pick-one**: vector databases are built for embeddings +
-similarity + light metadata filtering; they are not built for rich
-relational queries (joins, access-control lists, audit history, full-text
-search across metadata, complex aggregate queries). The common real-world
-pattern - and what this project's own two-store split already lines up
-with - is:
-- A **small, retrieval-relevant subset** of metadata duplicated into the
-  vector store's own per-chunk fields (category, effective_date,
-  document_id - whatever a query actually needs to filter on).
-- The **full, authoritative metadata** in a real database (Postgres here)
-  for everything else - ownership, access control, versioning, audit
-  trail, anything requiring a join or a complex query the vector store was
-  never designed to answer.
+So is the vector database the *right* place for metadata? For the bit
+that needs to filter the search itself - yes, has to be. `where`/`filter`
+in Chroma and Pinecone runs *during* the similarity search, not after -
+same pass that finds the closest vectors also throws out the ones that
+don't match your filter. Filter after the fact instead (pull back
+everything similar, then discard in your own code) and you've thrown away
+most of what made the ANN search fast in the first place.
 
-Frameworks like LlamaIndex formalize this same split explicitly (a
-`DocStore` + `IndexStore` + `VectorStore`, not one store doing everything)
-- this project's `metadata_store()` vs. `vector_store()` split in
-`db_gateway.py` is the same idea under different names.
+But for everything else - who owns a document, access control, audit
+history, anything that needs a join - that's not what a vector database
+is built for. So in practice you end up duplicating a *small*,
+retrieval-relevant slice of metadata into the vector store's own
+per-chunk fields (category, effective date, whatever a query needs to
+filter on), and keeping the full, authoritative record in a real
+database. That's exactly the split this project already has -
+`metadata_store()` vs. `vector_store()` in `db_gateway.py` - and it's the
+same idea LlamaIndex formalizes as a separate `DocStore` / `IndexStore` /
+`VectorStore` rather than one store trying to do all three jobs.
 
 ---
 
@@ -176,3 +163,109 @@ genuinely has more to sift through and precision genuinely degrades from
 unrelated categories crowding the top-k results. Building it now, on six
 documents, is really about learning the pattern before it's load-bearing -
 which is exactly the position this project is in.
+
+---
+
+## 4. Mock interview: performance, faithfulness, and evaluation metrics
+
+Framed as an actual FDE interview round would go - a question, then the
+answer you'd want to give, grounded in this project's real specifics
+wherever it can be rather than textbook definitions alone. Worth
+practicing saying these out loud, not just reading them.
+
+### "How would you go about optimizing this RAG pipeline's performance?"
+
+Break it into the three stages a request actually passes through, because
+"performance" means something different at each one:
+
+- **Indexing time** (happens once per document, not per query) - chunk
+  size/overlap trade off chunk count against context quality; embedding
+  calls batch naturally (`get_embeddings()` here already takes a list, not
+  one call per chunk - 45 chunks is one API call, not 45).
+- **Retrieval time** (per query, latency-sensitive) - `top_k` tuning
+  (fewer candidates = faster, but risks missing the right chunk),
+  metadata pre-filtering to shrink the search space before the ANN search
+  runs (see question 3), and eventually a reranker if embedding-similarity
+  alone isn't precise enough - a fast, cheap first pass followed by a
+  slower, more accurate rerank of just the top candidates.
+- **Generation time** (usually the biggest single cost) - a smaller/
+  cheaper model for query decomposition than for the final answer (you
+  don't need your best model to split a question into sub-questions),
+  and prompt caching (both OpenAI and Anthropic support this) if the same
+  system prompt or context repeats across calls.
+
+And the honest first move, before touching any of that: **you can't
+optimize what you can't see**. This project didn't have per-call latency
+visibility at all until a recent pass added `log_backend_call()` around
+every LLM and vector-store call - now every index or query logs its own
+duration (`embeddings.create succeeded in 2184.2ms`, `vector.upsert
+succeeded in 145.3ms`). That's the actual starting point for any real
+optimization work: measure which stage is slow *first*, then optimize
+that one, not the one that feels slow.
+
+### "What does 'faithfulness' or 'groundedness' mean, and how do you measure it?"
+
+A grounded (or faithful) answer is one where every claim traces back to
+the retrieved context - the model isn't allowed to add anything from its
+own training data, even if that added fact happens to be true. This
+matters most in exactly this project's domain: an HR benefits chatbot
+that confidently states a wrong number of parental-leave weeks is worse
+than one that says "I don't have that in my sources," because someone
+might actually act on it.
+
+How it's measured in practice: usually an **LLM-as-judge** pass - a
+second model call, given the generated answer and the retrieved chunks,
+asked to score whether each claim in the answer is actually supported by
+that context (sometimes phrased as an entailment check: does the context
+*entail* the claim, the same task NLI models are trained on). This
+project's golden dataset already has a head start on this - the
+adversarial cases (`edge-out-of-scope-01`, `edge-adversarial-numeric-01`)
+exist specifically to catch a model that answers confidently instead of
+admitting it doesn't know, or that agrees with a wrong number instead of
+correcting it.
+
+### "What does 'completeness' mean for a RAG answer, and how would you check it?"
+
+Different failure mode than faithfulness: a completely faithful answer
+can still be *incomplete* if the question had multiple parts and the
+answer only covers one. "How does parental leave interact with FMLA, and
+what happens to my 401(k) contributions during it?" has (at least) two
+sub-answers - a response that's 100% accurate about FMLA but silent on
+the 401(k) part is faithful and incomplete at the same time.
+
+Checking it usually means either an LLM-as-judge again (asked
+specifically "does this answer address every part of the question," not
+just "is this true"), or a checklist-style check against known required
+facts. This project's golden dataset already has a lightweight version of
+the second approach - `expected_keywords` on every case
+(`resources/golden_dataset/golden_dataset.json`) is exactly a checklist:
+a real evaluator would check what fraction of those keywords actually
+show up in the generated answer, which is a cheap, deterministic proxy
+for completeness before ever reaching for an LLM judge.
+
+### "Walk me through Precision@K, Recall@K, and F1 - and how would you compute them here?"
+
+For one query, at cutoff K:
+- **Precision@K** = (number of retrieved chunks in the top K that are
+  actually relevant) / K - "of what I handed the model, how much was
+  useful."
+- **Recall@K** = (number of relevant chunks retrieved in the top K) /
+  (total number of relevant chunks that exist anywhere in the corpus for
+  that query) - "of everything that mattered, how much did I actually
+  find."
+- **F1@K** = the harmonic mean of the two: `2 * Precision@K * Recall@K /
+  (Precision@K + Recall@K)` - useful when you need one number and don't
+  want to optimize one metric at the other's expense (retrieving
+  everything gets perfect recall and terrible precision; retrieving
+  nothing relevant-looking gets neither).
+
+**The honest gap, worth naming unprompted in an interview, not waiting to
+be asked**: computing these for real needs *chunk-level* relevance
+labels - for a given question, exactly which chunks are the right ones to
+retrieve. This project's golden dataset only labels `expected_source_document`
+(which *document* the answer should come from), not which specific chunks
+within it. That's enough to evaluate document-level retrieval, but not
+enough to compute a real Precision@K/Recall@K today - extending the
+golden dataset with chunk-level ground truth (or the specific sentence/
+section a fact came from) is the concrete next step before those metrics
+could actually be computed here, not just defined.
