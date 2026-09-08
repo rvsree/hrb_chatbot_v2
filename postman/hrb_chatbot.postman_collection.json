@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "HRB Chatbot API",
-    "description": "Every current REST endpoint (health, document upload/index, RAG query), happy path and edge cases side by side. Mirrors README_TEST.md - every case there was verified against a live server; the same claims apply here. Set the `base_url` variable to your local server (http://127.0.0.1:8093) or the deployed App Runner URL. Set `document_id` after running 'Upload - happy - single PDF' once, using its response.results[0].document_id.",
+    "description": "Every current REST endpoint (health, document upload/index, RAG query), happy path and edge cases side by side. Mirrors README_TEST.md - every case there was verified against a live server; the same claims apply here. Business endpoints live under /v1 (health deliberately does not - see docs/FAQ.md section 6). Set the `base_url` variable to your local server (http://127.0.0.1:8093) or the deployed App Runner URL. Set `document_id` after running 'Upload - happy - single PDF' once, using its response.results[0].document_id.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -149,7 +149,7 @@
           "name": "Happy - single PDF upload",
           "request": {
             "method": "POST",
-            "url": { "raw": "{{base_url}}/rag/documents", "host": ["{{base_url}}"], "path": ["rag", "documents"] },
+            "url": { "raw": "{{base_url}}/v1/rag/documents", "host": ["{{base_url}}"], "path": ["v1", "rag", "documents"] },
             "body": {
               "mode": "formdata",
               "formdata": [
@@ -163,7 +163,7 @@
           "name": "Happy - batch upload, two valid PDFs",
           "request": {
             "method": "POST",
-            "url": { "raw": "{{base_url}}/rag/documents", "host": ["{{base_url}}"], "path": ["rag", "documents"] },
+            "url": { "raw": "{{base_url}}/v1/rag/documents", "host": ["{{base_url}}"], "path": ["v1", "rag", "documents"] },
             "body": {
               "mode": "formdata",
               "formdata": [
@@ -177,7 +177,7 @@
           "name": "Edge - batch with one invalid file (must still 200, one rejected)",
           "request": {
             "method": "POST",
-            "url": { "raw": "{{base_url}}/rag/documents", "host": ["{{base_url}}"], "path": ["rag", "documents"] },
+            "url": { "raw": "{{base_url}}/v1/rag/documents", "host": ["{{base_url}}"], "path": ["v1", "rag", "documents"] },
             "body": {
               "mode": "formdata",
               "formdata": [
@@ -191,7 +191,7 @@
           "name": "Edge - no files field at all (expect 422)",
           "request": {
             "method": "POST",
-            "url": { "raw": "{{base_url}}/rag/documents", "host": ["{{base_url}}"], "path": ["rag", "documents"] },
+            "url": { "raw": "{{base_url}}/v1/rag/documents", "host": ["{{base_url}}"], "path": ["v1", "rag", "documents"] },
             "body": { "mode": "formdata", "formdata": [] }
           }
         }
@@ -204,7 +204,7 @@
           "name": "Happy - list all documents",
           "request": {
             "method": "GET",
-            "url": { "raw": "{{base_url}}/rag/documents", "host": ["{{base_url}}"], "path": ["rag", "documents"] }
+            "url": { "raw": "{{base_url}}/v1/rag/documents", "host": ["{{base_url}}"], "path": ["v1", "rag", "documents"] }
           }
         },
         {
@@ -212,8 +212,8 @@
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{base_url}}/rag/documents/{{document_id}}",
-              "host": ["{{base_url}}"], "path": ["rag", "documents", "{{document_id}}"]
+              "raw": "{{base_url}}/v1/rag/documents/{{document_id}}",
+              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "{{document_id}}"]
             }
           }
         },
@@ -222,8 +222,8 @@
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{base_url}}/rag/documents/does-not-exist",
-              "host": ["{{base_url}}"], "path": ["rag", "documents", "does-not-exist"]
+              "raw": "{{base_url}}/v1/rag/documents/does-not-exist",
+              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "does-not-exist"]
             }
           }
         },
@@ -232,8 +232,8 @@
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{base_url}}/rag/documents/{{document_id}}/index",
-              "host": ["{{base_url}}"], "path": ["rag", "documents", "{{document_id}}", "index"]
+              "raw": "{{base_url}}/v1/rag/documents/{{document_id}}/index",
+              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "{{document_id}}", "index"]
             }
           }
         },
@@ -242,8 +242,8 @@
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{base_url}}/rag/documents/{{document_id}}/index",
-              "host": ["{{base_url}}"], "path": ["rag", "documents", "{{document_id}}", "index"]
+              "raw": "{{base_url}}/v1/rag/documents/{{document_id}}/index",
+              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "{{document_id}}", "index"]
             },
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
@@ -257,8 +257,8 @@
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{base_url}}/rag/documents/{{document_id}}/index",
-              "host": ["{{base_url}}"], "path": ["rag", "documents", "{{document_id}}", "index"]
+              "raw": "{{base_url}}/v1/rag/documents/{{document_id}}/index",
+              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "{{document_id}}", "index"]
             },
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"chunk_size\": 200,\n  \"chunk_overlap\": 200\n}" }
@@ -269,8 +269,8 @@
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{base_url}}/rag/documents/{{document_id}}/index",
-              "host": ["{{base_url}}"], "path": ["rag", "documents", "{{document_id}}", "index"]
+              "raw": "{{base_url}}/v1/rag/documents/{{document_id}}/index",
+              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "{{document_id}}", "index"]
             },
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"chunk_size\": 50\n}" }
@@ -281,8 +281,8 @@
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{base_url}}/rag/documents/{{document_id}}/index",
-              "host": ["{{base_url}}"], "path": ["rag", "documents", "{{document_id}}", "index"]
+              "raw": "{{base_url}}/v1/rag/documents/{{document_id}}/index",
+              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "{{document_id}}", "index"]
             },
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"vector_db\": \"made_up_store\"\n}" }
@@ -293,8 +293,8 @@
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{base_url}}/rag/documents/does-not-exist/index",
-              "host": ["{{base_url}}"], "path": ["rag", "documents", "does-not-exist", "index"]
+              "raw": "{{base_url}}/v1/rag/documents/does-not-exist/index",
+              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "does-not-exist", "index"]
             }
           }
         }
@@ -307,7 +307,7 @@
           "name": "\"Happy\" for a stub - well-formed query (expect 501, names ai/rag_pipeline/pipeline.py)",
           "request": {
             "method": "POST",
-            "url": { "raw": "{{base_url}}/rag/query", "host": ["{{base_url}}"], "path": ["rag", "query"] },
+            "url": { "raw": "{{base_url}}/v1/rag/query", "host": ["{{base_url}}"], "path": ["v1", "rag", "query"] },
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
@@ -320,7 +320,7 @@
           "name": "Edge - empty query string (expect 422)",
           "request": {
             "method": "POST",
-            "url": { "raw": "{{base_url}}/rag/query", "host": ["{{base_url}}"], "path": ["rag", "query"] },
+            "url": { "raw": "{{base_url}}/v1/rag/query", "host": ["{{base_url}}"], "path": ["v1", "rag", "query"] },
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"query\": \"\"\n}" }
           }
@@ -329,7 +329,7 @@
           "name": "Edge - top_k out of range, 100 > max of 20 (expect 422)",
           "request": {
             "method": "POST",
-            "url": { "raw": "{{base_url}}/rag/query", "host": ["{{base_url}}"], "path": ["rag", "query"] },
+            "url": { "raw": "{{base_url}}/v1/rag/query", "host": ["{{base_url}}"], "path": ["v1", "rag", "query"] },
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"query\": \"test\",\n  \"top_k\": 100\n}" }
           }
@@ -338,9 +338,57 @@
           "name": "Edge - missing query field entirely (expect 422)",
           "request": {
             "method": "POST",
-            "url": { "raw": "{{base_url}}/rag/query", "host": ["{{base_url}}"], "path": ["rag", "query"] },
+            "url": { "raw": "{{base_url}}/v1/rag/query", "host": ["{{base_url}}"], "path": ["v1", "rag", "query"] },
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Standardization - idempotency, rate limiting, validation bounds",
+      "description": "See docs/FAQ.md section 6 for the full reasoning behind each of these.",
+      "item": [
+        {
+          "name": "Idempotency - upload with a key (run this request twice with the same key)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/v1/rag/documents", "host": ["{{base_url}}"], "path": ["v1", "rag", "documents"] },
+            "header": [{ "key": "Idempotency-Key", "value": "postman-demo-key-001" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "files", "type": "file", "src": "resources/kb_docs/JPMC Paid TimeOff.pdf" }
+              ]
+            },
+            "description": "Send this exact request twice (same Idempotency-Key header both times). The second response's results[0].document_id will match the first - a real upload never happened twice, the second call replayed the cached response. Change the Idempotency-Key value and resend to see a genuinely new document_id instead."
+          }
+        },
+        {
+          "name": "Edge - query over the 2000-character max_length (expect 422)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/v1/rag/query", "host": ["{{base_url}}"], "path": ["v1", "rag", "query"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"query\": \"{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}\"\n}" },
+            "description": "Postman's {{$randomLoremParagraphs}} dynamic variable generates enough text to exceed 2000 characters when repeated 10 times - confirms the max_length bound added in Phase 12 actually rejects an oversized query before it reaches the stub."
+          }
+        },
+        {
+          "name": "Edge - vector_db name over 50 characters (expect 422)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/v1/rag/query", "host": ["{{base_url}}"], "path": ["v1", "rag", "query"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"query\": \"test\",\n  \"vector_db\": \"this-is-a-deliberately-long-fake-vector-store-name-well-past-fifty-characters\"\n}" }
+          }
+        },
+        {
+          "name": "Error handling - unknown document id returns a clean, generic 404 (not a stack trace)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/v1/rag/documents/does-not-exist", "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "does-not-exist"] },
+            "description": "Every error response in this project has the same {\"error\": \"...\"} shape (json_error() in api/dependencies.py) regardless of which layer produced it - a 404 here looks structurally identical to a 500 from main.py's global exception handler, just with a different status code and message."
           }
         }
       ]

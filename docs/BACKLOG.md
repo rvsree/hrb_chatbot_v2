@@ -102,14 +102,68 @@ up, rather than marking it done in place here.
 - **Retry / circuit breaker.** No resilience exists for the OpenAI/Anthropic/
   OpenRouter calls or the ChromaDB calls. Same gap as the sibling project;
   same recommendation - a bounded, transient-failures-only retry at the
-  client layer, a circuit breaker as a separate later decision.
-- **Rate limiting / auth.** Nothing protects `POST /rag/query` once it
-  exists - and unlike the read-only endpoints, every call to it spends
-  tokens.
-- **Versioning.** No `/v1` prefix anywhere.
+  client layer, a circuit breaker as a separate later decision. **Not the
+  same thing as rate limiting below** - retry/circuit-breaker is about
+  *this app* handling a flaky backend gracefully; rate limiting is about
+  protecting this app *from* too many callers.
+- ~~**Rate limiting.**~~ Done 2026-09-08 -
+  `common/rate_limiting/rate_limiter.py`, a fixed-window in-memory limiter
+  applied via `Depends(enforce_rate_limit)` to every endpoint that writes
+  state or spends money (upload, index, query). Finally gives
+  `APP_RATE_LIMITING`/`APP_RATE_LIMIT_REQUESTS`/`APP_RATE_LIMIT_DURATION`
+  a real job - they'd been sitting in `.env` unread since the first
+  commit (see the "Orphan config" section below, now out of date on this
+  point). Single-process, in-memory only - resets on redeploy, and would
+  need a real shared store (Redis) the moment this app scales to more
+  than one instance - documented in the module's own docstring, not a
+  surprise to discover later.
+- **Auth** - still nothing. Genuinely deferred, not overlooked: this is a
+  single-user personal project today, and every other item on this list
+  (rate limiting, idempotency, versioning) was worth doing without waiting
+  for auth to exist first. Worth a real decision before this project ever
+  has more than one real user.
+- ~~**Versioning.**~~ Done 2026-09-08 - every business endpoint now lives
+  under `/v1` (`main.py`'s `include_router(..., prefix="/v1")`).
+  `GET /health` deliberately stays unversioned - a liveness/readiness
+  probe needs one stable path regardless of API version, matching how
+  AWS/Kubernetes health checks are conventionally exempted from an app's
+  own versioning scheme.
+- ~~**Idempotency.**~~ Done 2026-09-08 -
+  `common/idempotency/idempotency_store.py`, an `Idempotency-Key` header
+  (the same convention Stripe's API uses) on upload/index/query. Same
+  single-process, in-memory limitation as rate limiting above.
+- ~~**No app-level exception handler / possible info leak in error
+  responses.**~~ Fixed 2026-09-08. An audit found two real `json_error(...)`
+  calls that interpolated a caught exception's raw `str(error)` directly
+  into the client-facing message
+  (`routes_documents.py`'s index endpoint, `routes_query.py`'s query
+  endpoint) - a genuine info-leak risk (a stack-trace fragment, an
+  internal path, anything a library's own exception `__str__` happens to
+  include). Both now log the full detail server-side and return a
+  generic, safe message. `main.py` also gained a global
+  `@app.exception_handler(Exception)` as a last-resort safety net for
+  anything no individual route handler catches - confirmed by audit that
+  none existed before this.
+- ~~**No pre-flight backend-readiness check before spending money.**~~
+  Fixed 2026-09-08 for the one endpoint that has a real backend
+  dependency today - `index_document()` now checks (shallow, free -
+  `deep=False`) that the LLM provider and vector store are at least
+  configured *before* attempting the real chunk/embed/index call,
+  returning a clean 503 instead of letting a config problem surface as a
+  raw exception deep in the pipeline. **Deliberately not applied to the
+  query endpoint yet** - it's still a pure stub with no real backend call
+  to check readiness for, and gating it behind a real API key would break
+  in CI, which runs with no secrets at all (see
+  `docs/AWS-DEVOPS-RUNBOOK.md`). Add the same check there once Phase 6
+  makes a real call.
 - **Typed request/response/error contracts on every endpoint**, not just the
   ones built carefully - see `docs/CODING-STANDARDS.md` for the standard
-  this is meant to hold to going forward.
+  this is meant to hold to going forward. String fields on request models
+  now also carry both a `min_length` and a `max_length` where the
+  distinction matters (`RagQueryRequest.query`, `IndexRequest.vector_db`/
+  `embedding_model`) - a structural, size-based guardrail, not the
+  content-based (prompt-injection, PII) guardrails that remain Phase 7's
+  hand-written work.
 
 ## Data handling
 
@@ -138,11 +192,13 @@ up, rather than marking it done in place here.
 Checked every `.env` variable against the actual source - these are
 declared but read by nothing:
 
-- All eight `APP_*` settings (`APP_BASE_URL`, `APP_APP_NAME`,
-  `APP_ENVIRONMENT`, `APP_DEBUG`, `APP_CSRF_PROTECTION`,
-  `APP_RATE_LIMITING`, `APP_RATE_LIMIT_REQUESTS`,
-  `APP_RATE_LIMIT_DURATION`) - already tracked above as "`app_settings.py` /
-  `app_gateway.py` don't exist yet."
+- `APP_BASE_URL`, `APP_APP_NAME`, `APP_ENVIRONMENT`, `APP_DEBUG`,
+  `APP_CSRF_PROTECTION` - still orphaned, tracked above as
+  "`app_settings.py`/`app_gateway.py` don't exist yet."
+- ~~`APP_RATE_LIMITING`, `APP_RATE_LIMIT_REQUESTS`,
+  `APP_RATE_LIMIT_DURATION`~~ - no longer orphaned as of 2026-09-08, now
+  read by `common/rate_limiting/rate_limiter.py` - see the "Rate limiting"
+  entry above.
 - `OPENAI_RAG_MODEL` - not read anywhere; only `OPENAI_CHAT_MODEL` and
   `OPENAI_EMBED_MODEL` are.
 - `ANTHROPIC_LLM_ENABLED` - not read anywhere; nothing gates on it.

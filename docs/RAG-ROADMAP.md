@@ -49,7 +49,7 @@ in `health_checks.py`.
 
 ## Status at a glance
 
-Updated 2026-09-07. This table is the fast-read summary; the full "Phases"
+Updated 2026-09-08. This table is the fast-read summary; the full "Phases"
 section below it is the authoritative detail - if the two ever disagree,
 the detail below is correct and this table is stale, not the other way
 around.
@@ -73,17 +73,23 @@ around.
 | 8 — Golden dataset + evaluations + A/B | Hand-written | 🚧 Golden dataset done (override, 2026-09-08); evaluations/A/B harness still 📋 planned |
 | 9 — Bedrock as an LLM provider | Claude Code | ✅ Done |
 | 10 — Docker + AWS deployment (App Runner) | Claude Code | ✅ Done - `RUNNING`, verified live (shallow + deep health, real Pinecone query); Postgres/Neon leg still pending the user's Neon signup (documented compromise, not a blocker) |
-| 11 — CI/CD + GitHub | Claude Code | ✅ CI verified passing on GitHub Actions; deploy workflow written but unexercised - needs `main` merge + 2 GitHub Secrets still pending from the user |
+| 11 — CI/CD + GitHub | Claude Code | ✅ CI verified passing on GitHub Actions (pytest included as of Phase 12); deploy workflow written but unexercised - needs `main` merge + 2 GitHub Secrets still pending from the user |
+| 12 — REST API contract-first hardening | Claude Code | ✅ Done - versioning, idempotency, rate limiting, validation bounds, error handling, pre-flight checks, all verified live and unit-tested |
 
 **If you're picking this up after a restart with no session memory**, the
 one thing to check first is Phase 10's actual live AWS state - it does not
 show up by reading code, only by querying AWS directly:
 ```
 aws apprunner describe-service --region us-east-1 \
-  --service-arn arn:aws:apprunner:us-east-1:418884736369:service/hrb-chatbot/63fcfce613a5425ab43cf8fd8dad8228
+  --service-arn arn:aws:apprunner:us-east-1:418884736369:service/hrb-chatbot/f957548202f343aa8ca91f341d71d85a
 ```
 (needs `aws-cli` ≥ 2.something-with-apprunner, or run the equivalent
 `boto3` call - see Phase 10 below for why the CLI here may still be too old).
+Note the ARN above is the **final, working** service - two earlier attempts
+(`63fcfce613a5425ab43cf8fd8dad8228`, `09f425485ee646379d68acc950570bcd`)
+were deleted after `CREATE_FAILED` and are dead references if you find them
+anywhere else in this file's own history below - see Phase 10's "Three real
+bugs found the hard way" for why.
 
 ## Phases
 
@@ -481,6 +487,54 @@ later, separate wave once this core is solid.
   it stopped matching real keys at all. Both were only found by testing the
   hook against realistically-shaped fake keys for all five providers before
   trusting it - reasoning about the regex alone missed both.
+
+- [x] **Phase 12 (Claude Code) — REST API contract-first hardening.**
+  Requested directly: versioning, idempotency, rate limiting, request
+  validation bounds, graceful error handling, structural guardrails, a
+  centralized validation point, and pre-flight backend-readiness checks
+  before spending money - implemented for real, not just discussed, and
+  documented in depth in `docs/FAQ.md`'s section 6.
+
+  **Versioning**: every business endpoint now under `/v1`
+  (`main.py`'s `include_router(..., prefix="/v1")`); `GET /health`
+  deliberately stays unversioned, matching how a liveness/readiness probe
+  is conventionally exempted from an API's own version scheme.
+
+  **Idempotency**: `common/idempotency/idempotency_store.py`, an
+  `Idempotency-Key` header (Stripe's own convention) on upload/index/query.
+  Verified live, not just unit-tested: uploading the same PDF twice with
+  the same key returns the *same* `document_id` both times.
+
+  **Rate limiting**: `common/rate_limiting/rate_limiter.py`, fixed-window,
+  per-client-IP, applied via `Depends(enforce_rate_limit)` to every
+  endpoint that writes state or spends money. Finally gives
+  `APP_RATE_LIMITING`/`APP_RATE_LIMIT_REQUESTS`/`APP_RATE_LIMIT_DURATION` a
+  real job - orphan `.env` config since this project's first commit (see
+  `docs/BACKLOG.md`).
+
+  **Request validation**: an audit found `RagQueryRequest.query` had a
+  `min_length` but no `max_length` at all - fixed with a 2000-character
+  cap, plus matching bounds on `vector_db`/`model_name`/`embedding_model`.
+
+  **Error handling**: the same audit found two `json_error(...)` calls
+  interpolating a caught exception's raw `str(error)` directly into the
+  client-facing message - a real info-leak risk. Both now log full detail
+  server-side and return a generic message. `main.py` also gained a global
+  `@app.exception_handler(Exception)`, confirmed absent before this.
+
+  **Pre-flight check before spending money**: `index_document()` now
+  checks (shallow, free) that the LLM provider and vector store are
+  configured before attempting the real pipeline call, returning a clean
+  503 instead of a raw exception deep in the stack. **Deliberately not**
+  applied to the query endpoint - it's still a pure stub, and gating it
+  behind a real API key would break in CI, which runs with zero secrets
+  (see `docs/AWS-DEVOPS-RUNBOOK.md`) - add the same check there once
+  Phase 6 makes a real call.
+
+  Both single-process, in-memory limitations (idempotency, rate limiting)
+  are documented in their own modules' docstrings, not a surprise to
+  discover later - a real shared store (Redis) is the fix the moment this
+  app ever runs as more than one instance.
 
 Explicitly deferred to a later, separate wave - not part of the above:
 **ReAct multi-agents, MCP tools, caching.**

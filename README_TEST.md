@@ -9,7 +9,7 @@ the same cases against the deployed instance.
 Cases are grouped **happy path** (the normal, working case) and **unhappy /
 edge** (what should happen when something is wrong) per endpoint, because a
 contract that only documents success hides exactly the behavior callers rely
-on when things go wrong - a `POST /rag/documents` that silently 500s on an
+on when things go wrong - a `POST /v1/rag/documents` that silently 500s on an
 empty batch is a worse API than one that returns a clear 4xx, and the only
 way to know which this one does is to have actually tried it.
 
@@ -26,7 +26,7 @@ resources/kb_docs/JPMC Unpaid TimeOff.pdf
 ```
 
 No case here spends money by accident - `?deep=true` on `/health` and
-`POST /rag/documents/{id}/index` are the only ones that call a real
+`POST /v1/rag/documents/{id}/index` are the only ones that call a real
 provider, called out explicitly where they appear.
 
 **Git Bash note**: every case below was run and verified against a live
@@ -97,14 +97,14 @@ currently exercise).
 
 ---
 
-## 2. Document upload - `POST /rag/documents`
+## 2. Document upload - `POST /v1/rag/documents`
 
 ### Happy path
 
 **2.1 Upload a single real PDF**
 ```
 curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" \
-  http://127.0.0.1:8093/rag/documents
+  http://127.0.0.1:8093/v1/rag/documents
 ```
 Expect `200`, `uploaded_count: 1`, `rejected_count: 0`, one `results` entry
 with `status: "uploaded"` and a real `document_id` (a hex uuid). Save that id
@@ -115,7 +115,7 @@ with `status: "uploaded"` and a real `document_id` (a hex uuid). Save that id
 curl \
   -F "files=@resources/kb_docs/JPMC Paid TimeOff.pdf;type=application/pdf" \
   -F "files=@resources/kb_docs/JPMC Guild Tuition Assistance.pdf;type=application/pdf" \
-  http://127.0.0.1:8093/rag/documents
+  http://127.0.0.1:8093/v1/rag/documents
 ```
 Expect `200`, `uploaded_count: 2`, `rejected_count: 0`, two `results` entries
 in the order given.
@@ -128,7 +128,7 @@ echo "not a pdf" > not_a_pdf_scratch.txt
 curl \
   -F "files=@resources/kb_docs/JPMC Unpaid TimeOff.pdf;type=application/pdf" \
   -F "files=@not_a_pdf_scratch.txt;type=text/plain" \
-  http://127.0.0.1:8093/rag/documents
+  http://127.0.0.1:8093/v1/rag/documents
 rm not_a_pdf_scratch.txt
 ```
 Expect `200` (not a batch-level failure), `uploaded_count: 1`,
@@ -140,7 +140,7 @@ the single most important behavior to verify in this endpoint - see
 **2.4 Empty file**
 ```
 touch empty_scratch.pdf
-curl -F "files=@empty_scratch.pdf;type=application/pdf" http://127.0.0.1:8093/rag/documents
+curl -F "files=@empty_scratch.pdf;type=application/pdf" http://127.0.0.1:8093/v1/rag/documents
 rm empty_scratch.pdf
 ```
 Verified live: `200`, `rejected_count: 1`, error `"File is empty"`.
@@ -148,7 +148,7 @@ Verified live: `200`, `rejected_count: 1`, error `"File is empty"`.
 **2.5 File over the 20MB limit**
 ```
 head -c 21000000 /dev/urandom > too_big_scratch.pdf
-curl -F "files=@too_big_scratch.pdf;type=application/pdf" http://127.0.0.1:8093/rag/documents
+curl -F "files=@too_big_scratch.pdf;type=application/pdf" http://127.0.0.1:8093/v1/rag/documents
 rm too_big_scratch.pdf
 ```
 Verified live: `200`, `rejected_count: 1`, error
@@ -159,26 +159,26 @@ PDF content - both would reject it either way.)
 
 **2.6 No `files` field at all**
 ```
-curl -X POST http://127.0.0.1:8093/rag/documents
+curl -X POST http://127.0.0.1:8093/v1/rag/documents
 ```
 Expect `422` (FastAPI's own request-validation error, before this project's
 code ever runs) - `files` is a required field with no default.
 
 ---
 
-## 3. List / get documents - `GET /rag/documents`, `GET /rag/documents/{id}`
+## 3. List / get documents - `GET /v1/rag/documents`, `GET /v1/rag/documents/{id}`
 
 ### Happy path
 
 **3.1 List every uploaded document**
 ```
-curl http://127.0.0.1:8093/rag/documents
+curl http://127.0.0.1:8093/v1/rag/documents
 ```
 Expect `200`, `count` matching the real number of rows, newest first.
 
 **3.2 Get one document by its real id** (use an id from section 2)
 ```
-curl http://127.0.0.1:8093/rag/documents/<document_id>
+curl http://127.0.0.1:8093/v1/rag/documents/<document_id>
 ```
 Expect `200` and the full `DocumentRecord` - `status` will be `"uploaded"`
 until section 4 indexes it, `chunk_ids: null` until then too.
@@ -187,7 +187,7 @@ until section 4 indexes it, `chunk_ids: null` until then too.
 
 **3.3 Unknown document id**
 ```
-curl -i http://127.0.0.1:8093/rag/documents/does-not-exist
+curl -i http://127.0.0.1:8093/v1/rag/documents/does-not-exist
 ```
 Expect `404`, body `{"error": "Unknown document 'does-not-exist'"}` -
 `-i` here so the status code is visible, since the body alone looks the
@@ -195,7 +195,7 @@ same shape as a real error would.
 
 **3.4 Path-traversal-looking id**
 ```
-curl -i "http://127.0.0.1:8093/rag/documents/..%2F..%2Fetc%2Fpasswd"
+curl -i "http://127.0.0.1:8093/v1/rag/documents/..%2F..%2Fetc%2Fpasswd"
 ```
 Verified live: expect `404` with FastAPI's own generic
 `{"detail":"Not Found"}` - the encoded slashes never even reach this
@@ -207,7 +207,7 @@ two different 404s for two different reasons, not the same code path.
 
 ---
 
-## 4. Index a document - `POST /rag/documents/{id}/index`
+## 4. Index a document - `POST /v1/rag/documents/{id}/index`
 
 **Spends money**: this calls the real embedding model
 (`OPENAI_EMBED_MODEL`, default `text-embedding-3-small`) for every chunk of
@@ -218,7 +218,7 @@ every file in `resources/kb_docs/` without meaning to.
 
 **4.1 Index with every default (no body at all)**
 ```
-curl -X POST http://127.0.0.1:8093/rag/documents/<document_id>/index
+curl -X POST http://127.0.0.1:8093/v1/rag/documents/<document_id>/index
 ```
 Expect `200`, `action: "insert"` (first time), `chunks_indexed` > 0,
 `chunks_removed: 0`, and `vector_db`/`embedding_model`/`chunk_size`/
@@ -226,7 +226,7 @@ Expect `200`, `action: "insert"` (first time), `chunks_indexed` > 0,
 
 **4.2 Re-index the same document (this must report `update`, not `insert`)**
 ```
-curl -X POST http://127.0.0.1:8093/rag/documents/<document_id>/index
+curl -X POST http://127.0.0.1:8093/v1/rag/documents/<document_id>/index
 ```
 Expect `200`, `action: "update"` this time - confirms the insert/update
 logic in `vector_indexer.py` is actually distinguishing the two cases, not
@@ -234,7 +234,7 @@ just always inserting.
 
 **4.3 Per-call override of chunk size/overlap and vector store**
 ```
-curl -X POST http://127.0.0.1:8093/rag/documents/<document_id>/index \
+curl -X POST http://127.0.0.1:8093/v1/rag/documents/<document_id>/index \
   -H "Content-Type: application/json" \
   -d '{"chunk_size": 500, "chunk_overlap": 50, "vector_db": "chromadb"}'
 ```
@@ -246,7 +246,7 @@ override is real per-call config, not just accepted and ignored.
 
 **4.4 Index an unknown document id**
 ```
-curl -i -X POST http://127.0.0.1:8093/rag/documents/does-not-exist/index
+curl -i -X POST http://127.0.0.1:8093/v1/rag/documents/does-not-exist/index
 ```
 Expect `404` before any embedding call is even attempted - confirm this by
 checking your OpenAI usage dashboard doesn't move, not just by reading the
@@ -254,7 +254,7 @@ status code.
 
 **4.5 `chunk_overlap >= chunk_size` (must be rejected before any provider call)**
 ```
-curl -i -X POST http://127.0.0.1:8093/rag/documents/<document_id>/index \
+curl -i -X POST http://127.0.0.1:8093/v1/rag/documents/<document_id>/index \
   -H "Content-Type: application/json" \
   -d '{"chunk_size": 200, "chunk_overlap": 200}'
 ```
@@ -263,7 +263,7 @@ rejects this at the request-parsing layer, before the route body even runs.
 
 **4.6 `chunk_size` outside the allowed range**
 ```
-curl -i -X POST http://127.0.0.1:8093/rag/documents/<document_id>/index \
+curl -i -X POST http://127.0.0.1:8093/v1/rag/documents/<document_id>/index \
   -H "Content-Type: application/json" \
   -d '{"chunk_size": 50}'
 ```
@@ -271,7 +271,7 @@ Expect `422` - `chunk_size` has `ge=100` in the model, `50` is below it.
 
 **4.7 Unknown `vector_db` name**
 ```
-curl -i -X POST http://127.0.0.1:8093/rag/documents/<document_id>/index \
+curl -i -X POST http://127.0.0.1:8093/v1/rag/documents/<document_id>/index \
   -H "Content-Type: application/json" \
   -d '{"vector_db": "made_up_store"}'
 ```
@@ -282,7 +282,7 @@ because this path goes through `vector_store(provider=...)` directly.
 
 ---
 
-## 5. RAG query - `POST /rag/query`
+## 5. RAG query - `POST /v1/rag/query`
 
 **Not implemented yet** - Phase 6 (retrieval + grounded generation) is
 hand-written and still 📋 planned, per `docs/RAG-ROADMAP.md`. Every case
@@ -292,7 +292,7 @@ below documents today's stubbed behavior, which is intentional, not a bug.
 
 **5.1 A well-formed query against the stub**
 ```
-curl -i -X POST http://127.0.0.1:8093/rag/query \
+curl -i -X POST http://127.0.0.1:8093/v1/rag/query \
   -H "Content-Type: application/json" \
   -d '{"query": "How many vacation days do I get?", "top_k": 5}'
 ```
@@ -305,7 +305,7 @@ lands, this exact call becomes the real happy-path case with a genuine
 
 **5.2 Empty query string**
 ```
-curl -i -X POST http://127.0.0.1:8093/rag/query \
+curl -i -X POST http://127.0.0.1:8093/v1/rag/query \
   -H "Content-Type: application/json" \
   -d '{"query": ""}'
 ```
@@ -315,7 +315,7 @@ to exist.
 
 **5.3 `top_k` outside the allowed range**
 ```
-curl -i -X POST http://127.0.0.1:8093/rag/query \
+curl -i -X POST http://127.0.0.1:8093/v1/rag/query \
   -H "Content-Type: application/json" \
   -d '{"query": "test", "top_k": 100}'
 ```
@@ -323,7 +323,7 @@ Expect `422` - `top_k` has `le=20`.
 
 **5.4 Missing `query` field entirely**
 ```
-curl -i -X POST http://127.0.0.1:8093/rag/query -H "Content-Type: application/json" -d '{}'
+curl -i -X POST http://127.0.0.1:8093/v1/rag/query -H "Content-Type: application/json" -d '{}'
 ```
 Expect `422` - `query` has no default.
 
@@ -345,7 +345,7 @@ This is a **one-time override** of Phase 8's hand-written boundary in
 Phase 4 (chunking/embedding/indexing) was, not a new precedent for the rest
 of Phase 8 (retrieval metrics, LLM-as-judge evaluation, A/B testing
 infrastructure), which remain hand-written and unbuilt. The dataset can't
-be exercised yet either - `POST /rag/query` is still the Phase 6 stub (see
+be exercised yet either - `POST /v1/rag/query` is still the Phase 6 stub (see
 case 5.1 above) - it exists now so it's ready the moment Phase 6 lands.
 
 For Postman-based manual testing, `postman/hrb_chatbot.postman_collection.json`

@@ -5,12 +5,13 @@ this project actually does today** (verified against the real code, not
 assumed) and **the broader answer** (what a production system typically
 does, and why) - written so the two are never confused with each other.
 Use this list itself as an interview prep checklist: each heading below is
-a question worth being able to answer cold. Sections 4 and 5 switch to a
-mock-interview Q&A format for performance and evaluation-metric
-questions - golden datasets, A/B testing, eval tooling, and (section 5's
-closing table) a real diagnostic framework for turning "the metric is bad"
-into "here's the specific layer to fix" - the kind of question an FDE
-interview round tends to probe hardest.
+a question worth being able to answer cold. Sections 4 through 6 switch to
+a mock-interview Q&A format: performance and evaluation metrics (4),
+golden datasets/A/B testing/eval tooling plus a diagnostic table for
+turning "the metric is bad" into "here's the specific layer to fix" (5),
+and REST API contract-first design - versioning, idempotency, rate
+limiting, validation, error handling, guardrails, pre-flight checks (6) -
+the kind of question an FDE interview round tends to probe hardest.
 
 ---
 
@@ -18,7 +19,7 @@ interview round tends to probe hardest.
 
 **What this project does today**: full re-index only. `ai/doc_processing/indexing/vector_indexer.py`'s
 `write_chunks()` re-chunks, re-embeds, and re-upserts the *entire* document
-every time `POST /rag/documents/{id}/index` is called again - there is no
+every time `POST /v1/rag/documents/{id}/index` is called again - there is no
 concept of "only section 3 changed, only re-embed section 3." Deterministic
 chunk ids (`f"{document_id}:{chunk_index}"`) mean re-upserting naturally
 overwrites chunks that still exist at the same position; a real
@@ -105,7 +106,7 @@ same idea LlamaIndex formalizes as a separate `DocStore` / `IndexStore` /
 ## 3. How are indexes created, and did you classify documents into categories to speed up search?
 
 **What "index" means here - two different things worth not confusing**:
-in this project's code, "index" (`POST /rag/documents/{id}/index`, `index_document()`)
+in this project's code, "index" (`POST /v1/rag/documents/{id}/index`, `index_document()`)
 means *writing a document's chunks into the vector store* - an
 application-level operation. The vector store's own internal search
 *structure* (an ANN index - typically HNSW for both Chroma and Pinecone)
@@ -382,3 +383,149 @@ layer causes** - a beautifully-prompted model still can't answer
 correctly from the wrong chunk. Check retrieval quality (would a human,
 looking only at the retrieved chunks, be able to answer the question at
 all?) before touching the prompt.
+
+---
+
+## 6. Mock interview: REST API contract-first design
+
+Every practice below is implemented in this project as of 2026-09-08, not
+aspirational - each answer says exactly where to find it.
+
+### "Walk me through how you'd design a REST API contract-first, for production."
+
+Contract-first means the request/response shapes, error format, and
+behavior guarantees are treated as the actual product - decided and
+documented before (or alongside) the implementation, not reverse-engineered
+from whatever the code happens to do. In practice, for this project, that
+meant working through eight things systematically rather than adding them
+piecemeal as problems showed up: **versioning**, **idempotency**, **rate
+limiting**, **request validation**, **graceful error handling**,
+**input guardrails**, **centralized validation**, and **pre-flight checks
+before spending money on a backend call** - each below, with the real
+implementation.
+
+### "How did you handle versioning, and why that specific approach?"
+
+Every business endpoint now lives under `/v1`
+(`main.py`: `app.include_router(routes_documents.router, prefix="/v1")`) -
+a breaking change later becomes `/v2/rag/...` without silently changing
+what a `/v1` caller already depends on. **`GET /health` deliberately stays
+unversioned** - a liveness/readiness probe (a load balancer, Kubernetes,
+App Runner itself) needs one stable path across every API version, the
+same convention AWS's and Kubernetes' own health checks follow. Versioning
+everything uniformly, including infra-level paths, is the more common
+mistake here, not versioning nothing.
+
+### "What's idempotency, and where does it actually matter here?"
+
+An idempotent operation produces the same result no matter how many times
+it's retried with the same input - critical for anything that costs money
+or creates a resource, because a network timeout or a dropped connection
+right before the response arrives looks identical, from the client's side,
+to "did this actually happen?" Implemented here as an `Idempotency-Key`
+header (the same convention Stripe's API popularized) -
+`common/idempotency/idempotency_store.py`, applied to upload, index, and
+query. **Concrete example**: upload the same PDF twice with the same
+`Idempotency-Key` and you get back the *same* `document_id` both times,
+not two separate documents - verified live, not just unit-tested (see
+`tests/hrb_chatbot/api/rag/test_idempotency_and_rate_limiting.py`). Named
+limitation, not a surprise to discover later: in-memory, single-process -
+resets on every redeploy, and needs a real shared store (Redis) the moment
+this app scales past one instance.
+
+### "How would you rate-limit this, and what's the actual policy?"
+
+Fixed-window counting, per client IP, wired in via
+`Depends(enforce_rate_limit)` on every endpoint that writes state or
+spends money (`common/rate_limiting/rate_limiter.py`). The genuinely
+interesting part isn't the algorithm - it's that the settings
+(`APP_RATE_LIMITING`, `APP_RATE_LIMIT_REQUESTS`,
+`APP_RATE_LIMIT_DURATION`) had been sitting in `.env` unread since this
+project's very first commit, flagged in `docs/BACKLOG.md` as "orphan
+config" - this finally gave them a real job instead of adding new ones.
+Same in-memory, single-process limitation as idempotency above, same fix
+later (a shared store) at the same point (more than one instance).
+
+### "What does 'request validation' mean beyond just Pydantic doing its job?"
+
+Pydantic already rejects the wrong *shape* (missing field, wrong type) for
+free - the part worth being deliberate about is *bounds*, not just
+presence. An audit of every string field in this project's request models
+found several with a `min_length` but no `max_length` at all -
+`RagQueryRequest.query` could accept an entire pasted document with no
+upper bound before this pass. Fixed with a 2000-character cap (generous
+for a real question, small enough to reject an obvious abuse case before
+it ever reaches an embedding call) and matching bounds on `vector_db`/
+`model_name`/`embedding_model` (they're short identifiers, not free text -
+50-100 characters is already generous). This doubles as a lightweight,
+*structural* guardrail - distinct from the *content*-based guardrails
+(prompt injection, PII detection) that remain Phase 7's hand-written work,
+covered next.
+
+### "What are input guardrails, and where's the line between what you built and what's still hand-written?"
+
+Two different kinds, worth not conflating: **structural guardrails**
+(size/format bounds - covered above, Claude-Code-owned API-layer work) and
+**content/semantic guardrails** (does this query attempt prompt injection?
+Does a generated answer leak PII? Is the tone appropriate?) - genuinely
+different work, requiring either an LLM call or a specialized classifier
+to evaluate, and explicitly Phase 7's hand-written territory in
+`docs/RAG-ROADMAP.md`'s division-of-labor table. Saying "structural bounds
+only, semantic guardrails are a separate, unbuilt phase" in an interview is
+a more precise answer than claiming "guardrails" as one undifferentiated
+checkbox.
+
+### "How do you handle errors gracefully - what does a caller actually see when something breaks?"
+
+Two layers, added together in the same pass: individual route handlers
+already caught their *known* failure modes (a document not found, a
+pipeline exception), but an audit found two places where a caught
+exception's raw `str(error)` was interpolated directly into the
+client-facing message - a real info-leak risk (a stack-trace fragment, an
+internal detail, anything a library's own exception text happens to
+include). Both now log the full detail server-side and return a generic,
+safe message instead. On top of that, `main.py` gained a global
+`@app.exception_handler(Exception)` - a last-resort safety net for
+anything no individual route catches, confirmed by the same audit that
+none existed before. **The split to say out loud**: full detail always
+goes to the logs (that's where a developer actually debugs), the
+client only ever gets a generic message and a status code - never a raw
+exception.
+
+### "What's a 'validation gateway,' and do you have one?"
+
+Not a separate service or middleware layer here - "gateway" in the sense
+that matters is that validation happens in exactly *one* place
+consistently (the Pydantic request models), not scattered as ad-hoc
+`if`-checks duplicated across route handlers. Every request passes through
+the same declared bounds before any route handler's own logic runs at
+all - that consistency, not a literal API-gateway product, is what makes
+validation trustworthy: there's one place to look, not N places to audit
+for drift.
+
+### "You mentioned checking backend health before spending money - how, and why not just let the real call fail?"
+
+`index_document()` (`routes_documents.py`) now checks - shallow, free,
+`deep=False` - that the LLM provider and the target vector store are at
+least *configured* before attempting the real chunk/embed/index operation.
+If not, it returns a clean `503` immediately instead of letting a missing
+API key surface as a raw exception three function calls deep inside the
+pipeline. **The reasoning worth explaining, not just the fact of doing
+it**: a *deep* health check here would cost the same as the real call it's
+supposedly protecting - pointless. A *shallow* check only catches the
+cheap, common mistake (nothing configured at all), not "is the provider
+actually reachable right now" - the real call still finds that out, this
+just fails faster and cleaner for the mistake it can actually catch.
+
+**The equally important negative case, worth naming unprompted**: this
+same pattern is *not* applied to the query endpoint yet, even though it
+looks like the same kind of gap. It's still a pure stub with no real
+backend call to check readiness for - and gating a guaranteed
+`NotImplementedError` behind a real API key would have broken in exactly
+the environment that most needs this endpoint testable without one: CI,
+which runs with zero secrets configured (see
+`docs/AWS-DEVOPS-RUNBOOK.md`). Catching that *before* shipping it, by
+reasoning through what CI actually has available, not after a broken
+pipeline run, is itself worth mentioning - it's the same "measure/reason
+before acting" discipline as the performance question earlier in this
+document.

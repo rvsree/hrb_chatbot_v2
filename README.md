@@ -108,15 +108,15 @@ run against a real server):
 
 ```powershell
 # upload a real PDF - copy the document_id from the response
-curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" http://127.0.0.1:8093/rag/documents
+curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" http://127.0.0.1:8093/v1/rag/documents
 
 # index it (spends: one real embedding call per chunk)
-curl -X POST http://127.0.0.1:8093/rag/documents/<document_id>/index
+curl -X POST http://127.0.0.1:8093/v1/rag/documents/<document_id>/index
 
 # ask a question - the query endpoint itself works, but the underlying
 # retrieval/generation pipeline (Phase 6) is hand-written and not built yet,
 # so this returns 501 naming ai/rag_pipeline/pipeline.py until it lands
-curl -X POST http://127.0.0.1:8093/rag/query -H "Content-Type: application/json" -d "{\"query\": \"How many weeks of parental leave do I get?\"}"
+curl -X POST http://127.0.0.1:8093/v1/rag/query -H "Content-Type: application/json" -d "{\"query\": \"How many weeks of parental leave do I get?\"}"
 ```
 
 For testing every endpoint from a GUI instead of curl, import
