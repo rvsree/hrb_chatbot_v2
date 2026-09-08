@@ -55,6 +55,100 @@ Actions user above have anywhere near that level of access - see
 
 ---
 
+## The manual git workflow, start to finish
+
+Everything from "I changed some code" to "it's live in AWS," as a real
+sequence of commands - this is what actually happened building this
+project, not a generic git tutorial.
+
+### 1. Branch, before the first commit
+
+```bash
+git checkout -b hrb_rag_pipelines
+```
+Created **before** any commits existed, deliberately - a branch created
+after commits already exist on `main` is a different (also fine) workflow,
+but starting a new feature area on its own branch from the very first
+commit keeps `main` clean the whole time, never briefly holding
+in-progress work.
+
+### 2. Stage deliberately, never `git add -A` blindly
+
+```bash
+git status                      # see what's actually changed, and what's untracked
+git diff <file>                 # review one file's changes before staging it
+git add <file1> <file2> ...     # stage exactly what belongs in this commit
+```
+Staging file-by-file (or a small deliberate group) rather than `git add -A`
+matters most when a `.env` or a scratch file with real values might be
+sitting in the working directory - `git add -A` doesn't know the
+difference between your code and a secret you forgot was there.
+
+### 3. Scan for secrets before every commit - by hand, then by the hook
+
+```bash
+git diff --cached | grep -Ei 'sk-ant-[A-Za-z0-9_-]{60,}|sk-proj-[A-Za-z0-9_-]{60,}|sk-or-v1-[A-Za-z0-9]{50,}|pcsk_[A-Za-z0-9_-]{40,}|tvly-[A-Za-z0-9_-]{25,}|AKIA[A-Z0-9]{16}'
+```
+This exact pattern (tuned twice - see `.githooks/pre-commit`'s own commit
+history for why a naive version either false-positived on plain English or
+failed to match a real key at all) also runs automatically once you opt in:
+```bash
+git config core.hooksPath .githooks   # once per clone
+```
+After that, every `git commit` runs this scan itself and refuses the
+commit if it finds something that looks like a real key - a
+`--no-verify` override exists for a genuine false positive, not as a
+habit.
+
+### 4. Commit with a real message, not a label
+
+```bash
+git commit -m "$(cat <<'EOF'
+Short summary line, imperative mood, under ~70 characters
+
+The why, not the what - what problem this solves or what broke
+without it. The diff already shows what changed; this is for
+context the diff can't carry on its own.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+EOF
+)"
+```
+The heredoc (`<<'EOF' ... EOF`) is there specifically so a multi-line
+message with blank lines and punctuation survives intact - a plain
+`-m "..."` string fights the shell the moment the message has a quote
+or a line break in it.
+
+### 5. Push, then verify CI actually ran (don't just assume)
+
+```bash
+git push origin hrb_rag_pipelines
+
+# no gh CLI or GitHub token needed - Actions on a public repo are readable anonymously
+curl -s "https://api.github.com/repos/rvsree/hrb_chatbot_v2/actions/runs?branch=hrb_rag_pipelines&per_page=1" \
+  | python -c "import json,sys; r=json.load(sys.stdin)['workflow_runs'][0]; print(r['status'], r['conclusion'])"
+```
+Poll that second command every 10-15 seconds until it prints
+`completed success` (or `completed failure`, which means go read the run's
+logs, not push again hoping it was a fluke).
+
+### 6. Merge to `main` when ready - not done automatically by anything above
+
+Nothing in this project auto-merges. When the branch is ready:
+```bash
+git checkout main
+git pull origin main
+git merge hrb_rag_pipelines
+git push origin main
+```
+or open a pull request on GitHub and merge it there instead, if the repo
+ever gets a second contributor and review actually matters. **This is the
+step that arms `deploy.yml`** - it only triggers on `main` (see
+[CI/CD](#cicd-github-actions)), so nothing deploys to AWS until this
+happens, no matter how many times `hrb_rag_pipelines` itself is pushed.
+
+---
+
 ## The full pipeline: local → container → ECR → App Runner
 
 ### 1. Run it locally first
@@ -221,6 +315,16 @@ missing entrypoint) rather than your Python code - see the next section
 before spending time debugging application logic that never even ran.
 
 ### Bedrock
+
+**There is no separate "deploy to Bedrock" step** - worth being explicit
+about, since it's an easy thing to expect given every other service in
+this list gets its own deploy. Bedrock is a managed LLM API this app
+*calls at runtime* (through `BedrockChatClient`), not a place the
+application's own code ever gets uploaded to or runs on. "Deploying
+Bedrock support" means exactly what already happened in Phase 9: writing
+the client, wiring it into `/health`, and granting the App Runner instance
+role `bedrock:InvokeModel*` permission (see [IAM](#iam-roles-and-users)) -
+there's no image, container, or function to push to Bedrock itself.
 
 ```bash
 # From inside the running container's identity, or locally with equivalent creds:

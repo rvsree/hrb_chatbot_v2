@@ -5,6 +5,37 @@ real gaps but explicitly **not blocking** current work. Move an item out of
 this file into `docs/RAG-ROADMAP.md`'s phase list when it's actually picked
 up, rather than marking it done in place here.
 
+## Observability
+
+- ~~**No logging around individual backend calls.**~~ Fixed 2026-09-08.
+  Confirmed by direct audit that no client logged anything around its
+  actual network call - only around a missing API key at construction time,
+  or a whole pipeline step finishing. Added
+  `common/logging/call_logger.py`'s `log_backend_call()` (a context
+  manager - service, operation, duration_ms, status on every line) and
+  wired it into all four LLM clients' `ask`/`ask_with_tools`/
+  `get_embeddings`, both vector store clients' `upsert`/`query`/`delete`,
+  and both metadata store clients' five methods. Verified live, not just
+  by reading the code - a real index call now shows
+  `[openai] embeddings.create succeeded in 2184.2ms - {'model': ...,
+  'text_count': 45}` in the log, where before there was nothing at all
+  between "starting to index" and "finished indexing." Deliberately not a
+  LangSmith integration - structured consistently enough that swapping one
+  in later means changing this one function's body, not every call site.
+- **No correlation/request id across log lines.** A single `POST
+  /rag/documents/{id}/index` call now produces several log lines (create,
+  get, embeddings.create, upsert, set_chunk_ids, update_status - see
+  above) but nothing ties them together as "one request" if two requests
+  happen to interleave in the logs. Worth adding once this app sees real
+  concurrent traffic; not worth it yet at single-user local/demo scale.
+- **No retrieval-vs-generation latency breakdown yet** - can't exist until
+  Phase 6 (real retrieval + generation) is built. The logging added above
+  already reports per-call duration for every LLM and vector-store call
+  individually (visible in the logs today), which is what a future
+  retrieval-vs-generation metric would be built from - see
+  `docs/TESTING-GUIDE.md` for the A/B-comparison pattern that's the
+  natural next step once there's a real answer-quality metric to compare.
+
 ## LLM providers
 
 - ~~**Anthropic was unhealthy.**~~ Fixed 2026-09-07. Two independent bugs:
@@ -126,10 +157,17 @@ explicit earlier decision to keep as-is for later, not a new finding.
 
 ## Process
 
-- **No test suite, linter, or formatter configured.** Deliberate for now
-  given the learning-project priority, but worth a conscious decision before
-  this grows much further - `crewai_app_demo` is the cautionary example of
-  what "never got to it" looks like a year on.
+- ~~**No test suite configured.**~~ Added 2026-09-08 - `pytest` +
+  `pytest-asyncio` (`requirements-dev.txt`), 20 tests across chunking,
+  embedding, indexing (the insert/update/stale-chunk-cleanup logic
+  specifically, the highest-value case), the RAG query stub's contract,
+  and a reference A/B-comparison pattern - see `docs/TESTING-GUIDE.md` for
+  what's covered and why, and the fake-based pattern
+  (`tests/conftest.py`) to extend once the hand-written pipeline exists.
+  **Linter/formatter still not configured** - `ruff` is set up for the
+  sibling `w1_agentic_foundations` project but not this one; still worth a
+  conscious decision, same "don't let this become `crewai_app_demo`"
+  reasoning as before.
 - ~~**Dockerfile is unverified.**~~ Verified 2026-09-07, once Docker Desktop
   was actually running: build, run, and `HEALTHCHECK` all confirmed. Two
   real bugs were caught and fixed in the process, not just "it built":

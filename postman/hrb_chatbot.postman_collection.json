@@ -31,7 +31,7 @@
           }
         },
         {
-          "name": "Deep health - specific provider + vector + metadata store",
+          "name": "Deep health - specific provider + vector + metadata store (all at once)",
           "request": {
             "method": "GET",
             "url": {
@@ -47,6 +47,78 @@
           }
         },
         {
+          "name": "LLM providers (deep, one call per provider)",
+          "item": [
+            {
+              "name": "openai (default)",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{base_url}}/health?deep=true&provider=openai", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "provider", "value": "openai" }] }
+              }
+            },
+            {
+              "name": "anthropic",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{base_url}}/health?deep=true&provider=anthropic", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "provider", "value": "anthropic" }] }
+              }
+            },
+            {
+              "name": "openrouter",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{base_url}}/health?deep=true&provider=openrouter", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "provider", "value": "openrouter" }] }
+              }
+            },
+            {
+              "name": "bedrock",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{base_url}}/health?deep=true&provider=bedrock", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "provider", "value": "bedrock" }] }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Vector stores (deep, one call per store)",
+          "item": [
+            {
+              "name": "chromadb (default)",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{base_url}}/health?deep=true&vector_provider=chromadb", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "vector_provider", "value": "chromadb" }] }
+              }
+            },
+            {
+              "name": "pinecone",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{base_url}}/health?deep=true&vector_provider=pinecone", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "vector_provider", "value": "pinecone" }] }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Metadata stores (deep, one call per store)",
+          "item": [
+            {
+              "name": "sqlite (default)",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{base_url}}/health?deep=true&metadata_provider=sqlite", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "metadata_provider", "value": "sqlite" }] }
+              }
+            },
+            {
+              "name": "postgres",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{base_url}}/health?deep=true&metadata_provider=postgres", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "metadata_provider", "value": "postgres" }] },
+                "description": "Not the active metadata store in the deployed App Runner service yet (see docs/AWS-DEVOPS-RUNBOOK.md) - fully working locally, or once Neon is provisioned."
+              }
+            }
+          ]
+        },
+        {
           "name": "Edge - unknown provider (silently falls back to openai, not a 400)",
           "request": {
             "method": "GET",
@@ -54,6 +126,17 @@
               "raw": "{{base_url}}/health?provider=made_up_provider",
               "host": ["{{base_url}}"], "path": ["health"],
               "query": [{ "key": "provider", "value": "made_up_provider" }]
+            }
+          }
+        },
+        {
+          "name": "Edge - unknown vector_provider (also silently falls back, not a 400)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/health?deep=true&vector_provider=made_up_store",
+              "host": ["{{base_url}}"], "path": ["health"],
+              "query": [{ "key": "deep", "value": "true" }, { "key": "vector_provider", "value": "made_up_store" }]
             }
           }
         }

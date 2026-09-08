@@ -143,12 +143,26 @@ required and why (three separate real bugs were found and fixed getting
 this image to actually run in App Runner, not just build locally), and how
 to review/validate every AWS resource this project provisions.
 
+## Running the tests
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt   # once
+.venv\Scripts\python.exe -m pytest -v
+```
+
+No test needs a real API key or network call - see
+[docs/TESTING-GUIDE.md](docs/TESTING-GUIDE.md) for what's covered, why
+those specific cases, and the fake-based pattern to copy when testing the
+hand-written RAG pipeline once it exists.
+
 ## Dependencies
 
 `requirements.txt` pins exact versions (`==`) deliberately, not loose ranges
 - `chromadb`'s Python-version fragility (see Prerequisites) and the fact that
 a Dockerfile now exists are both reasons a silent version drift is worse than
-a pin that occasionally needs a deliberate bump.
+a pin that occasionally needs a deliberate bump. `requirements-dev.txt` is
+test-only dependencies, kept separate so a production image never installs
+them.
 
 ## Project conventions
 
@@ -158,3 +172,11 @@ handling, logging, and API contract conventions this codebase follows.
 ## Known gaps and planned work
 
 See [docs/BACKLOG.md](docs/BACKLOG.md).
+
+## Design questions and FAQ
+
+[docs/FAQ.md](docs/FAQ.md) - deep-dive answers on document update
+strategy, where RAG metadata lives and which store is right for filtering
+search results, and how document indexing/categorization works - each
+split clearly into what this project does today vs. general RAG design
+reasoning, written for both gap-finding and interview prep.
