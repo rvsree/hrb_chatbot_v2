@@ -41,6 +41,7 @@ import psycopg
 
 from src.hrb_chatbot.common.clients.db_client.base_metadata_client import BaseMetadataClient
 from src.hrb_chatbot.common.config.settings import read_setting
+from src.hrb_chatbot.common.logging.call_logger import log_backend_call
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("postgres_client")
@@ -129,7 +130,8 @@ class PostgresClient(BaseMetadataClient):
 
     async def create_document(self, document_id: str, filename: str, file_path: str) -> None:
         await self._ensure_table()
-        await asyncio.to_thread(self._create_document_sync, document_id, filename, file_path)
+        with log_backend_call(logger, "postgres", "metadata.create_document", document_id=document_id):
+            await asyncio.to_thread(self._create_document_sync, document_id, filename, file_path)
 
     def _update_status_sync(self, document_id: str, status: str, error_message: str | None) -> None:
         with self._connect() as conn:
@@ -144,7 +146,10 @@ class PostgresClient(BaseMetadataClient):
         self, document_id: str, status: str, error_message: str | None = None
     ) -> None:
         await self._ensure_table()
-        await asyncio.to_thread(self._update_status_sync, document_id, status, error_message)
+        with log_backend_call(
+            logger, "postgres", "metadata.update_status", document_id=document_id, status=status
+        ):
+            await asyncio.to_thread(self._update_status_sync, document_id, status, error_message)
 
     def _set_chunk_ids_sync(self, document_id: str, chunk_ids: list[str]) -> None:
         with self._connect() as conn:
@@ -156,7 +161,14 @@ class PostgresClient(BaseMetadataClient):
 
     async def set_chunk_ids(self, document_id: str, chunk_ids: list[str]) -> None:
         await self._ensure_table()
-        await asyncio.to_thread(self._set_chunk_ids_sync, document_id, chunk_ids)
+        with log_backend_call(
+            logger,
+            "postgres",
+            "metadata.set_chunk_ids",
+            document_id=document_id,
+            chunk_count=len(chunk_ids),
+        ):
+            await asyncio.to_thread(self._set_chunk_ids_sync, document_id, chunk_ids)
 
     def _get_document_sync(self, document_id: str) -> dict | None:
         with self._connect() as conn:
@@ -166,7 +178,8 @@ class PostgresClient(BaseMetadataClient):
 
     async def get_document(self, document_id: str) -> dict | None:
         await self._ensure_table()
-        return await asyncio.to_thread(self._get_document_sync, document_id)
+        with log_backend_call(logger, "postgres", "metadata.get_document", document_id=document_id):
+            return await asyncio.to_thread(self._get_document_sync, document_id)
 
     def _list_documents_sync(self) -> list[dict]:
         with self._connect() as conn:
@@ -176,7 +189,8 @@ class PostgresClient(BaseMetadataClient):
 
     async def list_documents(self) -> list[dict]:
         await self._ensure_table()
-        return await asyncio.to_thread(self._list_documents_sync)
+        with log_backend_call(logger, "postgres", "metadata.list_documents"):
+            return await asyncio.to_thread(self._list_documents_sync)
 
     @staticmethod
     def _dict_row_factory(cursor):

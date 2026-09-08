@@ -18,6 +18,7 @@ from openai import OpenAI
 
 from src.hrb_chatbot.common.clients.llm_client.base_llm_client import BaseLLMClient
 from src.hrb_chatbot.common.config.settings import read_setting, read_url_setting
+from src.hrb_chatbot.common.logging.call_logger import log_backend_call
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("openai_client")
@@ -93,12 +94,13 @@ class OpenAIChatClient(BaseLLMClient):
         else:
             message_text = question
 
-        response = self.get_client().chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": message_text}],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        with log_backend_call(logger, "openai", "chat.ask", model=self.model, temperature=temperature):
+            response = self.get_client().chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": message_text}],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
 
         answer = response.choices[0].message.content
         if answer is None:
@@ -107,14 +109,17 @@ class OpenAIChatClient(BaseLLMClient):
 
     def ask_with_tools(self, messages, tools, temperature=0.0, max_tokens=None, tool_choice="auto"):
         """Ask a question and let the model call tools. Returns the raw OpenAI reply."""
-        response = self.get_client().chat.completions.create(
-            model=self.model,
-            messages=messages,
-            tools=tools,
-            tool_choice=tool_choice,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        with log_backend_call(
+            logger, "openai", "chat.ask_with_tools", model=self.model, tool_count=len(tools)
+        ):
+            response = self.get_client().chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
         return response.model_dump()
 
     def health_check(self, deep: bool = False) -> dict:
@@ -221,7 +226,11 @@ class OpenAIEmbeddingClient:
         if not texts:
             return []
 
-        response = self.get_client().embeddings.create(model=model or self.model, input=texts)
+        resolved_model = model or self.model
+        with log_backend_call(
+            logger, "openai", "embeddings.create", model=resolved_model, text_count=len(texts)
+        ):
+            response = self.get_client().embeddings.create(model=resolved_model, input=texts)
 
         embeddings = []
         for item in response.data:

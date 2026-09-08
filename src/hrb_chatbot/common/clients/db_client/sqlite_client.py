@@ -22,6 +22,7 @@ import aiosqlite
 
 from src.hrb_chatbot.common.clients.db_client.base_metadata_client import BaseMetadataClient
 from src.hrb_chatbot.common.config.settings import read_setting
+from src.hrb_chatbot.common.logging.call_logger import log_backend_call
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("sqlite_client")
@@ -77,13 +78,14 @@ class SQLiteClient(BaseMetadataClient):
         await self._ensure_table()
         now = datetime.now(UTC).isoformat()
 
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "INSERT INTO documents (id, filename, file_path, status, error_message, "
-                "created_at, updated_at) VALUES (?, ?, ?, 'uploaded', NULL, ?, ?)",
-                (document_id, filename, file_path, now, now),
-            )
-            await db.commit()
+        with log_backend_call(logger, "sqlite", "metadata.create_document", document_id=document_id):
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "INSERT INTO documents (id, filename, file_path, status, error_message, "
+                    "created_at, updated_at) VALUES (?, ?, ?, 'uploaded', NULL, ?, ?)",
+                    (document_id, filename, file_path, now, now),
+                )
+                await db.commit()
 
     async def update_status(
         self, document_id: str, status: str, error_message: str | None = None
@@ -91,41 +93,51 @@ class SQLiteClient(BaseMetadataClient):
         await self._ensure_table()
         now = datetime.now(UTC).isoformat()
 
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "UPDATE documents SET status = ?, error_message = ?, updated_at = ? WHERE id = ?",
-                (status, error_message, now, document_id),
-            )
-            await db.commit()
+        with log_backend_call(
+            logger, "sqlite", "metadata.update_status", document_id=document_id, status=status
+        ):
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "UPDATE documents SET status = ?, error_message = ?, updated_at = ? WHERE id = ?",
+                    (status, error_message, now, document_id),
+                )
+                await db.commit()
 
     async def set_chunk_ids(self, document_id: str, chunk_ids: list[str]) -> None:
         await self._ensure_table()
         now = datetime.now(UTC).isoformat()
 
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "UPDATE documents SET chunk_ids = ?, updated_at = ? WHERE id = ?",
-                (json.dumps(chunk_ids), now, document_id),
-            )
-            await db.commit()
+        with log_backend_call(
+            logger, "sqlite", "metadata.set_chunk_ids", document_id=document_id, chunk_count=len(chunk_ids)
+        ):
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "UPDATE documents SET chunk_ids = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(chunk_ids), now, document_id),
+                )
+                await db.commit()
 
     async def get_document(self, document_id: str) -> dict | None:
         await self._ensure_table()
 
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("SELECT * FROM documents WHERE id = ?", (document_id,))
-            row = await cursor.fetchone()
+        with log_backend_call(logger, "sqlite", "metadata.get_document", document_id=document_id):
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute("SELECT * FROM documents WHERE id = ?", (document_id,))
+                row = await cursor.fetchone()
 
-        return dict(row) if row else None
+        if row is None:
+            return None
+        return dict(row)
 
     async def list_documents(self) -> list[dict]:
         await self._ensure_table()
 
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("SELECT * FROM documents ORDER BY created_at DESC")
-            rows = await cursor.fetchall()
+        with log_backend_call(logger, "sqlite", "metadata.list_documents"):
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute("SELECT * FROM documents ORDER BY created_at DESC")
+                rows = await cursor.fetchall()
 
         return [dict(row) for row in rows]
 

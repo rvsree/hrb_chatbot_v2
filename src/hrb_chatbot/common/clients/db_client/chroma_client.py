@@ -35,6 +35,7 @@ from chromadb.config import Settings as ChromaSettings
 
 from src.hrb_chatbot.common.clients.db_client.base_vector_db_client import BaseVectorDBClient
 from src.hrb_chatbot.common.config.settings import read_setting
+from src.hrb_chatbot.common.logging.call_logger import log_backend_call
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("chroma_client")
@@ -126,7 +127,8 @@ class ChromaDBClient(BaseVectorDBClient):
         metadatas: list[dict] | None = None,
     ) -> None:
         collection = self.get_collection(collection_name)
-        collection.upsert(ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas)
+        with log_backend_call(logger, "chromadb", "vector.upsert", collection=collection_name, chunk_count=len(ids)):
+            collection.upsert(ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas)
 
     def query(
         self,
@@ -136,16 +138,18 @@ class ChromaDBClient(BaseVectorDBClient):
         where: dict | None = None,
     ) -> dict:
         collection = self.get_collection(collection_name)
-        return collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
-            where=where,
-            include=["documents", "metadatas", "distances"],
-        )
+        with log_backend_call(logger, "chromadb", "vector.query", collection=collection_name, top_k=top_k):
+            return collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k,
+                where=where,
+                include=["documents", "metadatas", "distances"],
+            )
 
     def delete(self, collection_name: str, ids: list[str]) -> None:
         collection = self.get_collection(collection_name)
-        collection.delete(ids=ids)
+        with log_backend_call(logger, "chromadb", "vector.delete", collection=collection_name, chunk_count=len(ids)):
+            collection.delete(ids=ids)
 
     def health_check(self, deep: bool = False) -> dict:
         """Report whether this client is usable.

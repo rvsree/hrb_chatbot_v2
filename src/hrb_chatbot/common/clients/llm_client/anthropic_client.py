@@ -39,6 +39,7 @@ import anthropic
 
 from src.hrb_chatbot.common.clients.llm_client.base_llm_client import BaseLLMClient
 from src.hrb_chatbot.common.config.settings import read_setting, read_url_setting
+from src.hrb_chatbot.common.logging.call_logger import log_backend_call
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("anthropic_client")
@@ -138,11 +139,12 @@ class AnthropicChatClient(BaseLLMClient):
 
         # temperature is deliberately not passed - see the note at the top of
         # this file. The anthropic library would reject it outright.
-        response = self.get_client().messages.create(
-            model=self.model,
-            max_tokens=max_tokens or 1024,
-            messages=[{"role": "user", "content": message_text}],
-        )
+        with log_backend_call(logger, "anthropic", "messages.ask", model=self.model):
+            response = self.get_client().messages.create(
+                model=self.model,
+                max_tokens=max_tokens or 1024,
+                messages=[{"role": "user", "content": message_text}],
+            )
 
         # Claude replies with a list of "blocks". Join the text ones together.
         answer = ""
@@ -167,13 +169,16 @@ class AnthropicChatClient(BaseLLMClient):
             extra_arguments["system"] = system_text
 
         # temperature is deliberately not passed - see the note at the top of file.
-        response = self.get_client().messages.create(
-            model=self.model,
-            max_tokens=max_tokens or 1024,
-            messages=chat_messages,
-            tools=claude_tools,
-            **extra_arguments,
-        )
+        with log_backend_call(
+            logger, "anthropic", "messages.ask_with_tools", model=self.model, tool_count=len(tools)
+        ):
+            response = self.get_client().messages.create(
+                model=self.model,
+                max_tokens=max_tokens or 1024,
+                messages=chat_messages,
+                tools=claude_tools,
+                **extra_arguments,
+            )
         return self.convert_response_to_openai_format(response)
 
     @staticmethod

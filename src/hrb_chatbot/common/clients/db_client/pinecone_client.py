@@ -51,6 +51,7 @@ from pinecone import Pinecone, ServerlessSpec
 
 from src.hrb_chatbot.common.clients.db_client.base_vector_db_client import BaseVectorDBClient
 from src.hrb_chatbot.common.config.settings import read_setting
+from src.hrb_chatbot.common.logging.call_logger import log_backend_call
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("pinecone_client")
@@ -98,7 +99,10 @@ class PineconeClient(BaseVectorDBClient):
         if not self.api_key:
             logger.warning("[PINECONE] PINECONE_API_KEY not set")
 
-        self._client = Pinecone(api_key=self.api_key) if self.api_key else None
+        if self.api_key:
+            self._client = Pinecone(api_key=self.api_key)
+        else:
+            self._client = None
         self._index = None
         self._index_ready = False
 
@@ -170,16 +174,35 @@ class PineconeClient(BaseVectorDBClient):
         embeddings: list[list[float]],
         metadatas: list[dict] | None = None,
     ) -> None:
-        metadatas = metadatas or [{} for _ in ids]
+        if metadatas is None:
+            # No metadata given - one empty dict per id, so the loop below
+            # always has something to merge into, even if it's nothing.
+            metadatas = []
+            for _ in ids:
+                metadatas.append({})
 
-        vectors = [
-            {"id": id_, "values": embedding, "metadata": {**metadata, "document": document}}
-            for id_, embedding, document, metadata in zip(
-                ids, embeddings, documents, metadatas, strict=True
-            )
-        ]
+        # Build one Pinecone vector record per chunk. ids, embeddings,
+        # documents, and metadatas are four separate parallel lists - the
+        # item at index 0 of each belongs together, the item at index 1 of
+        # each belongs together, and so on - so this loop walks all four at
+        # the same time using Python's zip(), which pairs up corresponding
+        # items the way iterating four Java arrays with one shared index
+        # variable would. strict=True makes zip() raise an error instead of
+        # silently truncating if the four lists ever end up different
+        # lengths, which would otherwise be a confusing bug to track down.
+        vectors = []
+        for id_, embedding, document, metadata in zip(ids, embeddings, documents, metadatas, strict=True):
+            # Pinecone has no native "document text" field - store it as
+            # metadata like any other value, alongside whatever the caller
+            # already put in `metadata` (document_id, chunk_index).
+            vector_metadata = dict(metadata)
+            vector_metadata["document"] = document
+            vectors.append({"id": id_, "values": embedding, "metadata": vector_metadata})
 
-        self.get_index().upsert(vectors=vectors, namespace=collection_name)
+        with log_backend_call(
+            logger, "pinecone", "vector.upsert", namespace=collection_name, chunk_count=len(vectors)
+        ):
+            self.get_index().upsert(vectors=vectors, namespace=collection_name)
 
     def query(
         self,
@@ -188,13 +211,14 @@ class PineconeClient(BaseVectorDBClient):
         top_k: int = 5,
         where: dict | None = None,
     ) -> dict:
-        response = self.get_index().query(
-            vector=query_embedding,
-            top_k=top_k,
-            namespace=collection_name,
-            filter=where,
-            include_metadata=True,
-        )
+        with log_backend_call(logger, "pinecone", "vector.query", namespace=collection_name, top_k=top_k):
+            response = self.get_index().query(
+                vector=query_embedding,
+                top_k=top_k,
+                namespace=collection_name,
+                filter=where,
+                include_metadata=True,
+            )
 
         ids, documents, metadatas, scores = [], [], [], []
         for match in response.matches:
@@ -210,7 +234,10 @@ class PineconeClient(BaseVectorDBClient):
         return {"ids": [ids], "documents": [documents], "metadatas": [metadatas], "distances": [scores]}
 
     def delete(self, collection_name: str, ids: list[str]) -> None:
-        self.get_index().delete(ids=ids, namespace=collection_name)
+        with log_backend_call(
+            logger, "pinecone", "vector.delete", namespace=collection_name, chunk_count=len(ids)
+        ):
+            self.get_index().delete(ids=ids, namespace=collection_name)
 
     def health_check(self, deep: bool = False) -> dict:
         """Report whether this client is usable.

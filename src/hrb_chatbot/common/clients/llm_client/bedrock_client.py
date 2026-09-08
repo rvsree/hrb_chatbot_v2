@@ -41,6 +41,7 @@ import boto3
 
 from src.hrb_chatbot.common.clients.llm_client.base_llm_client import BaseLLMClient
 from src.hrb_chatbot.common.config.settings import read_setting
+from src.hrb_chatbot.common.logging.call_logger import log_backend_call
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("bedrock_client")
@@ -86,10 +87,15 @@ class BedrockChatClient(BaseLLMClient):
 
     def get_configuration(self) -> dict:
         """Return the settings this client is using - no secret values in it."""
+        if self._credentials_explicit:
+            credentials_source = "explicit .env values"
+        else:
+            credentials_source = "boto3 default chain"
+
         return {
             "region": self.region,
             "model": self.model,
-            "credentials_source": "explicit .env values" if self._credentials_explicit else "boto3 default chain",
+            "credentials_source": credentials_source,
         }
 
     def ask(self, question, context=None, temperature=0.0, max_tokens=None):
@@ -103,14 +109,24 @@ class BedrockChatClient(BaseLLMClient):
         if max_tokens:
             inference_config["maxTokens"] = max_tokens
 
-        response = self.client.converse(
-            modelId=self.model,
-            messages=[{"role": "user", "content": [{"text": message_text}]}],
-            inferenceConfig=inference_config,
-        )
+        with log_backend_call(logger, "bedrock", "converse.ask", model=self.model, temperature=temperature):
+            response = self.client.converse(
+                modelId=self.model,
+                messages=[{"role": "user", "content": [{"text": message_text}]}],
+                inferenceConfig=inference_config,
+            )
 
+        # Converse can return several content blocks (e.g. text plus a
+        # citation block); join their text into the single string every
+        # other provider's ask() already returns. Written as an explicit
+        # loop rather than "".join(... for ...) - a generator expression
+        # passed straight into a function call - which has no direct Java
+        # equivalent.
         blocks = response["output"]["message"]["content"]
-        return "".join(block.get("text", "") for block in blocks)
+        answer_text = ""
+        for block in blocks:
+            answer_text += block.get("text", "")
+        return answer_text
 
     def ask_with_tools(self, messages, tools, temperature=0.0, max_tokens=None, tool_choice="auto"):
         """Ask a question and let the model call tools.
@@ -137,7 +153,10 @@ class BedrockChatClient(BaseLLMClient):
         if system_text:
             request["system"] = [{"text": system_text}]
 
-        response = self.client.converse(**request)
+        with log_backend_call(
+            logger, "bedrock", "converse.ask_with_tools", model=self.model, tool_count=len(tools)
+        ):
+            response = self.client.converse(**request)
         return self._convert_response_to_openai_format(response)
 
     @staticmethod

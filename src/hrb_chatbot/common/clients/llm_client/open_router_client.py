@@ -27,6 +27,7 @@ from openai import OpenAI
 
 from src.hrb_chatbot.common.clients.llm_client.base_llm_client import BaseLLMClient
 from src.hrb_chatbot.common.config.settings import read_setting, read_url_setting
+from src.hrb_chatbot.common.logging.call_logger import log_backend_call
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("openrouter_client")
@@ -106,13 +107,14 @@ class OpenRouterChatClient(BaseLLMClient):
         else:
             message_text = question
 
-        response = self.get_client().chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": message_text}],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            extra_headers=self.extra_headers or None,
-        )
+        with log_backend_call(logger, "openrouter", "chat.ask", model=self.model, temperature=temperature):
+            response = self.get_client().chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": message_text}],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                extra_headers=self.extra_headers or None,
+            )
 
         answer = response.choices[0].message.content
         if answer is None:
@@ -121,15 +123,18 @@ class OpenRouterChatClient(BaseLLMClient):
 
     def ask_with_tools(self, messages, tools, temperature=0.0, max_tokens=None, tool_choice="auto"):
         """Ask a question and let the model call tools. Returns the raw reply."""
-        response = self.get_client().chat.completions.create(
-            model=self.model,
-            messages=messages,
-            tools=tools,
-            tool_choice=tool_choice,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            extra_headers=self.extra_headers or None,
-        )
+        with log_backend_call(
+            logger, "openrouter", "chat.ask_with_tools", model=self.model, tool_count=len(tools)
+        ):
+            response = self.get_client().chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                extra_headers=self.extra_headers or None,
+            )
         return response.model_dump()
 
     def health_check(self, deep: bool = False) -> dict:
