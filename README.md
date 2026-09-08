@@ -91,31 +91,57 @@ curl "http://127.0.0.1:8093/health?deep=true&provider=anthropic"
 curl "http://127.0.0.1:8093/health?deep=true&provider=openrouter"
 ```
 
-`/health` currently reports two checks: `llm` (whichever provider you asked
-for, `openai` by default) and `database` (ChromaDB). **Tavily has a client
+`/health` reports three checks - `llm` (whichever provider you asked for,
+`openai` by default), `vector_database` (`chromadb` by default, pass
+`vector_provider=pinecone` to check the other), and `metadata_database`
+(`sqlite` by default, pass `metadata_provider=postgres` to check the
+other). **Tavily has a client
 (`common/clients/web_client/tavily_client.py`) but is not wired into
 `/health` yet** - a known gap, tracked in
 [docs/BACKLOG.md](docs/BACKLOG.md), not something broken.
 
-### Upload documents / ask the knowledge base
+### Upload documents, index them, and ask the knowledge base
 
-Not implemented yet. `POST /rag/documents` and `POST /rag/query` land in
-Phases 2-6 of [docs/RAG-ROADMAP.md](docs/RAG-ROADMAP.md). This section gets
-filled in with real examples once those endpoints exist - don't expect
-anything at those paths yet.
+All of these are implemented and verified live (see
+[README_TEST.md](README_TEST.md) for every case, happy path and edge case,
+run against a real server):
+
+```powershell
+# upload a real PDF - copy the document_id from the response
+curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" http://127.0.0.1:8093/rag/documents
+
+# index it (spends: one real embedding call per chunk)
+curl -X POST http://127.0.0.1:8093/rag/documents/<document_id>/index
+
+# ask a question - the query endpoint itself works, but the underlying
+# retrieval/generation pipeline (Phase 6) is hand-written and not built yet,
+# so this returns 501 naming ai/rag_pipeline/pipeline.py until it lands
+curl -X POST http://127.0.0.1:8093/rag/query -H "Content-Type: application/json" -d "{\"query\": \"How many weeks of parental leave do I get?\"}"
+```
+
+For testing every endpoint from a GUI instead of curl, import
+[postman/hrb_chatbot.postman_collection.json](postman/hrb_chatbot.postman_collection.json)
+into Postman - it covers the same happy-path and edge cases as
+README_TEST.md, ready to run against `{{base_url}}` (local or the deployed
+App Runner URL). Once Phase 6 exists,
+[resources/golden_dataset/golden_dataset.json](resources/golden_dataset/golden_dataset.json)
+has 22 real question/expected-answer pairs grounded in the actual
+`resources/kb_docs/` PDFs, for evaluating whether real answers are grounded
+and correct rather than hallucinated.
 
 ## Running in a container
 
 ```powershell
-docker build -t hrb-chatbot:local .
+docker buildx build --provenance=false --sbom=false --output type=docker -t hrb-chatbot:local .
 docker run --rm --env-file .env -p 8093:8093 hrb-chatbot:local
 ```
 
-**This Dockerfile has not been build-tested** - Docker Desktop wasn't running
-in the environment it was written in, so this is a mirror of a proven pattern
-from a sibling project, not something confirmed working end to end yet.
-Verify it builds and the container passes its `HEALTHCHECK` before relying on
-it.
+Build- and run-verified, including a real deployment to AWS App Runner -
+see [docs/AWS-DEVOPS-RUNBOOK.md](docs/AWS-DEVOPS-RUNBOOK.md) for the full
+containerize → ECR → App Runner pipeline, exactly which build flags are
+required and why (three separate real bugs were found and fixed getting
+this image to actually run in App Runner, not just build locally), and how
+to review/validate every AWS resource this project provisions.
 
 ## Dependencies
 

@@ -70,10 +70,10 @@ around.
 | 6 — Retrieval + grounded generation, COT | Hand-written | 📋 Planned |
 | 6.1 — Contracts/validation for query path | Claude Code | 📋 Planned (gated on Phase 6) |
 | 7 — Guardrails (input + output) | Hand-written | 📋 Planned |
-| 8 — Golden dataset + evaluations + A/B | Hand-written | 📋 Planned |
+| 8 — Golden dataset + evaluations + A/B | Hand-written | 🚧 Golden dataset done (override, 2026-09-08); evaluations/A/B harness still 📋 planned |
 | 9 — Bedrock as an LLM provider | Claude Code | ✅ Done |
-| 10 — Docker + AWS deployment (App Runner) | Claude Code | 🚧 **In progress** - App Runner service created, still `OPERATION_IN_PROGRESS` as of last check; Postgres/Neon leg pending the user's Neon signup |
-| 11 — CI/CD + GitHub | Claude Code | 📋 Planned (unblocked - repo/branch/push already done) |
+| 10 — Docker + AWS deployment (App Runner) | Claude Code | ✅ Done - `RUNNING`, verified live (shallow + deep health, real Pinecone query); Postgres/Neon leg still pending the user's Neon signup (documented compromise, not a blocker) |
+| 11 — CI/CD + GitHub | Claude Code | ✅ CI verified passing on GitHub Actions; deploy workflow written but unexercised - needs `main` merge + 2 GitHub Secrets still pending from the user |
 
 **If you're picking this up after a restart with no session memory**, the
 one thing to check first is Phase 10's actual live AWS state - it does not
@@ -254,13 +254,25 @@ later, separate wave once this core is solid.
   gateway for the incoming query before it reaches retrieval.
   `ai/rag_pipeline/response_generation/guardrails_output/` (currently
   empty) - validates/filters the generated answer before it's returned.
-- [ ] **Phase 8 (hand-written) — Golden dataset + A/B testing + evaluations.**
-  `ai/rag_pipeline/evaluations/` (currently empty). Workshop Module 5
-  (retrieval metrics: Precision@K/Recall@K/F1; generation metrics:
-  groundedness/completeness via LLM-as-judge). The golden dataset (a fixed
-  set of question → expected-answer/expected-source pairs) is what both
-  the evaluation metrics and any A/B comparison between prompt/chunking
-  configurations run against.
+- [ ] **Phase 8 (hand-written, golden dataset sub-item overridden 2026-09-08) —
+  Golden dataset + A/B testing + evaluations.**
+  `ai/rag_pipeline/evaluations/` (currently empty) - the evaluation metrics
+  and A/B harness themselves remain hand-written and unbuilt: Workshop
+  Module 5 (retrieval metrics: Precision@K/Recall@K/F1; generation
+  metrics: groundedness/completeness via LLM-as-judge).
+
+  **The golden dataset itself is done** - `resources/golden_dataset/golden_dataset.json`,
+  22 cases, every fact read directly from the real PDF text in
+  `resources/kb_docs/` (not summarized from memory): 18 grounded
+  single-document cases across all six documents, 1 cross-document
+  synthesis case, and 3 adversarial cases (a question entirely outside
+  the knowledge base, a number the source document genuinely doesn't
+  state, and a false-premise question the answer should correct rather
+  than agree with). Built as an explicit, one-time override of this
+  phase's hand-written boundary - same pattern as Phase 4
+  (chunking/embedding/indexing), not a precedent for the rest of Phase 8.
+  Can't be exercised yet since `POST /rag/query` is still the Phase 6
+  stub - it exists now so it's ready the moment Phase 6 lands.
 - [x] **Phase 9 (Claude Code) — Bedrock as an LLM provider.**
   `BedrockChatClient` implementing `BaseLLMClient` via the Converse API, wired
   into `/health` the same way as OpenAI/Anthropic/OpenRouter
@@ -283,7 +295,7 @@ later, separate wave once this core is solid.
   change before deployment. Just worth knowing that "healthy" today reflects
   whatever AWS identity happens to be ambient on this machine, not one
   scoped to `hrb_chatbot_v2`.
-- [ ] **Phase 10 (Claude Code, in progress) — Docker + AWS deployment via App Runner.**
+- [x] **Phase 10 (Claude Code) — Docker + AWS deployment via App Runner.**
   Target chosen over ECS Fargate (simpler for one container, no ALB/task-def
   to hand-wire) and over AgentCore Runtime (per the earlier confirmed
   decision). Deploying under the same ambient AWS identity Phase 9 found
@@ -301,7 +313,8 @@ later, separate wave once this core is solid.
   | Access role (App Runner → ECR pull) | `arn:aws:iam::418884736369:role/hrb-chatbot-apprunner-access-role` |
   | Instance role (the running app's own permissions) | `arn:aws:iam::418884736369:role/hrb-chatbot-apprunner-instance-role` - inline policies `bedrock-invoke-only` (`bedrock:InvokeModel`, `InvokeModelWithResponseStream`, `ListFoundationModels`) and `secrets-manager-read-own` (`secretsmanager:GetSecretValue` on `hrb-chatbot/*` only) - deliberately **not** the admin identity that deployed it |
   | Secrets (Secrets Manager, `us-east-1`) | `hrb-chatbot/OPENAI_API_KEY`, `hrb-chatbot/ANTHROPIC_API_KEY`, `hrb-chatbot/OPENROUTER_API_KEY`, `hrb-chatbot/TAVILY_API_KEY`, `hrb-chatbot/PINECONE_API_KEY` - created by `create_secrets.py` (a scratchpad script, not in the repo) reading `.env` directly, values never echoed anywhere |
-  | App Runner service | `arn:aws:apprunner:us-east-1:418884736369:service/hrb-chatbot/63fcfce613a5425ab43cf8fd8dad8228` → `https://hr5nbczbdp.us-east-1.awsapprunner.com` |
+  | App Runner service (final, running) | `arn:aws:apprunner:us-east-1:418884736369:service/hrb-chatbot/f957548202f343aa8ca91f341d71d85a` → `https://mrgysvt6ye.us-east-1.awsapprunner.com` |
+  | GitHub Actions deploy user (Phase 11) | IAM user `hrb-chatbot-github-actions-deploy` - static access key, stored only in this repo's GitHub Actions secrets (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`), scoped to push `hrb-chatbot` ECR images and call `apprunner:StartDeployment`/`DescribeService` on this one service only |
 
   **A real code change landed as part of this phase** (not just config):
   `documents_service.py`, `ai/doc_processing/indexing/vector_indexer.py` and
@@ -336,18 +349,59 @@ later, separate wave once this core is solid.
     `boto3` script regardless, since `boto3` in the project's venv (1.43.89)
     already supports App Runner independent of the CLI's own version.
 
-  **What's actually done as of this writing:**
+  **What's actually done, verified live against the real deployed URL:**
   - [x] ECR repo created, image built locally and pushed as `:latest`.
   - [x] Both IAM roles created with scoped (non-admin) policies.
   - [x] Five secrets created in Secrets Manager from `.env`'s current keys.
   - [x] `RAG_METADATA_STORE` switch added and wired through all three call sites.
-  - [x] App Runner service created (`create_service` call succeeded).
-  - [ ] **App Runner service status was still `OPERATION_IN_PROGRESS`
-    (first deploy - image pull + provisioning) the last time it was
-    checked - not yet confirmed `RUNNING` or health-checked. If a fresh
-    session picks this up, the very first thing to do is
-    `describe_service` on the ARN above (or check the URL directly) before
-    assuming anything about this deployment's state.**
+  - [x] App Runner service `RUNNING` - confirmed via `GET /health` (`200`,
+    `"status":"healthy"`), `GET /health?deep=true` (`200`, real OpenAI call,
+    127 models visible - proves `OPENAI_API_KEY` resolved correctly from
+    Secrets Manager), and `GET /health?deep=true&vector_provider=pinecone`
+    (`200`, real Pinecone call, `total_vector_count: 45` - the same 45
+    chunks indexed during local testing, since Pinecone is the one shared
+    persistent backend both environments point at).
+
+  **Three real bugs, not one, across four deploy attempts - each found by
+  deploying and reading logs, not by reasoning about the config beforehand:**
+  1. **Secret ARNs hand-typed without their random suffix.** Secrets Manager
+     appends one to every secret name; App Runner's `RuntimeEnvironmentSecrets`
+     requires the exact full ARN, and silently produces `CREATE_FAILED` (image
+     pulls fine, container never starts, zero application-level logs) rather
+     than a validation error naming the real problem. Fixed by resolving ARNs
+     via `secretsmanager.list_secrets` at deploy time instead of ever
+     constructing one by hand again.
+  2. **BuildKit's default provenance/SBOM attestation manifests.** `docker
+     build` (no flags) pushes an OCI image *index* wrapping the real image
+     plus an attestation manifest - a well-documented cause of exactly this
+     "pulls fine, silently fails to start" symptom across AWS services
+     (Lambda has the identical documented issue). Fixed with
+     `--provenance=false --sbom=false`.
+  3. **OCI-format manifest, not classic Docker v2 schema2, even with
+     attestations off.** `docker manifest inspect` on the pushed image still
+     showed `mediaType: application/vnd.oci.image.manifest.v1+json` after
+     fix #2 - App Runner needs `application/vnd.docker.distribution.manifest.v2+json`.
+     Fixed with `docker buildx build --output type=image,...,oci-mediatypes=false,push=true`,
+     verified by re-running `docker manifest inspect` and confirming the
+     media type changed *before* spending another ~9-minute AWS deploy cycle
+     finding out the hard way.
+
+  All three fixes are load-bearing in `.github/workflows/deploy.yml` now
+  (Phase 11) - the build step's three flags are commented there specifically
+  so a future edit doesn't drop one back out.
+
+  **Known, deliberate, temporary compromise in the deployed config:**
+  `RAG_METADATA_STORE=sqlite` in the App Runner service's own environment
+  variables right now - the *ephemeral* option - because Neon didn't exist
+  yet when the service was created and App Runner refuses to start a
+  service whose `RuntimeEnvironmentSecrets` reference a secret ARN that
+  doesn't exist. `RAG_VECTOR_DB=pinecone` is already live and persistent.
+  Once Neon exists, finishing this is: create 5 more secrets
+  (`hrb-chatbot/POSTGRES_DB_HOST/PORT/NAME/USER/PASSWORD` - the instance
+  role's `hrb-chatbot/*` policy already covers them, no IAM change needed),
+  then call `apprunner.update_service` flipping `RAG_METADATA_STORE` to
+  `postgres` and adding those 5 to `RuntimeEnvironmentSecrets`. No image
+  rebuild needed - this is config-only.
 
   **Known, deliberate, temporary compromise in the deployed config:**
   `RAG_METADATA_STORE=sqlite` in the App Runner service's own environment
@@ -367,25 +421,66 @@ later, separate wave once this core is solid.
   connection details in chat (never echoed back, same handling as every
   other key in this project) or note them somewhere I can read directly.
 
-  **Stalled, not resolved:** upgrading the AWS CLI (`winget upgrade --id
-  Amazon.AWSCLI`) was started and got stuck at "Starting package install..."
-  for several minutes with no further output - almost certainly waiting on
-  a UAC elevation prompt this non-interactive shell can never answer. Does
-  not block anything above (deployment used `boto3` throughout), but the
-  CLI itself is still `2.0.30` as of this writing. If this matters later,
-  it needs a human to run the MSI installer directly and click through UAC
-  - not something to keep retrying the same way from here.
+  **AWS CLI upgrade** (`winget upgrade --id Amazon.AWSCLI`, 2.0.30 → 2.36.40):
+  appeared stuck at "Starting package install..." for several minutes with
+  no further output (assumed blocked on a UAC prompt this non-interactive
+  shell can't answer) - but it had actually completed in the background;
+  `aws --version` later confirmed `2.36.40`. Worth remembering: a
+  long-silent background command here isn't necessarily stuck, and is
+  worth checking again before working around it with something slower.
 
   **Not yet done:** CloudWatch log group verification (App Runner creates
   one automatically per service - not yet confirmed it's receiving this
   app's `structlog`/`loguru` output correctly), a custom domain (not
   requested), and any autoscaling configuration beyond App Runner's default.
-- [ ] **Phase 11 (Claude Code, unblocked) — CI/CD + GitHub.** No longer
-  blocked: `hrb_chatbot_v2` is a git repository with remote
-  `https://github.com/rvsree/hrb_chatbot_v2.git`, branch `hrb_rag_pipelines`
-  created before the first commit and pushed (`5798a7b`, 118 files). Remote
-  `main` is still empty - nothing merged there yet. GitHub Actions workflow
-  and git hooks not yet started.
+- [x] **Phase 11 (Claude Code) — CI/CD + GitHub.**
+  `.github/workflows/ci.yml` (every push/PR, any branch, no AWS credentials
+  at all - import smoke test + Docker build validation) and
+  `.github/workflows/deploy.yml` (push to `main` only - builds with the
+  same three flags Phase 10 found were load-bearing, pushes to ECR, calls
+  `apprunner start-deployment`). `.githooks/pre-commit` content-scans staged
+  diffs for real API key shapes before allowing a commit - opt in with
+  `git config core.hooksPath .githooks`.
+
+  **CI verified for real, not just committed:** pushed to `hrb_rag_pipelines`
+  (commit `00b7be8`) and polled the GitHub Actions API directly -
+  [run 34184448804](https://github.com/rvsree/hrb_chatbot_v2/actions/runs/34184448804)
+  completed `success` on both jobs (`App imports cleanly`, `Docker image
+  builds`).
+
+  **Deploy (`deploy.yml`) is written but not yet exercised** - it only
+  triggers on `main`, which is still empty on the remote (nothing merged
+  there yet, unchanged from before this phase). Two things need to happen
+  before it can run for real:
+  1. **Blocked on the user:** the two GitHub Actions secrets
+     (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` for the
+     `hrb-chatbot-github-actions-deploy` IAM user) still need to be added
+     via GitHub's own UI (Settings → Secrets and variables → Actions) -
+     the values are sitting in a local, un-committed scratch file
+     (`github_actions_credentials.txt`, never printed to any tool output
+     or chat message) specifically so they could be copied in without ever
+     appearing in this conversation. **Delete that file once copied in.**
+  2. A merge (or push) to `main`.
+
+  **Why a static IAM user instead of GitHub's OIDC (no long-lived keys)**:
+  the OIDC setup (an account-wide identity-provider trust relationship) was
+  blocked by Claude Code's own safety classifier and needed explicit
+  sign-off; offered as a choice, the user chose the static-key IAM user
+  instead, accepting a long-lived key in GitHub Secrets in exchange for a
+  simpler one-time setup - deliberate, not a fallback taken silently. The
+  user is still scoped tightly (ECR push to this one repo, App Runner
+  deploy-trigger on this one service only), same principle as every other
+  role in Phase 10, just not the zero-static-secret ideal.
+
+  **A bug in the hook itself, caught by testing it, not by writing it
+  carefully:** the first version's key-shape regex (`sk-[A-Za-z0-9]` with
+  no minimum length) matched *inside ordinary English words*
+  ("ta`sk-d`ef" in this very file) and blocked an unrelated commit. The fix
+  that added a length minimum then went too far the other way - it
+  forbade `-`/`_`, which real base64url key material actually contains, so
+  it stopped matching real keys at all. Both were only found by testing the
+  hook against realistically-shaped fake keys for all five providers before
+  trusting it - reasoning about the regex alone missed both.
 
 Explicitly deferred to a later, separate wave - not part of the above:
 **ReAct multi-agents, MCP tools, caching.**

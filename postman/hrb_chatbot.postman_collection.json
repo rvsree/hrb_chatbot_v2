@@ -1,0 +1,266 @@
+{
+  "info": {
+    "name": "HRB Chatbot API",
+    "description": "Every current REST endpoint (health, document upload/index, RAG query), happy path and edge cases side by side. Mirrors README_TEST.md - every case there was verified against a live server; the same claims apply here. Set the `base_url` variable to your local server (http://127.0.0.1:8093) or the deployed App Runner URL. Set `document_id` after running 'Upload - happy - single PDF' once, using its response.results[0].document_id.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8093" },
+    { "key": "document_id", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Shallow health (default, instant, free)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
+          }
+        },
+        {
+          "name": "Deep health - default provider (free call)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/health?deep=true",
+              "host": ["{{base_url}}"], "path": ["health"],
+              "query": [{ "key": "deep", "value": "true" }]
+            }
+          }
+        },
+        {
+          "name": "Deep health - specific provider + vector + metadata store",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/health?deep=true&provider=anthropic&vector_provider=pinecone&metadata_provider=postgres",
+              "host": ["{{base_url}}"], "path": ["health"],
+              "query": [
+                { "key": "deep", "value": "true" },
+                { "key": "provider", "value": "anthropic" },
+                { "key": "vector_provider", "value": "pinecone" },
+                { "key": "metadata_provider", "value": "postgres" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Edge - unknown provider (silently falls back to openai, not a 400)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/health?provider=made_up_provider",
+              "host": ["{{base_url}}"], "path": ["health"],
+              "query": [{ "key": "provider", "value": "made_up_provider" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Documents - upload",
+      "item": [
+        {
+          "name": "Happy - single PDF upload",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/rag/documents", "host": ["{{base_url}}"], "path": ["rag", "documents"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "files", "type": "file", "src": "resources/kb_docs/JPMC Healthcare Benefits.pdf" }
+              ]
+            },
+            "description": "After running this, copy response.results[0].document_id into the `document_id` collection variable for the index/get requests below."
+          }
+        },
+        {
+          "name": "Happy - batch upload, two valid PDFs",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/rag/documents", "host": ["{{base_url}}"], "path": ["rag", "documents"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "files", "type": "file", "src": "resources/kb_docs/JPMC Paid TimeOff.pdf" },
+                { "key": "files", "type": "file", "src": "resources/kb_docs/JPMC Guild Tuition Assistance.pdf" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Edge - batch with one invalid file (must still 200, one rejected)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/rag/documents", "host": ["{{base_url}}"], "path": ["rag", "documents"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "files", "type": "file", "src": "resources/kb_docs/JPMC Unpaid TimeOff.pdf" },
+                { "key": "files", "type": "text", "value": "In Postman, replace this row with a File field pointing at any non-PDF (e.g. a .txt) to reproduce README_TEST.md case 2.3." }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Edge - no files field at all (expect 422)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/rag/documents", "host": ["{{base_url}}"], "path": ["rag", "documents"] },
+            "body": { "mode": "formdata", "formdata": [] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Documents - list, get, index",
+      "item": [
+        {
+          "name": "Happy - list all documents",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/rag/documents", "host": ["{{base_url}}"], "path": ["rag", "documents"] }
+          }
+        },
+        {
+          "name": "Happy - get one document by id",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/rag/documents/{{document_id}}",
+              "host": ["{{base_url}}"], "path": ["rag", "documents", "{{document_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Edge - unknown document id (expect 404)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/rag/documents/does-not-exist",
+              "host": ["{{base_url}}"], "path": ["rag", "documents", "does-not-exist"]
+            }
+          }
+        },
+        {
+          "name": "Happy - index with defaults (spends: real embedding call)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/rag/documents/{{document_id}}/index",
+              "host": ["{{base_url}}"], "path": ["rag", "documents", "{{document_id}}", "index"]
+            }
+          }
+        },
+        {
+          "name": "Happy - index with per-call overrides (spends: real embedding call)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/rag/documents/{{document_id}}/index",
+              "host": ["{{base_url}}"], "path": ["rag", "documents", "{{document_id}}", "index"]
+            },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chunk_size\": 500,\n  \"chunk_overlap\": 50,\n  \"vector_db\": \"chromadb\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Edge - chunk_overlap >= chunk_size (expect 422)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/rag/documents/{{document_id}}/index",
+              "host": ["{{base_url}}"], "path": ["rag", "documents", "{{document_id}}", "index"]
+            },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"chunk_size\": 200,\n  \"chunk_overlap\": 200\n}" }
+          }
+        },
+        {
+          "name": "Edge - chunk_size below minimum of 100 (expect 422)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/rag/documents/{{document_id}}/index",
+              "host": ["{{base_url}}"], "path": ["rag", "documents", "{{document_id}}", "index"]
+            },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"chunk_size\": 50\n}" }
+          }
+        },
+        {
+          "name": "Edge - unknown vector_db name (expect 500, error names valid options)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/rag/documents/{{document_id}}/index",
+              "host": ["{{base_url}}"], "path": ["rag", "documents", "{{document_id}}", "index"]
+            },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"vector_db\": \"made_up_store\"\n}" }
+          }
+        },
+        {
+          "name": "Edge - index unknown document id (expect 404, no embedding call made)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/rag/documents/does-not-exist/index",
+              "host": ["{{base_url}}"], "path": ["rag", "documents", "does-not-exist", "index"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "RAG query (Phase 6 stub - all cases return 501 or a 4xx today)",
+      "item": [
+        {
+          "name": "\"Happy\" for a stub - well-formed query (expect 501, names ai/rag_pipeline/pipeline.py)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/rag/query", "host": ["{{base_url}}"], "path": ["rag", "query"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"How many weeks of paid parental leave does JPMorgan Chase provide?\",\n  \"top_k\": 5\n}"
+            },
+            "description": "Once Phase 6 (hand-written retrieval + generation) lands, swap in queries from resources/golden_dataset/golden_dataset.json - every case there has a real expected_answer grounded in the actual PDFs, verified by hand against the source text."
+          }
+        },
+        {
+          "name": "Edge - empty query string (expect 422)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/rag/query", "host": ["{{base_url}}"], "path": ["rag", "query"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"query\": \"\"\n}" }
+          }
+        },
+        {
+          "name": "Edge - top_k out of range, 100 > max of 20 (expect 422)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/rag/query", "host": ["{{base_url}}"], "path": ["rag", "query"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"query\": \"test\",\n  \"top_k\": 100\n}" }
+          }
+        },
+        {
+          "name": "Edge - missing query field entirely (expect 422)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/rag/query", "host": ["{{base_url}}"], "path": ["rag", "query"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" }
+          }
+        }
+      ]
+    }
+  ]
+}

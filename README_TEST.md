@@ -329,12 +329,24 @@ Expect `422` - `query` has no default.
 
 ---
 
-## Golden dataset - not created yet
+## Golden dataset
 
-**No.** A golden dataset (fixed question → expected-answer/expected-source
-pairs for evaluation and A/B testing) is Phase 8 in `docs/RAG-ROADMAP.md`,
-explicitly marked **hand-written** in this project's division-of-labor table
-- the same category as retrieval, generation, and guardrails, not something
-built alongside this test guide. It's still 📋 planned. This file's job is
-narrower: prove the boilerplate (upload, index, the stubs) behaves correctly
-today, not evaluate answer quality once Phase 6 exists.
+**Yes, as of 2026-09-08** - `resources/golden_dataset/golden_dataset.json`,
+22 real question → expected-answer/expected-source cases, every fact pulled
+directly from the actual text of the PDFs in `resources/kb_docs/` (read in
+full, not summarized from memory) - 18 grounded happy-path questions across
+all six documents, 1 cross-document synthesis case, and 3 adversarial/
+out-of-scope cases (a question the knowledge base can't answer at all, a
+number the source document genuinely doesn't state, and a false-premise
+question that should be corrected, not agreed with).
+
+This is a **one-time override** of Phase 8's hand-written boundary in
+`docs/RAG-ROADMAP.md` - the same kind of explicit, requested exception
+Phase 4 (chunking/embedding/indexing) was, not a new precedent for the rest
+of Phase 8 (retrieval metrics, LLM-as-judge evaluation, A/B testing
+infrastructure), which remain hand-written and unbuilt. The dataset can't
+be exercised yet either - `POST /rag/query` is still the Phase 6 stub (see
+case 5.1 above) - it exists now so it's ready the moment Phase 6 lands.
+
+For Postman-based manual testing, `postman/hrb_chatbot.postman_collection.json`
+covers every case in this file as importable requests.
