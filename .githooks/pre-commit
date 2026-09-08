@@ -10,12 +10,16 @@
 # default. Enable it once per clone with:
 #   git config core.hooksPath .githooks
 
-# Each prefix requires a long alnum run right after it - a real key is 20+
-# characters, an ordinary word never is. The first version of this pattern
-# used a bare "sk-[A-Za-z0-9]" with no minimum length, which matched inside
-# plain English text ("ta[sk-d]ef") - caught by this hook blocking its own
-# commit, not a hypothetical.
-PATTERNS='sk-[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9]{20,}|sk-or-v1-[A-Za-z0-9]{20,}|pcsk_[A-Za-z0-9]{20,}|tvly-[A-Za-z0-9]{15,}|AKIA[A-Z0-9]{16}'
+# Real key material is base64url (letters, digits, "-", "_"), not plain
+# alnum - a pattern that forbids "-"/"_" in the tail matches a fake test
+# key but silently fails to match a REAL Anthropic/OpenAI key, which is
+# exactly backwards for a secret scanner. Caught by hand: an early version
+# of this pattern used a bare "sk-[A-Za-z0-9]" with no minimum length
+# (matched inside plain English text, "ta[sk-d]ef"); the fix that added a
+# length minimum but forgot "-"/"_" then failed to match a real key at all.
+# Lengths below are picked well under each provider's real key length but
+# well above anything that occurs in ordinary hyphenated prose.
+PATTERNS='sk-ant-[A-Za-z0-9_-]{60,}|sk-proj-[A-Za-z0-9_-]{60,}|sk-or-v1-[A-Za-z0-9]{50,}|pcsk_[A-Za-z0-9_-]{40,}|tvly-[A-Za-z0-9_-]{25,}|AKIA[A-Z0-9]{16}'
 
 STAGED=$(git diff --cached --name-only --diff-filter=ACM)
 if [ -z "$STAGED" ]; then
