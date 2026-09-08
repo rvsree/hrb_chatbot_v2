@@ -71,7 +71,10 @@ async def write_chunks(
     if existing_document and existing_document.get("chunk_ids"):
         previous_chunk_ids = json.loads(existing_document["chunk_ids"])
 
-    action = "update" if previous_chunk_ids else "insert"
+    if previous_chunk_ids:
+        action = "update"
+    else:
+        action = "insert"
     new_chunk_ids = build_chunk_ids(document_id, len(chunks))
     metadatas = [{"document_id": document_id, "chunk_index": i} for i in range(len(chunks))]
 
@@ -85,8 +88,14 @@ async def write_chunks(
 
     # Only the ids that existed before but are NOT part of the fresh set are
     # stale - everything still in new_chunk_ids was just overwritten by the
-    # upsert above, not left behind.
-    stale_ids = [chunk_id for chunk_id in previous_chunk_ids if chunk_id not in new_chunk_ids]
+    # upsert above, not left behind. Written as an explicit loop rather than
+    # a list comprehension with an inline "if" filter, which combines two
+    # unfamiliar-from-Java things (comprehension syntax + an inline filter
+    # clause) into one line.
+    stale_ids = []
+    for chunk_id in previous_chunk_ids:
+        if chunk_id not in new_chunk_ids:
+            stale_ids.append(chunk_id)
     if stale_ids:
         vector_store.delete(collection_name=COLLECTION_NAME, ids=stale_ids)
         logger.info("Removed %d stale chunk(s) for document %s", len(stale_ids), document_id)

@@ -53,5 +53,8 @@ def health_response(report: dict) -> JSONResponse:
     200 when the report says healthy, 503 when it does not - a monitoring tool
     watches the status code and never reads the body.
     """
-    status_code = 200 if report["status"] == "healthy" else 503
+    if report["status"] == "healthy":
+        status_code = 200
+    else:
+        status_code = 503
     return JSONResponse(content=report, status_code=status_code)

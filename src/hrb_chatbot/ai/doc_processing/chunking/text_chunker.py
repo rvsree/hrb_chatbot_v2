@@ -42,9 +42,16 @@ def _recursive_split(text: str, separators: list[str], chunk_size: int) -> list[
     """Split text into pieces no larger than chunk_size, preferring the
     largest separator that actually gets every piece under the limit."""
     if len(text) <= chunk_size:
-        return [text] if text.strip() else []
+        if text.strip():
+            return [text]
+        else:
+            return []
 
-    separator, *remaining_separators = separators
+    # separators[0] is the largest separator to try first; separators[1:] is
+    # everything after it, passed down for the recursive call below if this
+    # one isn't enough on its own.
+    separator = separators[0]
+    remaining_separators = separators[1:]
 
     if separator == "":
         # Last resort: no separator left that helps - hard-cut at chunk_size.
@@ -70,7 +77,10 @@ def _merge_with_overlap(pieces: list[str], chunk_size: int, chunk_overlap: int) 
     current = ""
 
     for piece in pieces:
-        candidate = f"{current} {piece}".strip() if current else piece
+        if current:
+            candidate = f"{current} {piece}".strip()
+        else:
+            candidate = piece
 
         if len(candidate) <= chunk_size:
             current = candidate
@@ -81,8 +91,15 @@ def _merge_with_overlap(pieces: list[str], chunk_size: int, chunk_overlap: int) 
 
         # Start the next chunk with the tail of the one just finished, so
         # content right at the boundary isn't only ever seen in one chunk.
-        overlap_text = current[-chunk_overlap:] if current else ""
-        current = f"{overlap_text} {piece}".strip() if overlap_text else piece
+        if current:
+            overlap_text = current[-chunk_overlap:]
+        else:
+            overlap_text = ""
+
+        if overlap_text:
+            current = f"{overlap_text} {piece}".strip()
+        else:
+            current = piece
 
     if current:
         chunks.append(current)

@@ -69,21 +69,43 @@ def retrieve_chunks(
     )
 
 
-def generate_answer(query: str, chunks: list[dict]) -> str:
+def generate_answer(
+    query: str,
+    chunks: list[dict],
+    model_name: str | None = None,
+    temperature: float = 0.0,
+    max_tokens: int | None = None,
+) -> str:
     """Generate a grounded answer to query, using only the given chunks as context.
 
     Workshop Module 4 covers the anti-hallucination prompting strategy this
     should follow - the model should say it doesn't know rather than
     answer from outside the given chunks.
+
+    model_name/temperature/max_tokens come straight from RagQueryRequest
+    (models/rag.py) - None for model_name means "use whatever
+    get_client_gateway().openai_chat() is already configured for", the same
+    None-means-default convention vector_db already uses.
     """
     raise NotImplementedError(
         "generate_answer() is not implemented yet - see "
         "ai/rag_pipeline/response_generation/. The chat client already "
-        "works: get_client_gateway().openai_chat().ask(question, context=...)."
+        "works: get_client_gateway().openai_chat().ask(question, context=..., "
+        "temperature=..., max_tokens=...) - model_name would need a new "
+        "constructor argument on OpenAIChatClient to override OPENAI_CHAT_MODEL "
+        "per call, matching how IndexRequest.embedding_model already overrides "
+        "OPENAI_EMBED_MODEL per call in models/documents.py."
     )
 
 
-async def answer_query(query: str, top_k: int = 5, vector_db: str | None = None) -> dict:
+async def answer_query(
+    query: str,
+    top_k: int = 5,
+    vector_db: str | None = None,
+    model_name: str | None = None,
+    temperature: float = 0.0,
+    max_tokens: int | None = None,
+) -> dict:
     """Run the full pipeline for one question: decompose, retrieve, generate.
 
     Called by POST /rag/query. Exceptions are deliberately not caught here -
@@ -97,7 +119,9 @@ async def answer_query(query: str, top_k: int = 5, vector_db: str | None = None)
 
     sub_queries = decompose_query(query)
     chunks = retrieve_chunks(sub_queries, top_k=top_k, vector_db=resolved_vector_db)
-    answer = generate_answer(query, chunks)
+    answer = generate_answer(
+        query, chunks, model_name=model_name, temperature=temperature, max_tokens=max_tokens
+    )
 
     logger.info("Query %r answered using %d chunk(s)", query, len(chunks))
 

@@ -127,10 +127,23 @@ def check_everything(
         # TODO(next feature - tools): "tools": check_tools()
     }
 
-    everything_works = all(is_working(result) for result in checks.values())
+    # True only if every single check passed - written as an explicit loop
+    # rather than Python's all(... for ...) idiom (a generator expression
+    # passed straight into a function call), which has no direct Java
+    # equivalent and reads oddly the first several times you see it.
+    everything_works = True
+    for result in checks.values():
+        if not is_working(result):
+            everything_works = False
+            break
+
+    if everything_works:
+        overall_status = "healthy"
+    else:
+        overall_status = "unhealthy"
 
     return {
-        "status": "healthy" if everything_works else "unhealthy",
+        "status": overall_status,
         "app": "HRB Chatbot",
         "deep": deep,
         # Which settings .env replaced on the way in. Usually an empty list. Only

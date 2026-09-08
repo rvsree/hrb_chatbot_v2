@@ -35,7 +35,15 @@ async def upload_documents(files: list[UploadFile] = File(...)):
     """
     results = await documents_service.save_uploads(files)
 
-    uploaded_count = sum(1 for result in results if result.status == "uploaded")
+    # Count how many results have status "uploaded" - written as an explicit
+    # loop rather than Python's sum(1 for ... if ...) idiom, which reads
+    # naturally once you're used to it but is genuinely unfamiliar syntax
+    # coming from Java (there's no direct equivalent to a generator
+    # expression passed straight into a function call).
+    uploaded_count = 0
+    for result in results:
+        if result.status == "uploaded":
+            uploaded_count += 1
     rejected_count = len(results) - uploaded_count
 
     return DocumentUploadResponse(

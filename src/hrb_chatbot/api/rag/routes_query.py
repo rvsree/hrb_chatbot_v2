@@ -23,7 +23,12 @@ async def query(payload: RagQueryRequest):
     """Ask a question and get back a grounded answer with its sources."""
     try:
         result = await rag_service.answer_query(
-            payload.query, top_k=payload.top_k, vector_db=payload.vector_db
+            payload.query,
+            top_k=payload.top_k,
+            vector_db=payload.vector_db,
+            model_name=payload.model_name,
+            temperature=payload.temperature,
+            max_tokens=payload.max_tokens,
         )
     except NotImplementedError as error:
         return json_error(501, str(error))

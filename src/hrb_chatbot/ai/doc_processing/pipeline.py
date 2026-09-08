@@ -33,10 +33,21 @@ def chunk_document(
 ) -> list[str]:
     """Extract a PDF's text and split it into overlapping chunks."""
     text = extract_text_from_pdf(file_path)
+
+    # chunk_overlap needs its own explicit "is None" check, unlike
+    # chunk_size's "or" above - 0 is a real, valid overlap (no overlap at
+    # all) that Python's `or` would incorrectly treat as "not given" and
+    # silently replace with the default, since `0 or DEFAULT` always
+    # evaluates to DEFAULT.
+    if chunk_overlap is None:
+        resolved_overlap = DEFAULT_CHUNK_OVERLAP
+    else:
+        resolved_overlap = chunk_overlap
+
     return chunk_text(
         text,
         chunk_size=chunk_size or DEFAULT_CHUNK_SIZE,
-        chunk_overlap=chunk_overlap if chunk_overlap is not None else DEFAULT_CHUNK_OVERLAP,
+        chunk_overlap=resolved_overlap,
     )
 
 
@@ -77,7 +88,13 @@ async def index_document(
         None, "OPENAI_EMBED_MODEL", OpenAIEmbeddingClient.DEFAULT_MODEL
     )
     resolved_chunk_size = chunk_size or DEFAULT_CHUNK_SIZE
-    resolved_chunk_overlap = chunk_overlap if chunk_overlap is not None else DEFAULT_CHUNK_OVERLAP
+
+    # Same "0 is a valid overlap" reasoning as chunk_document() above - an
+    # explicit is-None check, not `or`, which would wrongly replace 0.
+    if chunk_overlap is None:
+        resolved_chunk_overlap = DEFAULT_CHUNK_OVERLAP
+    else:
+        resolved_chunk_overlap = chunk_overlap
 
     logger.info(
         "Indexing document %s from %s (vector_db=%s, embedding_model=%s, chunk_size=%s, chunk_overlap=%s)",
@@ -101,6 +118,10 @@ async def index_document(
         result["chunks_removed"],
     )
 
+    # `**result` copies every key from result (action, chunks_indexed,
+    # chunks_removed - see write_chunks()'s docstring) into this new dict,
+    # the same effect as Java's Map.putAll(result) would have, just spelled
+    # as a dict literal instead of a separate statement.
     return {
         "document_id": document_id,
         "vector_db": resolved_vector_db,

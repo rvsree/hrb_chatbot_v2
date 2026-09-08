@@ -105,7 +105,10 @@ def _parse_chunk_ids(document: dict) -> dict:
     response - the metadata clients store it as text (see
     base_metadata_client.py), so this is the one place that decodes it."""
     raw = document.get("chunk_ids")
-    document["chunk_ids"] = json.loads(raw) if raw else None
+    if raw:
+        document["chunk_ids"] = json.loads(raw)
+    else:
+        document["chunk_ids"] = None
     return document
 
 
@@ -118,4 +121,6 @@ async def list_documents() -> list[dict]:
 async def get_document(document_id: str) -> dict | None:
     """Return one document's metadata, or None if the id is unknown."""
     document = await get_db_gateway().metadata_store().get_document(document_id)
-    return _parse_chunk_ids(document) if document else None
+    if document is None:
+        return None
+    return _parse_chunk_ids(document)
