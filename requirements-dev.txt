@@ -1,0 +1,14 @@
+# =============================================================================
+# HRB Chatbot - development-only dependencies
+# =============================================================================
+# Not needed to run the app, only to test it. Kept separate from
+# requirements.txt so a production/App Runner image never installs these.
+
+pytest==8.4.2
+# The app's own client/service functions are async (aiosqlite, async DB
+# gateway methods) - pytest itself does not know how to await a test
+# function without this plugin.
+pytest-asyncio==1.2.0
+# FastAPI's own TestClient needs httpx, already in requirements.txt - listed
+# here too as a reminder that tests/hrb_chatbot/api/ depends on it directly.
+httpx==0.28.1
