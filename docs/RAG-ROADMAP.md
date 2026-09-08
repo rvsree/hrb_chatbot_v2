@@ -47,6 +47,44 @@ Python entry points (`index_document(...)`, `answer_query(...)`) that raise
 same pattern already used for `PineconeClient`'s stub and for `check_tools()`
 in `health_checks.py`.
 
+## Status at a glance
+
+Updated 2026-09-07. This table is the fast-read summary; the full "Phases"
+section below it is the authoritative detail - if the two ever disagree,
+the detail below is correct and this table is stale, not the other way
+around.
+
+| Phase | Who | Status |
+|---|---|---|
+| 1 — ChromaDB client + gateway | Claude Code | ✅ Done |
+| 2 — Document upload API | Claude Code | ✅ Done |
+| 2.5 — Postgres metadata store | Claude Code | ✅ Done |
+| 2.6 — Pinecone vector store | Claude Code | ✅ Done |
+| 3 — Indexing trigger endpoint | Claude Code | ✅ Done |
+| 4 — Chunking/embedding/indexing | Claude Code (override) | ✅ Done |
+| 4.1 — Per-call config overrides | Claude Code (override) | ✅ Done |
+| 5 — Query endpoint, stubbed | Claude Code | ✅ Done |
+| 5.1 — Query decomposition | Hand-written | 📋 Planned |
+| 5.2 — Query variants | Hand-written | 📋 Planned |
+| 5.3 — Prompt chaining + versioning | Hand-written | 📋 Planned |
+| 6 — Retrieval + grounded generation, COT | Hand-written | 📋 Planned |
+| 6.1 — Contracts/validation for query path | Claude Code | 📋 Planned (gated on Phase 6) |
+| 7 — Guardrails (input + output) | Hand-written | 📋 Planned |
+| 8 — Golden dataset + evaluations + A/B | Hand-written | 📋 Planned |
+| 9 — Bedrock as an LLM provider | Claude Code | ✅ Done |
+| 10 — Docker + AWS deployment (App Runner) | Claude Code | 🚧 **In progress** - App Runner service created, still `OPERATION_IN_PROGRESS` as of last check; Postgres/Neon leg pending the user's Neon signup |
+| 11 — CI/CD + GitHub | Claude Code | 📋 Planned (unblocked - repo/branch/push already done) |
+
+**If you're picking this up after a restart with no session memory**, the
+one thing to check first is Phase 10's actual live AWS state - it does not
+show up by reading code, only by querying AWS directly:
+```
+aws apprunner describe-service --region us-east-1 \
+  --service-arn arn:aws:apprunner:us-east-1:418884736369:service/hrb-chatbot/63fcfce613a5425ab43cf8fd8dad8228
+```
+(needs `aws-cli` ≥ 2.something-with-apprunner, or run the equivalent
+`boto3` call - see Phase 10 below for why the CLI here may still be too old).
+
 ## Phases
 
 - [x] **Phase 1 (Claude Code) — ChromaDB client + gateway.**
@@ -223,23 +261,131 @@ later, separate wave once this core is solid.
   set of question → expected-answer/expected-source pairs) is what both
   the evaluation metrics and any A/B comparison between prompt/chunking
   configurations run against.
-- [ ] **Phase 9 (Claude Code) — Bedrock as an LLM provider.** Already
-  backlogged (`docs/BACKLOG.md`) - `BedrockChatClient` implementing
-  `BaseLLMClient`, wired into `/health` the same way as
-  OpenAI/Anthropic/OpenRouter. Deferred from the previous session at Claude
-  Code's own suggestion, not yet started.
-- [ ] **Phase 10 (Claude Code) — Docker + AWS deployment.** The Dockerfile
-  already exists and is build-verified locally (Phase 1). Real AWS
-  deployment (ECS or App Runner - not AgentCore Runtime, per the earlier
-  confirmed decision) is new work: task definition / service config,
-  the actual Bedrock IAM permissions, CloudWatch log group.
-- [ ] **Phase 11 (blocked - needs the user) — CI/CD + GitHub.** Blocked as
-  of 2026-09-09: `hrb_chatbot_v2` is not yet a git repository at all (no
-  `.git`, no remote), and whether
-  `https://github.com/rvsree/hr_benefits_chatbot` already has content is
-  unknown (no `gh` CLI available to check). Needs answers before any
-  `git init`/remote/branch/push happens - see the chat turn this was
-  raised in.
+- [x] **Phase 9 (Claude Code) — Bedrock as an LLM provider.**
+  `BedrockChatClient` implementing `BaseLLMClient` via the Converse API, wired
+  into `/health` the same way as OpenAI/Anthropic/OpenRouter
+  (`provider=bedrock`) and into `client_gateway.py`'s lazy accessor pattern.
+  `ask_with_tools()`'s OpenAI↔Bedrock tool-format conversion is untested
+  against a real tool-calling request - only `ask()` and the deep health
+  check have been exercised live.
+
+  One thing worth knowing, not glossed over: the deep health check
+  (`GET /health?deep=true&provider=bedrock`) passed against a real AWS
+  account (122 models visible) using credentials this project never
+  configured - `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` are both blank in
+  `.env`, so boto3's default credential chain fell through to a
+  pre-existing `~/.aws/credentials` file already on this machine (confirmed
+  via `boto3.Session().get_credentials().method` ==
+  `"shared-credentials-file"`), unrelated to this project. Asked the user
+  whether to pin project-specific credentials instead; the user chose to
+  keep relying on the default chain deliberately - the same mechanism an
+  ECS/App Runner task role will use in Phase 10, so nothing here needs to
+  change before deployment. Just worth knowing that "healthy" today reflects
+  whatever AWS identity happens to be ambient on this machine, not one
+  scoped to `hrb_chatbot_v2`.
+- [ ] **Phase 10 (Claude Code, in progress) — Docker + AWS deployment via App Runner.**
+  Target chosen over ECS Fargate (simpler for one container, no ALB/task-def
+  to hand-wire) and over AgentCore Runtime (per the earlier confirmed
+  decision). Deploying under the same ambient AWS identity Phase 9 found
+  (`BedrockAgentCore` user, account `418884736369`, region `us-east-1`) -
+  confirmed via `aws sts get-caller-identity` / `iam list-attached-user-policies`
+  that this identity holds `AdministratorAccess` and the account already
+  hosts unrelated projects (`ai-workflows/vacation-planner-*` in ECR,
+  `us-east-2`) - not a project-dedicated account, the user's own general
+  sandbox, used deliberately with informed consent.
+
+  **Real resource identifiers - write these down, they're useless from memory:**
+  | What | Value |
+  |---|---|
+  | ECR repository | `418884736369.dkr.ecr.us-east-1.amazonaws.com/hrb-chatbot` |
+  | Access role (App Runner → ECR pull) | `arn:aws:iam::418884736369:role/hrb-chatbot-apprunner-access-role` |
+  | Instance role (the running app's own permissions) | `arn:aws:iam::418884736369:role/hrb-chatbot-apprunner-instance-role` - inline policies `bedrock-invoke-only` (`bedrock:InvokeModel`, `InvokeModelWithResponseStream`, `ListFoundationModels`) and `secrets-manager-read-own` (`secretsmanager:GetSecretValue` on `hrb-chatbot/*` only) - deliberately **not** the admin identity that deployed it |
+  | Secrets (Secrets Manager, `us-east-1`) | `hrb-chatbot/OPENAI_API_KEY`, `hrb-chatbot/ANTHROPIC_API_KEY`, `hrb-chatbot/OPENROUTER_API_KEY`, `hrb-chatbot/TAVILY_API_KEY`, `hrb-chatbot/PINECONE_API_KEY` - created by `create_secrets.py` (a scratchpad script, not in the repo) reading `.env` directly, values never echoed anywhere |
+  | App Runner service | `arn:aws:apprunner:us-east-1:418884736369:service/hrb-chatbot/63fcfce613a5425ab43cf8fd8dad8228` → `https://hr5nbczbdp.us-east-1.awsapprunner.com` |
+
+  **A real code change landed as part of this phase** (not just config):
+  `documents_service.py`, `ai/doc_processing/indexing/vector_indexer.py` and
+  `api/rag/routes_documents.py` all called `db_gateway.sqlite()` directly,
+  with no config switch - unlike the vector store, the metadata store had
+  no equivalent of `RAG_VECTOR_DB`. This surfaced because App Runner has no
+  persistent local disk (same problem `docs/S3-ASYNC-UPLOAD-DESIGN.md`
+  already documented for Lambda) - SQLite silently wiped on every restart
+  would have been discovered by *deploying*, not by anyone reading the code.
+  Added `db_gateway.metadata_store(provider=None)` reading a new
+  `RAG_METADATA_STORE` setting (`sqlite` default, matches local dev
+  unchanged; `postgres` for anywhere without persistent disk), and switched
+  all three call sites to it. `documents_service.py`/`vector_indexer.py` are
+  Claude-Code-owned per the seam table above, so this was in-scope to fix
+  without asking - the hand-written `ai/rag_pipeline/` layer was untouched.
+
+  **Decided, with the user, before spending anything:**
+  - App Runner over ECS Fargate (see above).
+  - Deployed backends are **Pinecone (vector) + Postgres (metadata)**, not
+    the local defaults (chromadb+sqlite) - both already fully implemented
+    (Phases 2.5/2.6), both remote, both survive an App Runner restart.
+  - Postgres reachability: **hosted Postgres (Neon)**, not Amazon RDS - RDS
+    would need a DB subnet group, a security group, and an App Runner VPC
+    Connector just to reach a VPC; Neon is a plain reachable connection
+    string, same `postgres_client.py` code, zero networking to wire up.
+  - Secrets via **AWS Secrets Manager**, not plaintext App Runner
+    environment variables - the instance role can read only the
+    `hrb-chatbot/*` secrets, nothing else in the account.
+  - AWS CLI here was `aws-cli/2.0.30` (~2020), missing `apprunner` and other
+    modern subcommands entirely - user chose to upgrade it (see below)
+    rather than script around it forever; deployment itself was done via a
+    `boto3` script regardless, since `boto3` in the project's venv (1.43.89)
+    already supports App Runner independent of the CLI's own version.
+
+  **What's actually done as of this writing:**
+  - [x] ECR repo created, image built locally and pushed as `:latest`.
+  - [x] Both IAM roles created with scoped (non-admin) policies.
+  - [x] Five secrets created in Secrets Manager from `.env`'s current keys.
+  - [x] `RAG_METADATA_STORE` switch added and wired through all three call sites.
+  - [x] App Runner service created (`create_service` call succeeded).
+  - [ ] **App Runner service status was still `OPERATION_IN_PROGRESS`
+    (first deploy - image pull + provisioning) the last time it was
+    checked - not yet confirmed `RUNNING` or health-checked. If a fresh
+    session picks this up, the very first thing to do is
+    `describe_service` on the ARN above (or check the URL directly) before
+    assuming anything about this deployment's state.**
+
+  **Known, deliberate, temporary compromise in the deployed config:**
+  `RAG_METADATA_STORE=sqlite` in the App Runner service's own environment
+  variables right now - the *ephemeral* option - because Neon didn't exist
+  yet when the service was created and App Runner refuses to start a
+  service whose `RuntimeEnvironmentSecrets` reference a secret ARN that
+  doesn't exist. `RAG_VECTOR_DB=pinecone` is already live and persistent.
+  Once Neon exists, finishing this is: create 5 more secrets
+  (`hrb-chatbot/POSTGRES_DB_HOST/PORT/NAME/USER/PASSWORD` - the instance
+  role's `hrb-chatbot/*` policy already covers them, no IAM change needed),
+  then call `apprunner.update_service` flipping `RAG_METADATA_STORE` to
+  `postgres` and adding those 5 to `RuntimeEnvironmentSecrets`. No image
+  rebuild needed - this is config-only.
+
+  **Blocked on the user, not on Claude Code:** a free Neon Postgres
+  project/database - sign up at neon.tech, create one, and either paste the
+  connection details in chat (never echoed back, same handling as every
+  other key in this project) or note them somewhere I can read directly.
+
+  **Stalled, not resolved:** upgrading the AWS CLI (`winget upgrade --id
+  Amazon.AWSCLI`) was started and got stuck at "Starting package install..."
+  for several minutes with no further output - almost certainly waiting on
+  a UAC elevation prompt this non-interactive shell can never answer. Does
+  not block anything above (deployment used `boto3` throughout), but the
+  CLI itself is still `2.0.30` as of this writing. If this matters later,
+  it needs a human to run the MSI installer directly and click through UAC
+  - not something to keep retrying the same way from here.
+
+  **Not yet done:** CloudWatch log group verification (App Runner creates
+  one automatically per service - not yet confirmed it's receiving this
+  app's `structlog`/`loguru` output correctly), a custom domain (not
+  requested), and any autoscaling configuration beyond App Runner's default.
+- [ ] **Phase 11 (Claude Code, unblocked) — CI/CD + GitHub.** No longer
+  blocked: `hrb_chatbot_v2` is a git repository with remote
+  `https://github.com/rvsree/hrb_chatbot_v2.git`, branch `hrb_rag_pipelines`
+  created before the first commit and pushed (`5798a7b`, 118 files). Remote
+  `main` is still empty - nothing merged there yet. GitHub Actions workflow
+  and git hooks not yet started.
 
 Explicitly deferred to a later, separate wave - not part of the above:
 **ReAct multi-agents, MCP tools, caching.**

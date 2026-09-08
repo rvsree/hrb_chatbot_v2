@@ -15,18 +15,52 @@ up, rather than marking it done in place here.
   `ANTHROPIC_BASE_URL` carried an erroneous `/v1` suffix (Anthropic's own
   docstring says host-only, opposite of OpenAI) - corrected. Retested live:
   `healthy`, 11 models visible, `chat_model_available: true`.
-- **Bedrock as an LLM provider.** Add `BedrockChatClient` implementing
-  `BaseLLMClient`, alongside OpenAI/Anthropic/OpenRouter, using AWS's
-  `bedrock-runtime` `Converse` API. Confirmed with the user: this is Bedrock
+- ~~**Bedrock as an LLM provider.**~~ Done 2026-09-07 (Phase 9). `BedrockChatClient`
+  implementing `BaseLLMClient` via the `Converse` API, wired into `/health`
+  alongside OpenAI/Anthropic/OpenRouter. Confirmed with the user: Bedrock
   *as one more provider option*, not adopting Bedrock AgentCore Runtime as
-  the hosting platform (that's a materially different, bigger commitment -
-  see `crewai_app_demo`'s `/ping` + `/invocations` contract if that's ever
-  reconsidered).
+  the hosting platform. One thing surfaced worth remembering: the deep
+  health check passed using an ambient personal AWS credential already on
+  this machine (`~/.aws/credentials`, identity `BedrockAgentCore`,
+  account `418884736369`), not anything this project configured - see
+  Phase 9 in `docs/RAG-ROADMAP.md` for the full account/permissions finding.
+  `ask_with_tools()`'s tool-format conversion is still untested against a
+  real tool call.
 - **Tavily health check.** `common/clients/web_client/tavily_client.py`
   exists and is wired into `client_gateway.py`, but nothing calls its
   `health_check()` from `/health` - unlike the three LLM providers, it isn't
   an LLM so it doesn't belong under `check_llm()`. Needs its own
   `check_web_search()` (or similar) folded into `check_everything()`.
+
+## AWS deployment (Phase 10, in progress)
+
+- **Metadata store had no config switch - fixed.** `documents_service.py`,
+  `vector_indexer.py`, and `routes_documents.py` all called
+  `db_gateway.sqlite()` directly, hardcoded, unlike the vector store's
+  `RAG_VECTOR_DB`. Surfaced by deploying to App Runner (no persistent
+  local disk) rather than by reading the code. Added
+  `db_gateway.metadata_store()` reading a new `RAG_METADATA_STORE` setting
+  (`sqlite` default - local dev unchanged; `postgres` for anywhere without
+  persistent disk) and switched all three call sites. Done 2026-09-07.
+- **Deployed service is temporarily running `RAG_METADATA_STORE=sqlite`
+  anyway** - the ephemeral option - because Neon (the chosen hosted
+  Postgres) doesn't exist yet, and App Runner refuses to start a service
+  whose `RuntimeEnvironmentSecrets` reference a not-yet-existing secret
+  ARN. `RAG_VECTOR_DB=pinecone` is already live and persistent. Finish this
+  once Neon exists: 5 more Secrets Manager entries
+  (`hrb-chatbot/POSTGRES_DB_HOST/PORT/NAME/USER/PASSWORD`), then
+  `apprunner.update_service` flipping the env var and adding those secrets
+  - config-only, no rebuild. See Phase 10 in `docs/RAG-ROADMAP.md` for the
+  exact resource ARNs.
+- **AWS CLI upgrade stalled, not resolved.** `winget upgrade --id
+  Amazon.AWSCLI` (2.0.30 → 2.36.40) got stuck at "Starting package
+  install..." with no further progress - almost certainly a UAC elevation
+  prompt this non-interactive shell can't answer. Doesn't block anything -
+  deployment was scripted via `boto3` instead - but the CLI itself is still
+  the old version. Needs a human to run the MSI installer directly and
+  click through the UAC prompt.
+- **Blocked on the user:** a free Neon Postgres project/database (neon.tech)
+  - external signup, not something Claude Code can do on the user's behalf.
 
 ## API hardening (same shape as the sibling project's NFR backlog)
 

@@ -1,0 +1,42 @@
+#!/bin/sh
+# Blocks a commit that would ship a real API key, matching the manual
+# content-level scan (not just filename checks) done by hand before the
+# first push of this repo - see docs/RAG-ROADMAP.md's git setup notes.
+# A filename check alone isn't enough: .env is already gitignored, but
+# nothing stops a real key ending up pasted into a script, a notebook, or
+# this file's own scratch output.
+#
+# Not installed automatically - git does not version-control hooks by
+# default. Enable it once per clone with:
+#   git config core.hooksPath .githooks
+
+# Each prefix requires a long alnum run right after it - a real key is 20+
+# characters, an ordinary word never is. The first version of this pattern
+# used a bare "sk-[A-Za-z0-9]" with no minimum length, which matched inside
+# plain English text ("ta[sk-d]ef") - caught by this hook blocking its own
+# commit, not a hypothetical.
+PATTERNS='sk-[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9]{20,}|sk-or-v1-[A-Za-z0-9]{20,}|pcsk_[A-Za-z0-9]{20,}|tvly-[A-Za-z0-9]{15,}|AKIA[A-Z0-9]{16}'
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM)
+if [ -z "$STAGED" ]; then
+    exit 0
+fi
+
+FOUND=0
+for file in $STAGED; do
+    # .env itself is gitignored and never expected to be staged, but a
+    # renamed/copied .env.something could slip past that - scan every
+    # staged file's actual content, not just trust the gitignore.
+    if git diff --cached -- "$file" | grep -Eq "$PATTERNS"; then
+        echo "pre-commit: possible real API key found in $file - commit blocked"
+        FOUND=1
+    fi
+done
+
+if [ "$FOUND" -eq 1 ]; then
+    echo ""
+    echo "If this is a false positive (e.g. a redacted example key), commit with --no-verify."
+    exit 1
+fi
+
+exit 0

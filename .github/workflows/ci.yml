@@ -1,0 +1,49 @@
+name: CI
+
+# Runs on every push and PR, on every branch - no AWS credentials are needed
+# here at all, deliberately: this workflow only proves the app still
+# imports and the Docker image still builds, neither of which touches AWS.
+# Deployment (deploy.yml) is the only workflow that needs real credentials,
+# and it's scoped to main only - see that file for why.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  import-check:
+    name: App imports cleanly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Import the app
+        # No test suite exists yet (see docs/BACKLOG.md) - this is the
+        # cheapest real regression check available today: a broken import
+        # (a bad merge, a missing dependency, a circular import) fails
+        # loudly here instead of silently at the next deploy.
+        run: python -c "import src.hrb_chatbot.main"
+
+  docker-build:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        # --provenance=false --sbom=false: BuildKit's default attestation
+        # manifests are what broke the very first App Runner deployment of
+        # this image (CREATE_FAILED, image pulled fine, container never
+        # started - AWS services expect a plain Docker v2 manifest, not an
+        # OCI image index with attestations). This flag is load-bearing,
+        # not cosmetic - dropping it silently reintroduces that bug the
+        # next time this workflow builds the real deploy artifact.
+        run: docker build --provenance=false --sbom=false -t hrb-chatbot:ci .

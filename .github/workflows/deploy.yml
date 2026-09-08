@@ -1,0 +1,59 @@
+name: Deploy
+
+# Only main triggers this - a push to any other branch (including a PR
+# branch) never reaches AWS at all. The AWS credentials this job uses
+# belong to hrb-chatbot-github-actions-deploy, a dedicated IAM user created
+# specifically for this workflow - not the admin identity used to build
+# everything in docs/RAG-ROADMAP.md's Phase 10 by hand. That user can only
+# push to the hrb-chatbot ECR repository and trigger this one App Runner
+# service's deployment - see its inline policy for the exact permissions.
+on:
+  push:
+    branches: ["main"]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: 418884736369.dkr.ecr.us-east-1.amazonaws.com/hrb-chatbot
+  APP_RUNNER_SERVICE_ARN: arn:aws:apprunner:us-east-1:418884736369:service/hrb-chatbot/f957548202f343aa8ca91f341d71d85a
+
+jobs:
+  build-and-deploy:
+    name: Build, push, and deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} \
+            | docker login --username AWS --password-stdin ${{ env.ECR_REPOSITORY }}
+
+      - name: Build image
+        # --provenance=false --sbom=false --output oci-mediatypes=false:
+        # all three matter, not just the first two. Attestation manifests
+        # AND OCI-format manifests (as opposed to classic Docker v2 schema2)
+        # both independently caused App Runner to pull the image
+        # successfully and then silently fail to ever start the container
+        # (CREATE_FAILED, zero application logs) - see docs/RAG-ROADMAP.md's
+        # Phase 10 for the two real deployment failures this was found the
+        # hard way from. Losing any one of these three flags reintroduces
+        # one of those two bugs.
+        run: |
+          docker buildx build \
+            --provenance=false --sbom=false \
+            --output type=image,name=${{ env.ECR_REPOSITORY }}:latest,oci-mediatypes=false,push=true \
+            .
+
+      - name: Trigger App Runner deployment
+        # AutoDeploymentsEnabled is deliberately false on this service (see
+        # Phase 10) - pushing a new image to ECR alone does not redeploy it,
+        # this explicit call does.
+        run: |
+          aws apprunner start-deployment --service-arn "${{ env.APP_RUNNER_SERVICE_ARN }}"
