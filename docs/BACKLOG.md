@@ -93,6 +93,38 @@ up, rather than marking it done in place here.
 - **Blocked on the user:** a free Neon Postgres project/database (neon.tech)
   - external signup, not something Claude Code can do on the user's behalf.
 
+## CI/CD & branch strategy (2026-09-08) - see `docs/CICD-BRANCHING-STRATEGY.md`
+
+- **pip-audit triage.** Wired into `ci.yml` as `continue-on-error: true` -
+  report-only, not blocking. A real run turned up dozens of pre-existing
+  CVEs across `langchain*`/`chromadb`/`starlette`/`pillow`, pinned for
+  compatibility long before this scan existed. Needs someone to go
+  through the list, upgrade what's safely upgradable (`chromadb` needs
+  care - see the Python-3.13 fragility note in `README.md`'s
+  Prerequisites), and explicitly accept-with-comment whatever can't move
+  yet, before flipping this gate to blocking. See
+  `docs/CICD-BRANCHING-STRATEGY.md`'s security-gate section for the exact
+  steps.
+- **No staging deployment target.** `develop` runs the full test gate but
+  deploys nowhere - only `master` triggers `deploy.yml`, against the one
+  existing App Runner service. Adding a second, always-on App Runner
+  service for `develop` would give a real pre-prod environment, at the
+  cost of a second continuous AWS bill. Deliberately not stood up without
+  asking - see `docs/CICD-BRANCHING-STRATEGY.md`'s "Deployment targets"
+  section for the two options laid out.
+- **Docker images are tagged `:latest` only.** No way to redeploy a known-
+  good previous image if a new one passes App Runner's own health check
+  but is still broken in some way that check can't see - `:latest` is
+  overwritten every deploy. Recommended fix: tag every build with
+  `:${{ github.sha }}` too. Not implemented yet, deliberately - `deploy.yml`'s
+  build command has caused three real, hard-to-diagnose failures before
+  (see `AWS-DEVOPS-RUNBOOK.md`), so this needs its own isolated test
+  before going anywhere near that line again.
+- **GitHub repo settings not configured.** Default branch is still
+  `hrb_rag_pipelines`, not `master` - a Settings → Branches action, not a
+  `git push`. No branch protection rules exist either (nothing requires
+  CI to pass, or a review, before a merge into `develop`/`master`).
+
 ## API hardening (same shape as the sibling project's NFR backlog)
 
 - ~~**Upload constraints.**~~ Done in Phase 2 - PDF-only and 20MB-max

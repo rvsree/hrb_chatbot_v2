@@ -1,20 +1,32 @@
 name: Deploy
 
-# Only main triggers this - a push to any other branch (including a PR
+# Only master triggers this - a push to any other branch (including a PR
 # branch) never reaches AWS at all. The AWS credentials this job uses
 # belong to hrb-chatbot-github-actions-deploy, a dedicated IAM user created
 # specifically for this workflow - not the admin identity used to build
 # everything in docs/RAG-ROADMAP.md's Phase 10 by hand. That user can only
 # push to the hrb-chatbot ECR repository and trigger this one App Runner
 # service's deployment - see its inline policy for the exact permissions.
+#
+# Branch note (2026-09-08): this trigger was `branches: ["main"]` until the
+# repo's branches were renamed on GitHub (main -> master, developer ->
+# develop, feature-kb-indexing-rag-pipeline -> feature-langchain-rag-pipeline).
+# A GitHub branch rename deletes the old ref outright - it leaves no
+# redirect - so this trigger would have matched nothing at all (silently:
+# no error, the workflow just never runs again) if this line hadn't been
+# updated in the same change. See docs/CICD-BRANCHING-STRATEGY.md for the
+# intended feature -> develop -> master flow, and why deploy.yml stays
+# scoped to master only for now - no staging App Runner service exists yet,
+# and standing one up is a real, costed AWS decision, not a code change.
 on:
   push:
-    branches: ["main"]
+    branches: ["master"]
 
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: 418884736369.dkr.ecr.us-east-1.amazonaws.com/hrb-chatbot
   APP_RUNNER_SERVICE_ARN: arn:aws:apprunner:us-east-1:418884736369:service/hrb-chatbot/f957548202f343aa8ca91f341d71d85a
+  APP_RUNNER_URL: https://mrgysvt6ye.us-east-1.awsapprunner.com
 
 jobs:
   build-and-deploy:
@@ -57,3 +69,42 @@ jobs:
         # this explicit call does.
         run: |
           aws apprunner start-deployment --service-arn "${{ env.APP_RUNNER_SERVICE_ARN }}"
+
+      - name: Wait for the new deployment to actually reach RUNNING
+        # start-deployment only *begins* a deployment - it returns almost
+        # immediately, long before the new container is actually serving
+        # traffic. Without this wait, the smoke test below would run
+        # against the OLD container (or against nothing, mid-restart) and
+        # pass for the wrong reason. Polls DescribeService's own Status
+        # field rather than guessing a fixed sleep, and fails the job
+        # outright if App Runner reports OPERATION_IN_PROGRESS for more
+        # than ~5 minutes or the deployment fails - both real, seen
+        # outcomes during Phase 10's three CREATE_FAILED attempts (see
+        # docs/RAG-ROADMAP.md), not hypothetical.
+        run: |
+          for i in $(seq 1 30); do
+            STATUS=$(aws apprunner describe-service \
+              --service-arn "${{ env.APP_RUNNER_SERVICE_ARN }}" \
+              --query "Service.Status" --output text)
+            echo "App Runner status: $STATUS (check $i/30)"
+            if [ "$STATUS" = "RUNNING" ]; then
+              exit 0
+            fi
+            if [ "$STATUS" != "OPERATION_IN_PROGRESS" ]; then
+              echo "::error::App Runner reported unexpected status '$STATUS' - deployment did not reach RUNNING"
+              exit 1
+            fi
+            sleep 10
+          done
+          echo "::error::Timed out waiting for App Runner to reach RUNNING after 5 minutes"
+          exit 1
+
+      - name: Deployment smoke test - the new container actually answers
+        # Confirms the thing that matters, not just that AWS says the
+        # deployment succeeded: a real HTTP call to the live URL returns a
+        # real 200. Shallow health check only (no ?deep=true) - this job
+        # has no reason to spend a provider call just to confirm the
+        # container booted, matching the same shallow/deep convention
+        # documented in docs/AWS-DEVOPS-RUNBOOK.md.
+        run: |
+          curl --fail --silent --show-error "${{ env.APP_RUNNER_URL }}/health"

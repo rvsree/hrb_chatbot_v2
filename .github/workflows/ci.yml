@@ -2,15 +2,23 @@ name: CI
 
 # Runs on every push and PR, on every branch - no AWS credentials are needed
 # here at all, deliberately: this workflow only proves the app still
-# imports, the test suite still passes, and the Docker image still builds
-# - none of which touches AWS. Deployment (deploy.yml) is the only
-# workflow that needs real credentials, and it's scoped to main only -
-# see that file for why.
+# imports, the test suite still passes at an enforced coverage floor, no
+# dependency or static-analysis security finding has snuck in, and the
+# Docker image still builds - none of which touches AWS. Deployment
+# (deploy.yml) is the only workflow that needs real credentials, and it's
+# scoped to master only - see that file for why.
+#
+# Branch note (2026-09-08): this repo's branches were renamed on GitHub -
+# main -> master, developer -> develop, feature-kb-indexing-rag-pipeline ->
+# feature-langchain-rag-pipeline. `pull_request.branches` below was updated
+# to match; missing this rename here would have meant PRs into master
+# silently never triggered CI. See docs/CICD-BRANCHING-STRATEGY.md for the
+# branch roles and the testing gates each one is meant to enforce.
 on:
   push:
     branches: ["**"]
   pull_request:
-    branches: ["main"]
+    branches: ["master", "develop"]
 
 jobs:
   test:
@@ -33,12 +41,63 @@ jobs:
         # time running the full suite below.
         run: python -c "import src.hrb_chatbot.main"
 
-      - name: Run the test suite
+      - name: Run the test suite, with a minimum coverage floor
         # No test here needs an API key or network call (see
         # docs/TESTING-GUIDE.md) - every one runs against a fake client,
         # so this step needs no secrets, matching this whole workflow's
         # "no AWS credentials at all" design.
-        run: python -m pytest -v
+        #
+        # --cov-fail-under=45: measured, not guessed - a first attempt at
+        # this line used 70% and would have failed on the very first real
+        # run (actual coverage the day this was added: 46%, see
+        # docs/CICD-BRANCHING-STRATEGY.md's "why 45, not some rounder
+        # number" note). Most of the gap is the LLM/vector-DB provider
+        # clients (openai/anthropic/bedrock/pinecone/postgres/tavily),
+        # whose network-calling branches this suite deliberately never
+        # exercises - see docs/TESTING-GUIDE.md - plus the still-stubbed
+        # ai/rag_pipeline/pipeline.py. This is a ratchet, not a target:
+        # it should only ever move up as real tests are added, never down
+        # to accommodate a drop in coverage.
+        run: python -m pytest -v --cov=src/hrb_chatbot --cov-report=term-missing --cov-fail-under=45
+
+  security:
+    name: Security scan (dependencies + static analysis)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: pip-audit - known CVEs in dependencies (report only, not yet blocking)
+        # Measured before deciding, same lesson as the coverage floor above:
+        # a first attempt at this step let pip-audit fail the job on any
+        # finding, and running it here for real turned up dozens of
+        # pre-existing CVEs across langchain/chromadb/starlette/pillow -
+        # this repo's dependencies were pinned for compatibility (see
+        # README.md's Dependencies section, and Prerequisites on chromadb's
+        # own Python-version fragility) months before this scan existed, not
+        # audited against CVEs as they were pinned. Blocking on that backlog
+        # today would fail every single run, including this one, before a
+        # human has triaged a single finding. continue-on-error: true keeps
+        # this visible in every run's log without blocking merges - see
+        # docs/CICD-BRANCHING-STRATEGY.md's security-gate section for the
+        # triage plan and when this flips to blocking.
+        run: pip-audit -r requirements.txt
+        continue-on-error: true
+
+      - name: bandit - static security analysis of src/
+        # -ll: only fail on MEDIUM severity and above. LOW-severity bandit
+        # findings are frequently stylistic (e.g. flagging any use of
+        # `subprocess`) rather than exploitable, and would make this gate
+        # noisy enough to get skipped - see
+        # docs/CICD-BRANCHING-STRATEGY.md's security-gate section for the
+        # reasoning and how to review a finding before suppressing it.
+        run: bandit -r src/hrb_chatbot -ll
 
   docker-build:
     name: Docker image builds

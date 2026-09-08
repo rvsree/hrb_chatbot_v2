@@ -29,7 +29,7 @@ runbook doesn't imply something is deployed when it isn't:
 | **S3** | **Not implemented at all** | a *design only* doc exists at `docs/S3-ASYNC-UPLOAD-DESIGN.md` for a future presigned-upload + event-driven-Lambda-indexing architecture - nothing to validate today |
 | **Lambda** | **Not implemented at all** | same design doc; the current architecture uses App Runner running the whole FastAPI app continuously, not a Lambda per request |
 | **GitHub Actions CI** | Live, verified | [run 34184448804](https://github.com/rvsree/hrb_chatbot_v2/actions/runs/34184448804) passed both jobs |
-| **GitHub Actions Deploy** | Written, **not yet exercised** | triggers only on `main`, which is still empty; two GitHub Secrets still need to be added manually (see [CI/CD](#cicd-github-actions)) |
+| **GitHub Actions Deploy** | Written, **not yet exercised** | triggers only on `master` (renamed from `main` on 2026-09-08 - see [`CICD-BRANCHING-STRATEGY.md`](CICD-BRANCHING-STRATEGY.md)), which has no new commits yet; two GitHub Secrets still need to be added manually (see [CI/CD](#cicd-github-actions)) |
 
 ## Resource identifiers
 
@@ -59,7 +59,14 @@ Actions user above have anywhere near that level of access - see
 
 Everything from "I changed some code" to "it's live in AWS," as a real
 sequence of commands - this is what actually happened building this
-project, not a generic git tutorial.
+project, not a generic git tutorial. **This section predates the
+`feature/develop/master` branch structure** (it's the history of the
+original `hrb_rag_pipelines` branch, kept as-is because it's what actually
+happened) - for how a *new* feature area should branch going forward, see
+[`CICD-BRANCHING-STRATEGY.md`](CICD-BRANCHING-STRATEGY.md); the short
+version is `git checkout -b feature-<short-name>` off `develop` in place
+of step 1 below, and step 6 becomes a PR into `develop` first, `master`
+only once that's tested.
 
 ### 1. Branch, before the first commit
 
@@ -67,10 +74,10 @@ project, not a generic git tutorial.
 git checkout -b hrb_rag_pipelines
 ```
 Created **before** any commits existed, deliberately - a branch created
-after commits already exist on `main` is a different (also fine) workflow,
-but starting a new feature area on its own branch from the very first
-commit keeps `main` clean the whole time, never briefly holding
-in-progress work.
+after commits already exist on the trunk branch is a different (also
+fine) workflow, but starting a new feature area on its own branch from the
+very first commit keeps the trunk clean the whole time, never briefly
+holding in-progress work.
 
 ### 2. Stage deliberately, never `git add -A` blindly
 
@@ -132,20 +139,29 @@ Poll that second command every 10-15 seconds until it prints
 `completed success` (or `completed failure`, which means go read the run's
 logs, not push again hoping it was a fluke).
 
-### 6. Merge to `main` when ready - not done automatically by anything above
+### 6. Merge to `master` when ready - not done automatically by anything above
 
-Nothing in this project auto-merges. When the branch is ready:
+Nothing in this project auto-merges. When a feature branch is ready, it
+goes through `develop` first, then `master`:
 ```bash
-git checkout main
-git pull origin main
-git merge hrb_rag_pipelines
-git push origin main
+git checkout develop
+git pull origin develop
+git merge feature-<short-name>
+git push origin develop
+# once develop's own CI gate is green (see CICD-BRANCHING-STRATEGY.md):
+git checkout master
+git pull origin master
+git merge develop
+git push origin master
 ```
-or open a pull request on GitHub and merge it there instead, if the repo
-ever gets a second contributor and review actually matters. **This is the
-step that arms `deploy.yml`** - it only triggers on `main` (see
-[CI/CD](#cicd-github-actions)), so nothing deploys to AWS until this
-happens, no matter how many times `hrb_rag_pipelines` itself is pushed.
+or open pull requests on GitHub for both hops instead, if the repo ever
+gets a second contributor and review actually matters (there are no
+branch-protection rules requiring this yet - see
+[`CICD-BRANCHING-STRATEGY.md`](CICD-BRANCHING-STRATEGY.md)). **The `master`
+push is the step that arms `deploy.yml`** - it only triggers on `master`
+(see [CI/CD](#cicd-github-actions)), so nothing deploys to AWS until this
+happens, no matter how many times a feature branch or `develop` itself is
+pushed.
 
 ---
 
@@ -361,18 +377,29 @@ lines up with what Phase 10 chose for App Runner anyway.
 
 ## CI/CD (GitHub Actions)
 
-Two workflows, `.github/workflows/ci.yml` and `.github/workflows/deploy.yml`.
+Two workflows, `.github/workflows/ci.yml` and `.github/workflows/deploy.yml`
+- what each *gate* actually checks and why those thresholds were picked is
+[`CICD-BRANCHING-STRATEGY.md`](CICD-BRANCHING-STRATEGY.md)'s job; this
+section stays focused on the AWS side of what runs.
 
 **CI** runs on every push/PR to any branch and needs **no AWS credentials at
-all** - it only proves the app imports and the Docker image builds (with
-the same load-bearing flags as production, so a regression there is caught
-here too, before it ever reaches a real deploy).
+all** - it proves the app imports, the test suite passes at an enforced
+coverage floor, `bandit` finds no MEDIUM+ static-security issue, and the
+Docker image builds (with the same load-bearing flags as production, so a
+regression there is caught here too, before it ever reaches a real
+deploy). `pip-audit` also runs here but is report-only for now, not
+blocking - see the branching-strategy doc's security-gate section for why.
 
-**Deploy** runs only on push to `main` and needs the two secrets below,
-added once via GitHub's own UI (Settings → Secrets and variables →
-Actions), not via API - there was no `gh` CLI or GitHub token available
-when this was built, so the values were written to a local, gitignored
-scratch file and never appeared in any tool output or chat message:
+**Deploy** runs only on push to `master` (renamed from `main` on
+2026-09-08, along with `developer` → `develop` and
+`feature-kb-indexing-rag-pipeline` → `feature-langchain-rag-pipeline` - a
+GitHub rename deletes the old ref outright, so `deploy.yml`'s trigger had
+to be updated in the same change or it would have silently stopped firing)
+and needs the two secrets below, added once via GitHub's own UI (Settings
+→ Secrets and variables → Actions), not via API - there was no `gh` CLI or
+GitHub token available when this was built, so the values were written to
+a local, gitignored scratch file and never appeared in any tool output or
+chat message:
 
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
@@ -380,7 +407,10 @@ scratch file and never appeared in any tool output or chat message:
 Both belong to `hrb-chatbot-github-actions-deploy` (see
 [IAM](#iam-roles-and-users) for exactly what it can do). **This step is
 still pending** - confirm it's done before expecting `deploy.yml` to
-succeed on a real push to `main`.
+succeed on a real push to `master`. Once triggered, the workflow now also
+waits for the new App Runner deployment to reach `RUNNING` and runs a real
+`curl /health` against the live URL before calling itself done - added
+2026-09-08, see the branching-strategy doc's "Deployment testing" section.
 
 To validate CI/CD wiring without waiting for a real merge to `main`:
 ```bash

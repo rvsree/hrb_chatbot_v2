@@ -75,6 +75,7 @@ around.
 | 10 — Docker + AWS deployment (App Runner) | Claude Code | ✅ Done - `RUNNING`, verified live (shallow + deep health, real Pinecone query); Postgres/Neon leg still pending the user's Neon signup (documented compromise, not a blocker) |
 | 11 — CI/CD + GitHub | Claude Code | ✅ CI verified passing on GitHub Actions (pytest included as of Phase 12); deploy workflow written but unexercised - needs `main` merge + 2 GitHub Secrets still pending from the user |
 | 12 — REST API contract-first hardening | Claude Code | ✅ Done - versioning, idempotency, rate limiting, validation bounds, error handling, pre-flight checks, all verified live and unit-tested |
+| 13 — Branch restructuring + CI/CD gates | Claude Code | ✅ Done - `main`/`developer`/`feature-kb-indexing-rag-pipeline` renamed to `master`/`develop`/`feature-langchain-rag-pipeline` on GitHub; `deploy.yml`/`ci.yml` triggers fixed to match; coverage floor, `bandit`, `pip-audit`, and a real post-deploy smoke test added to CI/CD; see `docs/CICD-BRANCHING-STRATEGY.md` |
 
 **If you're picking this up after a restart with no session memory**, the
 one thing to check first is Phase 10's actual live AWS state - it does not
@@ -608,6 +609,75 @@ Explicitly deferred to a later, separate wave - not part of the above:
   Also confirmed the shallow check (`vector_provider=pinecone`, no
   `deep=true`) makes no network call at all - unlike ChromaDB, Pinecone is
   a real external service, so this matters.
+
+- [x] **Phase 13 (Claude Code, added on request) — Branch restructuring +
+  CI/CD gates.** Requested directly: create `develop`/`feature`/`master`-
+  style branches, commit current work to a new feature branch, and design
+  the ongoing testing/release process for future feature areas (a ReAct
+  multi-agent setup, MCP workflows, conversation memory, session/state
+  caching - the items explicitly deferred at the end of Phase 12 above).
+
+  **Branches created**, cut from `hrb_rag_pipelines` at commit `416f977`:
+  `main`, `developer`, `feature`, `feature-kb-indexing-rag-pipeline`. The
+  user then renamed three of them on GitHub's own UI - `main` → `master`,
+  `developer` → `develop`, `feature-kb-indexing-rag-pipeline` →
+  `feature-langchain-rag-pipeline` - and deleted the generic `feature`
+  parent branch. **A GitHub rename deletes the old ref outright, no
+  redirect** - confirmed via `git fetch --prune` showing all three old
+  names as `[deleted]` - which meant `deploy.yml`'s `on: push: branches:
+  ["main"]` and `ci.yml`'s `pull_request: branches: ["main"]` were now
+  triggers pointing at nothing. Both fixed to `master` in the same change;
+  missing this would have left `deploy.yml` silently dead (no error, it
+  simply never fires) the next time anyone pushed expecting it to deploy.
+
+  **CI/CD gates measured before being set, not guessed** - the same
+  lesson twice in one sitting:
+  - A first attempt at a coverage floor used `--cov-fail-under=70` before
+    ever running it for real. Actually running it: **46%** measured. Set
+    to `--cov-fail-under=45` instead - a ratchet with real headroom, not a
+    number that would have broken the very next CI run on code nobody
+    had touched.
+  - A first attempt at `pip-audit` let it fail the job on any CVE found.
+    Running it for real turned up dozens of pre-existing CVEs across
+    `langchain*`/`chromadb`/`starlette`/`pillow` - versions pinned for
+    compatibility long before this scan existed. Set to
+    `continue-on-error: true` (report-only) instead, with a documented
+    triage plan before flipping it to blocking - see `docs/BACKLOG.md`'s
+    new CI/CD section.
+  - `bandit -ll` (static security analysis) *is* enforced as blocking -
+    it ran clean (zero MEDIUM+ findings) against the real codebase, so
+    unlike the two above, this one didn't need a lowered bar.
+
+  **Deployment testing added to `deploy.yml`**: `aws apprunner
+  start-deployment` only starts a deployment and returns almost
+  immediately - two new steps after it actually confirm the deploy
+  worked: poll `describe-service` until `Service.Status` is `RUNNING`
+  (5-minute timeout, fails the job on anything else), then a real `curl
+  --fail` against the live URL's `/health`. Previously, a deployment that
+  "succeeded" by AWS's own accounting but produced a container that never
+  came up would have left GitHub Actions reporting green.
+
+  **New doc**: `docs/CICD-BRANCHING-STRATEGY.md` - the branch-role table,
+  every gate and its threshold with the reasoning behind each number, the
+  wheel-vs-JAR packaging question answered directly (a wheel isn't added;
+  the Docker image already is this project's versioned deployable
+  artifact - see that doc for the full reasoning and what *would* justify
+  adding one), and an honest two-option write-up on whether `develop`
+  should get its own staging App Runner deployment (real ongoing AWS
+  cost either way) - **left as an open decision, not built without being
+  asked**, same category of call as the Neon Postgres signup already
+  tracked in `docs/HANDOFF.md`.
+
+  **Not done, flagged rather than silently skipped**: the GitHub repo's
+  default branch is still `hrb_rag_pipelines`, not `master` (a Settings →
+  Branches action); no branch-protection rules exist yet requiring CI to
+  pass before a merge into `develop`/`master`; Docker images are still
+  tagged `:latest` only, with no per-SHA tag to roll back to if a deploy
+  passes its own health check but is broken some other way - deliberately
+  not touched in this same pass, since `deploy.yml`'s build command has
+  caused three real failures before (see "Three real bugs found the hard
+  way" in `docs/AWS-DEVOPS-RUNBOOK.md`) and earns its own isolated test
+  before being changed again.
 
 ## Verification checklist (Phases 1-3)
 

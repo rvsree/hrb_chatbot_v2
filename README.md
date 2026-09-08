@@ -143,6 +143,16 @@ required and why (three separate real bugs were found and fixed getting
 this image to actually run in App Runner, not just build locally), and how
 to review/validate every AWS resource this project provisions.
 
+## Branching and CI/CD
+
+`feature-<name>` branches → `develop` (integration, fully gated) →
+`master` (production - `deploy.yml` deploys from here only). See
+[docs/CICD-BRANCHING-STRATEGY.md](docs/CICD-BRANCHING-STRATEGY.md) for the
+branch roles, every CI gate and the threshold it enforces (test pass rate,
+coverage floor, security scanning, and the A/B-testing bar for once
+Phase 8's eval harness exists), and the deployment-testing step that now
+runs after every real deploy.
+
 ## Running the tests
 
 ```powershell

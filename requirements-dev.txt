@@ -12,3 +12,18 @@ pytest-asyncio==1.2.0
 # FastAPI's own TestClient needs httpx, already in requirements.txt - listed
 # here too as a reminder that tests/hrb_chatbot/api/ depends on it directly.
 httpx==0.28.1
+
+# CI/CD gates (added when the branch strategy was written up - see
+# docs/CICD-BRANCHING-STRATEGY.md). All three run in .github/workflows/ci.yml
+# on every branch, not just develop/master, so a merge is never the first
+# time one of these actually runs.
+#
+# Enforces the coverage floor in ci.yml's --cov-fail-under flag.
+pytest-cov==7.1.0
+# Static security analysis of src/hrb_chatbot - catches things a test can't
+# (hardcoded secrets, use of eval/exec, insecure deserialization patterns).
+bandit==1.9.4
+# Scans requirements.txt's pinned versions against the PyPA advisory
+# database for known CVEs - complements bandit, which only looks at this
+# repo's own code, not the dependencies it pulls in.
+pip-audit==2.10.1

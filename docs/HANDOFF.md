@@ -7,33 +7,68 @@ up with zero context, **read this file first, before any other doc** -
 it's the orientation layer; everything else in `docs/` is the depth layer
 it points into.
 
-## Update, 2026-09-08 - branches created
+## Update, 2026-09-08 - branches created, then renamed, plus real CI/CD gates
 
-Four branches now exist on GitHub, all cut from `hrb_rag_pipelines` at commit
-`416f977` (same code on each, no divergence yet):
+Branches were created, and then **renamed on GitHub's own UI within the
+same session** - if you're reading git history and see `main`/`developer`/
+`feature-kb-indexing-rag-pipeline` mentioned anywhere (including in
+`docs/RAG-ROADMAP.md`'s Phase 13 write-up, which documents this
+chronologically), those are the *original* names, already gone. **The
+names that exist on GitHub right now are these:**
 
 | Branch | Intent |
 |---|---|
-| `main` | Production/deploy branch - `deploy.yml` triggers on push here |
-| `developer` | Integration branch - feature branches merge here before `main` |
-| `feature` | Generic feature-branch parent |
-| `feature-kb-indexing-rag-pipeline` | This session's working branch - carries this doc's own update plus whatever lands next |
+| `master` | Production/deploy branch - `deploy.yml` triggers on push here (was `main`) |
+| `develop` | Integration branch - feature branches merge here first, fully gated (was `developer`) |
+| `feature-langchain-rag-pipeline` | This session's working branch (was `feature-kb-indexing-rag-pipeline`) |
 
-**`hrb_rag_pipelines` (the original branch) still exists too** - it was not
-deleted, just no longer the only branch. Treat it as superseded by `main`/
-`developer` going forward rather than continuing to commit to it directly.
+The generic `feature` parent branch from the first pass was deleted rather
+than renamed - going forward, one `feature-<short-name>` branch per effort
+instead (see [`CICD-BRANCHING-STRATEGY.md`](CICD-BRANCHING-STRATEGY.md)
+for the naming convention and four concrete names already picked out for
+planned work: `feature-react-multi-agent`, `feature-mcp-workflows`,
+`feature-conversation-memory`, `feature-session-state-cache`).
 
-**Pushing `main` for the first time did not deploy anything** - creating the
-branch was a `git push`, not a merge with new commits, and even if it had
-triggered `deploy.yml`, that workflow would fail today: the two GitHub
-Actions secrets (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`) still haven't
-been added (see [Blocked on the user](#blocked-on-the-user---three-concrete-items)
-below - that item is unchanged by this update, still open).
+**`hrb_rag_pipelines` (the original branch) still exists too** - not
+deleted, just superseded. It's also still GitHub's *default* branch
+(Settings → Branches hasn't been changed to `master` - a manual action,
+not something a `git push` can do).
 
-Going forward, the natural flow is: work happens on a `feature-*` branch →
-PR into `developer` → PR into `main` when ready to actually deploy. Nothing
-in CI enforces this yet (no branch protection rules were set up - that's a
-GitHub repo-settings action, not something done from here).
+**A GitHub branch rename deletes the old ref outright, no redirect** - this
+mattered for real: `deploy.yml`'s and `ci.yml`'s branch triggers both said
+`main` literally, so after the rename they were triggers pointing at a
+branch that no longer existed - silently (no error, the workflow just
+never runs). **Both were fixed to `master` in the same change that
+discovered this.**
+
+**New this update - real CI/CD gates, not just the branch rename**: a full
+branching-and-testing strategy doc now exists,
+[`CICD-BRANCHING-STRATEGY.md`](CICD-BRANCHING-STRATEGY.md) - coverage
+floor (`--cov-fail-under=45`, measured against the real 46% rather than
+guessed), `bandit` static-security scanning (blocking, clean today),
+`pip-audit` dependency-CVE scanning (report-only for now - real,
+pre-existing CVEs were found; see that doc's triage plan before it can be
+made blocking), and a real post-deploy smoke test in `deploy.yml` (waits
+for App Runner to reach `RUNNING`, then `curl`s the live `/health`
+endpoint - previously the workflow declared success the moment
+`start-deployment` was *called*, not once the new container actually
+answered). None of this needed AWS credentials or spent any money to add
+or verify locally.
+
+**Left as an open decision, not built without asking**: whether `develop`
+should get its own staging App Runner deployment (a second, always-on AWS
+service - real ongoing cost) versus staying test-only until a further PR
+into `master`. Both options are laid out with their trade-offs in
+`CICD-BRANCHING-STRATEGY.md`'s "Deployment targets" section - say the word
+and it's a small, well-scoped follow-up.
+
+Going forward, the flow is: work happens on a `feature-<name>` branch → PR
+into `develop` (gated by the tests/coverage/security checks above) → PR
+into `master` when ready to actually deploy. Nothing enforces this by
+itself yet - no branch protection rules exist on GitHub (Settings →
+Branches → Branch protection rules), so a direct push straight to `master`
+still bypasses every gate; that's a repo-settings action, not something
+done from here.
 
 ## TL;DR
 
@@ -43,9 +78,9 @@ RAG concepts from an Interview Kickstart FDE cohort. **Claude Code builds
 boilerplate and infrastructure; the user hand-writes the actual RAG logic**
 (chunking strategy, retrieval, generation, evaluation) - this split is the
 single most important thing to not violate, see
-[Division of labor](#division-of-labor---read-before-touching-anything-under-ai). Twelve
+[Division of labor](#division-of-labor---read-before-touching-anything-under-ai). Thirteen
 phases are done (upload, index, deploy to real AWS, CI/CD, a full REST API
-hardening pass). The core RAG query pipeline itself
+hardening pass, and now a real branch/testing strategy). The core RAG query pipeline itself
 (`ai/rag_pipeline/pipeline.py`) is **still an intentional stub** -
 `POST /v1/rag/query` returns 501 by design, not by accident, until the
 user builds Phase 6 by hand.
@@ -58,7 +93,7 @@ user builds Phase 6 by hand.
 | Deployed to AWS App Runner | ✅ `RUNNING` - confirmed again right before this handoff was written (real `200` from `GET /health`) |
 | RAG query (retrieval + generation) | ❌ Stub only - `501`, by design, Phase 6 is the user's hand-written work |
 | CI (GitHub Actions) | ✅ Green - 35 tests, verified passing on GitHub itself, not just locally |
-| CD (GitHub Actions → App Runner) | 🚧 Written, never actually triggered - see [Blocked on the user](#blocked-on-the-user---three-concrete-items) |
+| CD (GitHub Actions → App Runner) | 🚧 Written, never actually triggered - see [Blocked on the user](#blocked-on-the-user---four-concrete-items) |
 | Golden dataset | ✅ Done (22 cases, real facts from the real PDFs) - a one-time Claude-Code override of the hand-written boundary, same as chunking/embedding/indexing was |
 | REST API hardening (versioning, idempotency, rate limiting, error handling) | ✅ Done, this session |
 | Test suite | ✅ 35 tests, all passing, no test needs a key or network call |
@@ -68,7 +103,7 @@ Full phase-by-phase detail: [`docs/RAG-ROADMAP.md`](RAG-ROADMAP.md)'s
 if the two ever disagree, RAG-ROADMAP.md is the authority, not this file
 (this file isn't kept live-updated the way that one is meant to be).
 
-## Blocked on the user - three concrete items
+## Blocked on the user - four concrete items
 
 Nothing here blocks continuing local development. These only block the
 *deployment* pipeline going further:
@@ -92,17 +127,28 @@ Nothing here blocks continuing local development. These only block the
    Actions) and delete the file, or delete the file and rotate the key if
    it's no longer wanted - don't leave it sitting there indefinitely.
 3. ~~`main` branch doesn't exist on GitHub at all yet~~ **Resolved
-   2026-09-08** - `main`, `developer`, `feature`, and
-   `feature-kb-indexing-rag-pipeline` all now exist on GitHub, see
-   [Update, 2026-09-08](#update-2026-09-08---branches-created) above.
-   `deploy.yml` still hasn't actually run a real deploy though - the branch
-   was created with a plain `git push`, and the next push to `main` that
-   *would* trigger it will fail until item 2 above (the GitHub secrets) is
-   done.
+   2026-09-08** - `master`, `develop`, and `feature-langchain-rag-pipeline`
+   all now exist on GitHub (renamed from `main`/`developer`/
+   `feature-kb-indexing-rag-pipeline` within the same session - see
+   [Update, 2026-09-08](#update-2026-09-08---branches-created-then-renamed-plus-real-cicd-gates)
+   above). `deploy.yml`'s trigger was updated to match. `deploy.yml` still
+   hasn't actually run a real deploy though - the branch was created and
+   renamed with plain `git push`/GitHub-UI actions, no new commits, and the
+   next push to `master` that *would* trigger it will fail until item 2
+   above (the GitHub secrets) is done.
+4. **Two smaller, non-blocking decisions, both documented, neither urgent**:
+   (a) whether `develop` should get its own staging App Runner deployment
+   - a real ongoing AWS cost either way, see
+   [`CICD-BRANCHING-STRATEGY.md`](CICD-BRANCHING-STRATEGY.md)'s
+   "Deployment targets" section for the two options; (b) GitHub repo
+   settings - the default branch is still `hrb_rag_pipelines`, not
+   `master`, and no branch-protection rules exist requiring CI to pass
+   before a merge - both are Settings-page actions, not code.
 
 None of these are code problems - they're real-world account actions only
 the user can do (an email signup, pasting a value into GitHub's own UI,
-deciding when to merge).
+deciding when to merge, deciding whether a second AWS service is worth its
+monthly cost).
 
 ## Division of labor - read before touching anything under `ai/`
 
@@ -136,6 +182,7 @@ Don't re-derive any of this from the code - it's already written down:
 | [`FAQ.md`](FAQ.md) | Deep-dive Q&A - document update strategy, metadata storage, indexing/categorization, performance, evaluation metrics (Precision@K/Recall@K/F1), golden datasets, A/B testing, and REST API contract-first design (versioning/idempotency/rate limiting/error handling) - written for interview prep as much as for this project |
 | [`TESTING-GUIDE.md`](TESTING-GUIDE.md) | What's tested, why those cases, the fake-based pattern to copy for the hand-written pipeline |
 | [`AWS-DEVOPS-RUNBOOK.md`](AWS-DEVOPS-RUNBOOK.md) | The full local→container→ECR→App Runner pipeline, every AWS resource and how to validate it, the manual git workflow, and three real deployment bugs documented in enough detail to never rediscover them the hard way |
+| [`CICD-BRANCHING-STRATEGY.md`](CICD-BRANCHING-STRATEGY.md) | The `feature-* → develop → master` branch model, every CI/CD gate and the reasoning behind its threshold (coverage floor, security scanning, the A/B-testing bar for once Phase 8 exists), the wheel-vs-JAR packaging question, and the open staging-deployment decision |
 | [`S3-ASYNC-UPLOAD-DESIGN.md`](S3-ASYNC-UPLOAD-DESIGN.md) | Design-only, not implemented - a future event-driven ingestion architecture |
 | [`CODING-STANDARDS.md`](CODING-STANDARDS.md) | Error handling, logging, API contract conventions |
 | [`README.md`](../README.md) / [`README_TEST.md`](../README_TEST.md) | How to run it locally, and a verified-live test case for every endpoint (happy + edge) |
@@ -180,26 +227,35 @@ Don't re-derive any of this from the code - it's already written down:
 | AWS account / region | `418884736369`, `us-east-1` |
 | App Runner service (final, working) | `arn:aws:apprunner:us-east-1:418884736369:service/hrb-chatbot/f957548202f343aa8ca91f341d71d85a` → `https://mrgysvt6ye.us-east-1.awsapprunner.com` |
 | ECR repo | `418884736369.dkr.ecr.us-east-1.amazonaws.com/hrb-chatbot` |
-| GitHub repo | `https://github.com/rvsree/hrb_chatbot_v2`, branch `hrb_rag_pipelines` (only branch that exists remotely as of this writing) |
+| GitHub repo | `https://github.com/rvsree/hrb_chatbot_v2` - branches: `master` (production, deploys), `develop` (integration), `feature-langchain-rag-pipeline` (this session's work), `hrb_rag_pipelines` (original branch, superseded but still GitHub's *default* - not yet changed in Settings) |
 
 Full list including IAM role ARNs and Secrets Manager entries:
 `AWS-DEVOPS-RUNBOOK.md`'s "Resource identifiers" section.
 
 ## Immediate next steps, ranked
 
-1. **Nothing is broken or waiting on Claude Code right now** - the three
-   items in [Blocked on the user](#blocked-on-the-user---three-concrete-items)
+1. **Nothing is broken or waiting on Claude Code right now** - the four
+   items in [Blocked on the user](#blocked-on-the-user---four-concrete-items)
    are the only open threads, and none of them need code.
-2. If continuing development: the natural next Claude-Code-owned work is
-   Phase 6.1 (contracts/validation for the query path) - but it's
-   **gated on Phase 6 existing first**, which is the user's hand-written
-   work. Ask which hand-written phase (5.1 query decomposition, 6
-   retrieval+generation, 7 guardrails, 8 evaluations/A/B harness) they
-   want to tackle, rather than guessing.
+2. If continuing development: work on new features now happens on a
+   `feature-<short-name>` branch off `develop`, not directly on
+   `hrb_rag_pipelines` - see
+   [`CICD-BRANCHING-STRATEGY.md`](CICD-BRANCHING-STRATEGY.md) for the
+   naming convention. The natural next Claude-Code-owned work is Phase 6.1
+   (contracts/validation for the query path) - but it's **gated on Phase 6
+   existing first**, which is the user's hand-written work. Ask which
+   hand-written phase (5.1 query decomposition, 6 retrieval+generation, 7
+   guardrails, 8 evaluations/A/B harness) they want to tackle, rather than
+   guessing.
 3. If asked to "test everything" or "make sure nothing's broken": `cd`
-   into the repo root and run `.venv\Scripts\python.exe -m pytest -v` -
+   into the repo root and run
+   `.venv\Scripts\python.exe -m pytest -v --cov=src/hrb_chatbot --cov-fail-under=45` -
    35 tests, all should pass with no setup beyond
-   `pip install -r requirements-dev.txt`.
+   `pip install -r requirements-dev.txt`. `bandit -r src/hrb_chatbot -ll`
+   and `pip-audit -r requirements.txt` are the other two CI gates - see
+   `CICD-BRANCHING-STRATEGY.md` before assuming a `pip-audit` finding is
+   new; most of what it reports today is a known, already-documented
+   backlog item, not something introduced by whatever you just changed.
 
 ## Things worth remembering that don't fit neatly anywhere else
 
