@@ -18,7 +18,7 @@ DEEP_QUERY = Query(
 
 PROVIDER_QUERY = Query(
     default="openai",
-    description="Which LLM provider to check: 'openai', 'anthropic' or 'openrouter'.",
+    description="Which LLM provider to check: 'openai', 'anthropic', 'openrouter' or 'bedrock'.",
 )
 
 METADATA_PROVIDER_QUERY = Query(

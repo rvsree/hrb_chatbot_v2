@@ -89,8 +89,8 @@ async def index_document(document_id: str, payload: IndexRequest = Body(default=
             embedding_model=payload.embedding_model,
         )
     except Exception as error:
-        await get_db_gateway().sqlite().update_status(document_id, "failed", str(error))
+        await get_db_gateway().metadata_store().update_status(document_id, "failed", str(error))
         return json_error(500, f"Indexing failed: {error}", document_id=document_id)
 
-    await get_db_gateway().sqlite().update_status(document_id, "indexed")
+    await get_db_gateway().metadata_store().update_status(document_id, "indexed")
     return IndexResponse(**result)

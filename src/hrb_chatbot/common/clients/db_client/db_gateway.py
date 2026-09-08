@@ -6,6 +6,7 @@ reading the same settings over and over. See that file for the fuller
 explanation - this is the same pattern, one layer over for databases.
 """
 
+from src.hrb_chatbot.common.clients.db_client.base_metadata_client import BaseMetadataClient
 from src.hrb_chatbot.common.clients.db_client.base_vector_db_client import BaseVectorDBClient
 from src.hrb_chatbot.common.clients.db_client.chroma_client import ChromaDBClient
 from src.hrb_chatbot.common.clients.db_client.pinecone_client import PineconeClient
@@ -62,16 +63,43 @@ class DBGateway:
         raise ValueError(f"Unknown vector store {provider!r} - use 'chromadb' or 'pinecone'")
 
     def sqlite(self) -> SQLiteClient:
-        """Return the shared SQLite client (the active metadata store), building it on first use."""
+        """Return the shared SQLite client, building it on first use."""
         if self.sqlite_client is None:
             self.sqlite_client = SQLiteClient()
         return self.sqlite_client
 
     def postgres(self) -> PostgresClient:
-        """Return the shared Postgres client - a working alternative metadata store, not yet active."""
+        """Return the shared Postgres client, building it on first use."""
         if self.postgres_client is None:
             self.postgres_client = PostgresClient()
         return self.postgres_client
+
+    def metadata_store(self, provider: str | None = None) -> BaseMetadataClient:
+        """Return whichever document-metadata store is selected.
+
+        This is the accessor documents_service.py and
+        ai/doc_processing/indexing should call - never sqlite() or
+        postgres() directly - matching vector_store()'s reasoning below.
+
+        'sqlite' writes to local disk, which does not survive a restart or
+        redeploy on a platform with no persistent volume (App Runner,
+        Lambda) - see docs/S3-ASYNC-UPLOAD-DESIGN.md. 'postgres' is meant
+        for exactly that case: point POSTGRES_DB_HOST/PORT/NAME/USER/PASSWORD
+        at any reachable Postgres - a local dev server or a hosted one like
+        Neon - PostgresClient does not care which.
+
+        Raises ValueError on an unrecognized name, same reasoning as
+        vector_store() - a typo here should fail loudly, not silently keep
+        writing to a store the deployment can't actually persist.
+        """
+        provider = provider or read_setting(None, "RAG_METADATA_STORE", "sqlite")
+
+        if provider == "sqlite":
+            return self.sqlite()
+        if provider == "postgres":
+            return self.postgres()
+
+        raise ValueError(f"Unknown metadata store {provider!r} - use 'sqlite' or 'postgres'")
 
 
 # The single gateway shared by the whole program - same convention as

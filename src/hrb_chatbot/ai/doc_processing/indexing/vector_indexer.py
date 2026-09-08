@@ -60,10 +60,11 @@ async def write_chunks(
     """
     gateway = get_db_gateway()
     vector_store = gateway.vector_store(provider=vector_db)
-    # The metadata store that actually tracks documents/chunk_ids today -
-    # matches documents_service.py's own choice, not the RAG_VECTOR_DB switch
-    # (that switch is about the vector store, not the metadata store).
-    metadata_store = gateway.sqlite()
+    # Whichever metadata store RAG_METADATA_STORE selects - matches
+    # documents_service.py's own choice, so chunk_ids written here are read
+    # back from the same place. Independent of RAG_VECTOR_DB, which is only
+    # about the vector store.
+    metadata_store = gateway.metadata_store()
 
     existing_document = await metadata_store.get_document(document_id)
     previous_chunk_ids: list[str] = []

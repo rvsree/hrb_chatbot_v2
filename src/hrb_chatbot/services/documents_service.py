@@ -76,7 +76,7 @@ async def save_upload(upload: UploadFile) -> DocumentUploadResult:
         file_path = document_directory / upload.filename
         file_path.write_bytes(content)
 
-        await get_db_gateway().sqlite().create_document(document_id, upload.filename, str(file_path))
+        await get_db_gateway().metadata_store().create_document(document_id, upload.filename, str(file_path))
     except Exception as error:
         # A disk or database failure here is a real, unexpected problem - log it with
         # the id so it's traceable, but still report it as a per-file rejection rather
@@ -111,11 +111,11 @@ def _parse_chunk_ids(document: dict) -> dict:
 
 async def list_documents() -> list[dict]:
     """Return every uploaded document's metadata, newest first."""
-    documents = await get_db_gateway().sqlite().list_documents()
+    documents = await get_db_gateway().metadata_store().list_documents()
     return [_parse_chunk_ids(document) for document in documents]
 
 
 async def get_document(document_id: str) -> dict | None:
     """Return one document's metadata, or None if the id is unknown."""
-    document = await get_db_gateway().sqlite().get_document(document_id)
+    document = await get_db_gateway().metadata_store().get_document(document_id)
     return _parse_chunk_ids(document) if document else None

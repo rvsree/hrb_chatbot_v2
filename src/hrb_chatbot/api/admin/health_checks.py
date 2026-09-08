@@ -94,6 +94,8 @@ def check_llm(provider: str = "openai", deep: bool = False) -> dict:
             client = gateway.anthropic_chat()
         elif provider == "openrouter":
             client = gateway.openrouter_chat()
+        elif provider == "bedrock":
+            client = gateway.bedrock_chat()
         else:
             client = gateway.openai_chat()
 

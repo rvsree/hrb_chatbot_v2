@@ -19,6 +19,7 @@ an object like this instead of rebuilding it is called caching.
 """
 
 from src.hrb_chatbot.common.clients.llm_client.anthropic_client import AnthropicChatClient
+from src.hrb_chatbot.common.clients.llm_client.bedrock_client import BedrockChatClient
 from src.hrb_chatbot.common.clients.llm_client.open_router_client import OpenRouterChatClient
 from src.hrb_chatbot.common.clients.llm_client.openai_client import (
     OpenAIChatClient,
@@ -42,6 +43,7 @@ class ClientGateway:
         self.openai_embedding_client = None
         self.anthropic_chat_client = None
         self.openrouter_chat_client = None
+        self.bedrock_chat_client = None
         self.tavily_search_client = None
 
     def openai_chat(self) -> OpenAIChatClient:
@@ -67,6 +69,12 @@ class ClientGateway:
         if self.openrouter_chat_client is None:
             self.openrouter_chat_client = OpenRouterChatClient()
         return self.openrouter_chat_client
+
+    def bedrock_chat(self) -> BedrockChatClient:
+        """Return the shared Bedrock client, building it on first use."""
+        if self.bedrock_chat_client is None:
+            self.bedrock_chat_client = BedrockChatClient()
+        return self.bedrock_chat_client
 
     def tavily(self) -> TavilyClient:
         """Return the shared Tavily search client, building it on first use."""
