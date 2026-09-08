@@ -22,13 +22,25 @@ class RagQueryRequest(BaseModel):
 
     model_config = ConfigDict(protected_namespaces=())
 
-    query: str = Field(..., min_length=1, description="The question to ask the knowledge base.")
+    query: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+        description=(
+            "The question to ask the knowledge base. 2000 characters is generous for a real "
+            "question (this policy document's longest single paragraph is nowhere near that) - "
+            "the bound exists to reject obviously-wrong input (an empty string on one end, an "
+            "entire pasted document on the other) before it ever reaches an embedding or chat "
+            "completion call, not to constrain a genuine question."
+        ),
+    )
     top_k: int = Field(5, ge=1, le=20, description="How many chunks to retrieve and consider.")
     vector_db: str | None = Field(
-        None, description="Override RAG_VECTOR_DB for this call: 'chromadb' or 'pinecone'."
+        None, max_length=50, description="Override RAG_VECTOR_DB for this call: 'chromadb' or 'pinecone'."
     )
     model_name: str | None = Field(
         None,
+        max_length=100,
         description=(
             "Override the LLM model used to generate the answer, e.g. 'gpt-4.1-mini' or "
             "'claude-haiku-4-5'. Defaults to whichever provider/model .env is configured for "

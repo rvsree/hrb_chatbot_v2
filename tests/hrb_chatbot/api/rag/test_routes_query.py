@@ -21,7 +21,7 @@ client = TestClient(app)
 
 
 def test_well_formed_query_returns_501_naming_the_module_to_implement():
-    response = client.post("/rag/query", json={"query": "How many weeks of parental leave do I get?"})
+    response = client.post("/v1/rag/query", json={"query": "How many weeks of parental leave do I get?"})
 
     assert response.status_code == 501
     body = response.json()
@@ -29,19 +29,19 @@ def test_well_formed_query_returns_501_naming_the_module_to_implement():
 
 
 def test_empty_query_string_is_rejected_before_reaching_the_stub():
-    response = client.post("/rag/query", json={"query": ""})
+    response = client.post("/v1/rag/query", json={"query": ""})
 
     assert response.status_code == 422
 
 
 def test_missing_query_field_is_rejected():
-    response = client.post("/rag/query", json={})
+    response = client.post("/v1/rag/query", json={})
 
     assert response.status_code == 422
 
 
 def test_top_k_above_the_maximum_is_rejected():
-    response = client.post("/rag/query", json={"query": "test", "top_k": 100})
+    response = client.post("/v1/rag/query", json={"query": "test", "top_k": 100})
 
     assert response.status_code == 422
 
@@ -51,7 +51,7 @@ def test_optional_generation_fields_are_accepted_with_defaults():
     API contract are real, accepted request fields - not just documented
     intent - even though the pipeline behind them is still a stub."""
     response = client.post(
-        "/rag/query",
+        "/v1/rag/query",
         json={"query": "test", "model_name": "gpt-4.1-mini", "temperature": 0.5, "max_tokens": 200},
     )
 
@@ -61,6 +61,6 @@ def test_optional_generation_fields_are_accepted_with_defaults():
 
 
 def test_temperature_out_of_range_is_rejected():
-    response = client.post("/rag/query", json={"query": "test", "temperature": 5.0})
+    response = client.post("/v1/rag/query", json={"query": "test", "temperature": 5.0})
 
     assert response.status_code == 422

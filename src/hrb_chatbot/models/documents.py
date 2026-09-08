@@ -70,16 +70,26 @@ class IndexRequest(BaseModel):
     """
 
     vector_db: str | None = Field(
-        None, description="Override RAG_VECTOR_DB for this call: 'chromadb' or 'pinecone'."
+        None, max_length=50, description="Override RAG_VECTOR_DB for this call: 'chromadb' or 'pinecone'."
     )
     chunk_size: int | None = Field(
         None, ge=100, le=8000, description="Override the default chunk size, in characters."
     )
     chunk_overlap: int | None = Field(
-        None, ge=0, description="Override the default chunk overlap, in characters."
+        None,
+        ge=0,
+        le=8000,
+        description=(
+            "Override the default chunk overlap, in characters. The upper bound matches "
+            "chunk_size's own maximum - an overlap larger than any allowed chunk_size can never "
+            "be valid, so it's rejected here directly rather than only by the "
+            "chunk_overlap-must-be-smaller-than-chunk_size check below, which only runs when "
+            "both fields are given together."
+        ),
     )
     embedding_model: str | None = Field(
         None,
+        max_length=100,
         description=(
             "Override OPENAI_EMBED_MODEL for this call, e.g. 'text-embedding-3-large'. "
             "Must produce the same dimension the target vector store's index was "
