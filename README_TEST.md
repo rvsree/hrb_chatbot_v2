@@ -245,6 +245,14 @@ Expect `404`, same `{"error": "Unknown document '...'"}` shape as 3.3.
 the document. Cheap for one small PDF, but not free - don't loop this over
 every file in `resources/kb_docs/` without meaning to.
 
+The actual "write chunks into the vector store" step is now LlamaIndex's
+`VectorStoreIndex` (2026-09-13, `ai/doc_processing/indexing/vector_indexer.py`)
+against either ChromaDB or Pinecone - the request/response shape below is
+unchanged either way. See `docs/RAG-ROADMAP.md`'s Phase 14.2 indexing
+sub-phase for real integration bugs found and fixed while building this
+(a metadata-key collision, and Pinecone-specific id prefixing that would
+have silently broken stale-chunk cleanup/delete if left unfixed).
+
 ### Happy path
 
 **4.1 Index with every default (no body at all)**

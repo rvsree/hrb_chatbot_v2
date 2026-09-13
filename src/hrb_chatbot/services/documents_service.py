@@ -13,6 +13,7 @@ from pathlib import Path
 
 from fastapi import UploadFile
 
+from src.hrb_chatbot.ai.doc_processing.indexing import vector_indexer
 from src.hrb_chatbot.ai.doc_processing.indexing.vector_indexer import COLLECTION_NAME
 from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
@@ -202,7 +203,11 @@ async def delete_document(document_id: str) -> dict | None:
 
     if chunk_ids:
         vector_store = gateway.vector_store(provider=document.get("vector_db"))
-        vector_store.delete(collection_name=COLLECTION_NAME, ids=chunk_ids)
+        # storage_chunk_ids(), not chunk_ids directly - Pinecone stores these
+        # under a different (prefixed) id than the plain one this project
+        # tracks; see its docstring for why that matters here.
+        storage_ids = vector_indexer.storage_chunk_ids(vector_store.PROVIDER_NAME, document_id, chunk_ids)
+        vector_store.delete(collection_name=COLLECTION_NAME, ids=storage_ids)
         logger.info("Deleted %d vector(s) for document %s", len(chunk_ids), document_id)
 
     await metadata_store.delete_document(document_id)

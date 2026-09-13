@@ -5,6 +5,7 @@ not Chroma's "distance" (lower = closer) - both are returned under the key
 "distances" for shape-compatibility, but the number means the opposite thing.
 """
 
+import json
 import time
 
 from pinecone import Pinecone, ServerlessSpec
@@ -20,6 +21,31 @@ logger = get_logger("pinecone_client")
 # giving up - serverless indexes are typically ready in a few seconds.
 INDEX_READY_TIMEOUT_SECONDS = 60
 INDEX_READY_POLL_SECONDS = 2
+
+
+def _text_from_llama_index_node_content(metadata: dict) -> str:
+    """Temporary compatibility shim, added alongside the vector_indexer.py
+    rewrite onto LlamaIndex's VectorStoreIndex (ai/doc_processing/indexing/):
+    LlamaIndex's PineconeVectorStore does not write chunk text under this
+    client's own "document" metadata key - the text lives inside a
+    "_node_content" JSON string LlamaIndex writes for its own use instead.
+    Without this, every chunk indexed the new way came back with text=""
+    here - confirmed live: a real query returned correct document_id/
+    filename/score for its top matches, but an empty context, and the LLM
+    correctly (but unhelpfully) answered "I don't know" for a question its
+    retrieved chunks actually did cover. Chroma has no equivalent gap - it
+    stores chunk text natively, separate from metadata, regardless of who
+    wrote it. Safe to remove once ai/rag_pipeline/query_retrieval/
+    retriever.py itself is rewritten on LangChain (planned next), since that
+    rewrite reads from wherever LlamaIndex actually put the text either way,
+    not through this client's "document" convention at all."""
+    raw_node_content = metadata.get("_node_content")
+    if not raw_node_content:
+        return ""
+    try:
+        return json.loads(raw_node_content).get("text", "")
+    except (json.JSONDecodeError, AttributeError):
+        return ""
 
 
 class PineconeClient(BaseVectorDBClient):
@@ -175,7 +201,7 @@ class PineconeClient(BaseVectorDBClient):
         for match in response.matches:
             metadata = dict(match.metadata or {})
             ids.append(match.id)
-            documents.append(metadata.pop("document", ""))
+            documents.append(metadata.pop("document", "") or _text_from_llama_index_node_content(metadata))
             metadatas.append(metadata)
             scores.append(match.score)
 

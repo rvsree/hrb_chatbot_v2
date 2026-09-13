@@ -1,15 +1,80 @@
 """Tests for write_chunks() (ai/doc_processing/indexing/vector_indexer.py).
 Covers the highest-value logic in the indexing pipeline: insert vs. update,
 and deleting stale chunks when a re-indexed document shrinks (guards
-against orphaned vectors). Uses fakes from conftest.py; write_chunks() is
-async, so tests are too (pytest-asyncio's asyncio_mode=auto)."""
+against orphaned vectors). write_chunks() is async, so tests are too
+(pytest-asyncio's asyncio_mode=auto).
+
+write_chunks() now writes the new-chunks step through LlamaIndex's
+VectorStoreIndex, which needs a real chromadb.Collection/pinecone.Index
+object - it can't be satisfied by conftest.py's plain-dict FakeVectorStore
+the way the old raw upsert() call could. So these tests use a real, but
+ephemeral (in-memory, zero network, zero cost - same reasoning this
+project already applies to keeping real API cost out of pytest)
+chromadb collection via EphemeralChromaVectorStore below, which still
+implements the same BaseVectorDBClient contract (delete/update_metadata)
+the stale-cleanup and supersede-flip logic uses directly, so one real
+collection backs the whole test."""
+
+import uuid
+
+import chromadb
 
 from src.hrb_chatbot.ai.doc_processing.indexing import vector_indexer
-from tests.conftest import FakeDBGateway, FakeMetadataStore, FakeVectorStore
+from src.hrb_chatbot.common.clients.db_client.base_vector_db_client import BaseVectorDBClient
+from tests.conftest import FakeDBGateway, FakeMetadataStore
+
+
+class EphemeralChromaVectorStore(BaseVectorDBClient):
+    """A real, in-memory ChromaDB client (chromadb.EphemeralClient() - no
+    disk, no network) standing in for ChromaDBClient in tests. get_collection()
+    is what LlamaIndex's ChromaVectorStore needs; delete()/update_metadata()
+    satisfy the rest of write_chunks()'s own BaseVectorDBClient calls -
+    all three operate on the exact same real collection."""
+
+    PROVIDER_NAME = "chromadb"
+
+    def __init__(self):
+        self._client = chromadb.EphemeralClient()
+        # chromadb's "ephemeral" mode still shares collection storage by name
+        # across separate EphemeralClient() instances within the same test
+        # process (confirmed live: two tests using different embedding
+        # dimensions under the literal name "hrb_chatbot_kb" collided with
+        # "Collection expecting embedding with dimension of 2, got 1") - so a
+        # random suffix per instance is what actually isolates one test from
+        # another, not just constructing a fresh client.
+        self._suffix = uuid.uuid4().hex
+
+    def get_collection(self, collection_name: str):
+        return self._client.get_or_create_collection(f"{collection_name}_{self._suffix}")
+
+    def upsert(self, collection_name, ids, documents, embeddings, metadatas=None):
+        raise NotImplementedError("write_chunks() writes new chunks via LlamaIndex now, not upsert() directly")
+
+    def query(self, collection_name, query_embedding, top_k=5, where=None):
+        raise NotImplementedError("not used by write_chunks()")
+
+    def delete(self, collection_name: str, ids: list[str]) -> None:
+        self.get_collection(collection_name).delete(ids=ids)
+
+    def update_metadata(self, collection_name: str, ids: list[str], metadatas: list[dict]) -> None:
+        self.get_collection(collection_name).update(ids=ids, metadatas=metadatas)
+
+    def health_check(self, deep: bool = False) -> dict:
+        return {"provider": self.PROVIDER_NAME, "status": "healthy"}
+
+    def chunk_ids_present(self, collection_name: str) -> set[str]:
+        # Test helper only, not part of BaseVectorDBClient - the real ids
+        # actually stored right now, for asserting stale chunks are gone.
+        return set(self.get_collection(collection_name).get()["ids"])
+
+    def metadata_for(self, collection_name: str, chunk_id: str) -> dict:
+        # Test helper only - one chunk's real, current metadata.
+        result = self.get_collection(collection_name).get(ids=[chunk_id])
+        return result["metadatas"][0]
 
 
 async def test_first_index_of_a_document_is_reported_as_insert(monkeypatch):
-    gateway = FakeDBGateway()
+    gateway = FakeDBGateway(vector_store=EphemeralChromaVectorStore())
     monkeypatch.setattr(vector_indexer, "get_db_gateway", lambda: gateway)
 
     # A document row must exist before indexing (real usage uploads first,
@@ -28,7 +93,7 @@ async def test_first_index_of_a_document_is_reported_as_insert(monkeypatch):
 
 
 async def test_reindexing_the_same_document_is_reported_as_update(monkeypatch):
-    gateway = FakeDBGateway()
+    gateway = FakeDBGateway(vector_store=EphemeralChromaVectorStore())
     monkeypatch.setattr(vector_indexer, "get_db_gateway", lambda: gateway)
 
     # A document row must exist before indexing (real usage uploads first,
@@ -44,7 +109,7 @@ async def test_reindexing_the_same_document_is_reported_as_update(monkeypatch):
 async def test_reindexing_a_shrunken_document_deletes_the_now_stale_chunks(monkeypatch):
     """Core correctness case: a document that shrinks from 5 chunks to 2
     must not leave the extra 3 sitting in the vector store forever."""
-    vector_store = FakeVectorStore()
+    vector_store = EphemeralChromaVectorStore()
     metadata_store = FakeMetadataStore()
     gateway = FakeDBGateway(vector_store=vector_store, metadata_store=metadata_store)
     monkeypatch.setattr(vector_indexer, "get_db_gateway", lambda: gateway)
@@ -56,7 +121,7 @@ async def test_reindexing_a_shrunken_document_deletes_the_now_stale_chunks(monke
     five_embeddings = [[0.1] for _ in range(5)]
     await vector_indexer.write_chunks("doc-1", five_chunks, five_embeddings)
 
-    assert len(vector_store.collections[vector_indexer.COLLECTION_NAME]) == 5
+    assert len(vector_store.chunk_ids_present(vector_indexer.COLLECTION_NAME)) == 5
 
     two_chunks = ["chunk 0 v2", "chunk 1 v2"]
     two_embeddings = [[0.1], [0.2]]
@@ -66,9 +131,9 @@ async def test_reindexing_a_shrunken_document_deletes_the_now_stale_chunks(monke
     assert result["chunks_indexed"] == 2
     assert result["chunks_removed"] == 3
     # Proof beyond the reported numbers: only 2 chunks should actually
-    # remain in the fake vector store (guards against a report that looks
+    # remain in the real vector store (guards against a report that looks
     # correct while masking a real double-execution bug).
-    assert len(vector_store.collections[vector_indexer.COLLECTION_NAME]) == 2
+    assert len(vector_store.chunk_ids_present(vector_indexer.COLLECTION_NAME)) == 2
 
 
 async def test_chunk_ids_are_deterministic_by_document_and_position():
@@ -77,7 +142,7 @@ async def test_chunk_ids_are_deterministic_by_document_and_position():
 
 
 async def test_new_chunks_are_tagged_is_current_true_with_a_timestamp(monkeypatch):
-    vector_store = FakeVectorStore()
+    vector_store = EphemeralChromaVectorStore()
     metadata_store = FakeMetadataStore()
     gateway = FakeDBGateway(vector_store=vector_store, metadata_store=metadata_store)
     monkeypatch.setattr(vector_indexer, "get_db_gateway", lambda: gateway)
@@ -85,9 +150,13 @@ async def test_new_chunks_are_tagged_is_current_true_with_a_timestamp(monkeypatc
     await metadata_store.create_document("doc-1", "policy.pdf", "data/uploads/doc-1/policy.pdf")
     await vector_indexer.write_chunks("doc-1", ["chunk one"], [[0.1]])
 
-    metadata = vector_store.collections[vector_indexer.COLLECTION_NAME]["doc-1:0"]["metadata"]
+    metadata = vector_store.metadata_for(vector_indexer.COLLECTION_NAME, "doc-1:0")
     assert metadata["is_current"] is True
     assert metadata["indexed_at"]  # a real timestamp string, not empty/missing
+    # document_id is set via the node's SOURCE relationship, not a plain
+    # metadata field (see vector_indexer._build_nodes()'s docstring) -
+    # confirming it still reads back correctly, not silently lost/overwritten.
+    assert metadata["document_id"] == "doc-1"
 
 
 async def test_superseding_document_flips_the_old_documents_chunks_to_not_current(monkeypatch):
@@ -95,7 +164,7 @@ async def test_superseding_document_flips_the_old_documents_chunks_to_not_curren
     (doc-2, which supersedes doc-1) successfully indexes, doc-1's chunks
     must be marked is_current=false in both SQL and the vector store - not
     deleted, but excluded from normal retrieval."""
-    vector_store = FakeVectorStore()
+    vector_store = EphemeralChromaVectorStore()
     metadata_store = FakeMetadataStore()
     gateway = FakeDBGateway(vector_store=vector_store, metadata_store=metadata_store)
     monkeypatch.setattr(vector_indexer, "get_db_gateway", lambda: gateway)
@@ -115,12 +184,12 @@ async def test_superseding_document_flips_the_old_documents_chunks_to_not_curren
 
     # Vector-store side: doc-1's OWN chunks flipped too - doc-1's data still
     # exists (not deleted, available for audit), just excluded from retrieval.
-    old_chunk_metadata = vector_store.collections[vector_indexer.COLLECTION_NAME]["doc-1:0"]["metadata"]
+    old_chunk_metadata = vector_store.metadata_for(vector_indexer.COLLECTION_NAME, "doc-1:0")
     assert old_chunk_metadata["is_current"] is False
-    assert "doc-1:0" in vector_store.collections[vector_indexer.COLLECTION_NAME]  # still present, not deleted
+    assert "doc-1:0" in vector_store.chunk_ids_present(vector_indexer.COLLECTION_NAME)  # still present, not deleted
 
     # doc-2's own chunks are unaffected - still current.
-    new_chunk_metadata = vector_store.collections[vector_indexer.COLLECTION_NAME]["doc-2:0"]["metadata"]
+    new_chunk_metadata = vector_store.metadata_for(vector_indexer.COLLECTION_NAME, "doc-2:0")
     assert new_chunk_metadata["is_current"] is True
 
 
@@ -128,7 +197,7 @@ async def test_reindexing_a_document_does_not_repeat_the_supersede_flip(monkeypa
     """The supersede propagation only runs on the *first* successful index
     (action == "insert") - re-indexing doc-2 again must not re-process
     doc-1, which by then may have been re-uploaded or deleted."""
-    vector_store = FakeVectorStore()
+    vector_store = EphemeralChromaVectorStore()
     metadata_store = FakeMetadataStore()
     gateway = FakeDBGateway(vector_store=vector_store, metadata_store=metadata_store)
     monkeypatch.setattr(vector_indexer, "get_db_gateway", lambda: gateway)

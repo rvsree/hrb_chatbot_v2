@@ -80,7 +80,7 @@ around.
 | 11 — CI/CD + GitHub | Claude Code | ✅ CI verified passing on GitHub Actions (pytest included as of Phase 12); deploy workflow written but unexercised - needs `main` merge + 2 GitHub Secrets still pending from the user |
 | 12 — REST API contract-first hardening | Claude Code | ✅ Done - versioning, idempotency, rate limiting, validation bounds, error handling, pre-flight checks, all verified live and unit-tested |
 | 13 — Branch restructuring + CI/CD gates | Claude Code | ✅ Done - `main`/`developer`/`feature-kb-indexing-rag-pipeline` renamed to `master`/`develop`/`feature-langchain-rag-pipeline` on GitHub; `deploy.yml`/`ci.yml` triggers fixed to match; coverage floor, `bandit`, `pip-audit`, and a real post-deploy smoke test added to CI/CD; see `docs/CICD-BRANCHING-STRATEGY.md` |
-| 14 — LangChain/LlamaIndex pipeline rewrite (chunking, indexing, search), idempotency removed | Claude Code | 🚧 In progress, on `feature-langchain-rag-pipeline`. Phase 14.1 (idempotency removal) done; chunking/indexing/search rewrite not yet started |
+| 14 — LangChain/LlamaIndex pipeline rewrite (chunking, indexing, search), idempotency removed | Claude Code | 🚧 In progress, on `feature-langchain-rag-pipeline`. 14.1 (idempotency removal) done, 14.2 chunking + indexing sub-phases done; search/retrieval sub-phase not yet started |
 
 **If you're picking this up after a restart with no session memory**, the
 one thing to check first is Phase 10's actual live AWS state - it does not
@@ -1101,8 +1101,137 @@ Explicitly deferred to a later, separate wave - not part of the above:
   disagree with the first. Test document deleted afterward, full suite
   green (84/84) throughout.
 
-  **Not done in this sub-phase**: the indexing (LlamaIndex) and
-  search/retrieval (LangChain) rewrites described above - next.
+  **Indexing sub-phase done, 2026-09-13** - `vector_indexer.py` rebuilt on
+  LlamaIndex's `VectorStoreIndex` (`llama_index-core==0.13.6`,
+  `llama-index-vector-stores-chroma==0.6.0`,
+  `llama-index-vector-stores-pinecone==0.9.0`,
+  `llama-index-embeddings-openai==0.7.0` - the last one installed but not
+  actually used: embeddings stay Module-1/`embedding_generator.py`'s own
+  explicit step, pre-computed and attached directly to each `TextNode` via
+  `embedding=`, not delegated to LlamaIndex's own embed model - narrower
+  scope than the workshop's `Settings.embed_model` pattern, deliberately,
+  since only indexing was asked for this sub-phase). Only the "write new
+  chunks in" step goes through LlamaIndex
+  (`VectorStoreIndex.insert_nodes()`); stale-chunk deletion and the
+  supersede-flip stay this project's own logic via the same
+  `BaseVectorDBClient.delete()`/`update_metadata()` calls as before - see
+  `vector_indexer.py`'s own module docstring for why splitting it that way
+  made sense. Against **both** ChromaDB and Pinecone, per user request -
+  not narrowing to one.
+
+  **Dependency conflicts, resolved and verified, not just accepted
+  blindly**: installing `llama-index-core` forced `pydantic` 2.9.2 → 2.13.5
+  and (via `llama-index-vector-stores-pinecone`) `pinecone` 10.0.0 → 9.1.0
+  - a real downgrade of an already-working client. Both verified live
+  before being accepted: full suite green (84/84) after the pydantic bump;
+  `GET /health?deep=true&vector_provider=pinecone` still reports healthy
+  with the correct `total_vector_count` after the pinecone downgrade -
+  `pinecone_client.py` only uses core `Pinecone`/`ServerlessSpec`/`Index`
+  APIs, stable across this version range.
+
+  **Three real integration bugs found live, none guessable from reading
+  LlamaIndex's docs alone - all found by writing a real chunk and
+  inspecting exactly what got stored, not by reasoning about the library
+  in the abstract:**
+
+  1. **`document_id` metadata collision.** Passing `document_id` as a
+     plain key in `TextNode.metadata` seemed like the obvious approach -
+     it silently came back as the literal string `"None"` on every stored
+     chunk instead. Root cause: LlamaIndex's `node_to_metadata_dict()`
+     (used by both the Chroma and Pinecone integrations) reserves the
+     metadata keys `document_id`/`doc_id`/`ref_doc_id` for its own use,
+     derived from the node's `SOURCE` relationship (`node.ref_doc_id`) -
+     and overwrites a same-named custom field with that derived value,
+     unset if the relationship was never set. Fixed by never putting
+     `document_id` in `node.metadata` at all; setting
+     `node.relationships[NodeRelationship.SOURCE] =
+     RelatedNodeInfo(node_id=document_id)` instead makes LlamaIndex
+     populate `document_id`/`doc_id`/`ref_doc_id` correctly, with the real
+     value - confirmed by direct `collection.get()` against a real
+     ephemeral Chroma collection before touching any real data.
+
+  2. **Pinecone-only id prefixing breaks every subsequent delete/update.**
+     Setting that same `SOURCE` relationship (needed for bug #1's fix) has
+     a Pinecone-specific side effect: `PineconeVectorStore.add()` (read
+     directly from its installed source,
+     `llama_index/vector_stores/pinecone/base.py`) prefixes every stored
+     id with `f"{ref_doc_id}#"` whenever a node has one - Chroma's
+     integration does not do this. Confirmed live against the real index:
+     a chunk written as `document_id:chunk_index` was actually stored as
+     `document_id#document_id:chunk_index`; fetching the plain id found
+     nothing, the prefixed id found it. Worse: LlamaIndex's own
+     `delete_nodes(node_ids=...)` does **not** reverse this prefix either
+     - it passes whatever ids it's given straight through to Pinecone's
+     `delete()`. Left unfixed, this would have made stale-chunk cleanup,
+     whole-document delete, and the supersede-flip all silently no-op
+     against Pinecone specifically (Pinecone doesn't error on deleting a
+     nonexistent id) - orphaned vectors accumulating forever with no
+     visible failure anywhere. Fixed with a new `storage_chunk_ids()`
+     function (backend-name-branched, same style as
+     `retriever.py`'s existing `_meets_relevance_bar()`) that computes the
+     *actually-stored* id for a delete/update call, used at all three
+     call sites: `vector_indexer.py`'s stale-chunk delete and
+     supersede-flip, and `documents_service.py`'s whole-document delete
+     (which needed the same fix, and the same new import).
+
+     **Verified live against the real Pinecone index, not just logically
+     reasoned through**: re-indexed a real 55-chunk document with a
+     larger `chunk_size` (forcing a shrink to 13 chunks) -
+     `total_vector_count` dropped by exactly 42 (matching the reported
+     `chunks_removed`), and the specific stale prefixed id was confirmed
+     gone via a direct `fetch()`; then deleted the whole document - count
+     returned to exactly the pre-test baseline (45), confirming the
+     delete path is fixed too. The supersede-flip fix uses the identical
+     `storage_chunk_ids()` call already proven correct at the other two
+     sites, but wasn't separately live-tested with its own two-document
+     supersede scenario in this pass - flagged here rather than silently
+     assumed.
+
+  3. **Pinecone chunk text goes missing for existing (old) retrieval
+     code.** LlamaIndex's `PineconeVectorStore` doesn't write chunk text
+     under this project's own `"document"` metadata key (`pinecone_client.py`'s
+     established convention, since Pinecone has no native text field) -
+     it lives inside a `"_node_content"` JSON blob LlamaIndex writes for
+     its own use instead. Confirmed live: a real query against
+     Pinecone-indexed content returned the *correct* `document_id`/
+     `filename`/`score` for its top matches (proving the embeddings/
+     similarity search side is fine) but `text: ""` for every one, so the
+     LLM correctly - if unhelpfully - answered "I don't know" to a
+     question its own retrieved chunks did cover. ChromaDB has no
+     equivalent gap (chunk text is stored natively, separate from
+     metadata, regardless of who wrote it). Rather than leave real
+     retrieval broken until the search/retrieval sub-phase below lands,
+     patched `pinecone_client.py`'s `query()` with a small, explicitly
+     temporary fallback (`_text_from_llama_index_node_content()`) that
+     parses `_node_content` for the text when `"document"` is empty -
+     removable once `retriever.py` itself is rewritten on LangChain,
+     since that rewrite won't go through this client's `"document"`
+     convention at all. Verified live: the exact same query that returned
+     `text: ""` before the fix returned the correct chunk text and a
+     correct, grounded answer after it.
+
+  **Tests**: the old `FakeVectorStore` (a plain in-memory dict, from
+  `tests/conftest.py`, shared across much of the test suite) can no
+  longer stand in for `write_chunks()`'s own tests - LlamaIndex's
+  `ChromaVectorStore`/`PineconeVectorStore` need a real
+  `chromadb.Collection`/`pinecone.Index` object, not something that only
+  duck-types `BaseVectorDBClient`. Added `EphemeralChromaVectorStore` in
+  `test_vector_indexer.py` itself (not `conftest.py`, kept scoped) - a
+  real, in-memory `chromadb.EphemeralClient()` (zero network, zero cost,
+  same reasoning this project already applies to keeping real API cost
+  out of `pytest`), with a random per-instance collection-name suffix
+  (needed because ephemeral clients turned out to still share collection
+  storage by name within one test process - confirmed live: two tests
+  using different embedding dimensions under the literal name
+  `"hrb_chatbot_kb"` collided with a real `chromadb.errors.InvalidArgumentError`
+  before this fix). All 7 existing tests adapted to read state from the
+  real collection instead of a fake's own dict; one assertion added
+  confirming `document_id` reads back correctly through the SOURCE-
+  relationship fix (bug #1 above), not just that the call didn't crash.
+  Full suite green (84/84) throughout.
+
+  **Not done in this sub-phase**: the search/retrieval (LangChain)
+  rewrite described above - next.
 
 ## Verification checklist (Phases 1-3)
 
