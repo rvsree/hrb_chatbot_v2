@@ -160,10 +160,15 @@ up, rather than marking it done in place here.
   probe needs one stable path regardless of API version, matching how
   AWS/Kubernetes health checks are conventionally exempted from an app's
   own versioning scheme.
-- ~~**Idempotency.**~~ Done 2026-09-08 -
-  `common/idempotency/idempotency_store.py`, an `Idempotency-Key` header
-  (the same convention Stripe's API uses) on upload/index/query. Same
-  single-process, in-memory limitation as rate limiting above.
+- **Idempotency.** Done 2026-09-08, **removed 2026-09-13** - the
+  `Idempotency-Key` header cache and the separate content-hash
+  duplicate-upload check were both deliberately dropped (user decision,
+  during the LangChain/LlamaIndex pipeline rewrite on
+  `feature-langchain-rag-pipeline`) to simplify the request path while
+  that rewrite is in progress. Back on the backlog as a real gap, not
+  struck through - a real shared store (Redis) is the planned
+  re-implementation once the pipeline rewrite is stable, see
+  `docs/RAG-ROADMAP.md`'s phase entry.
 - ~~**No app-level exception handler / possible info leak in error
   responses.**~~ Fixed 2026-09-08. An audit found two real `json_error(...)`
   calls that interpolated a caught exception's raw `str(error)` directly

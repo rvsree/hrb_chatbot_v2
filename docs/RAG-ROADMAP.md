@@ -80,6 +80,7 @@ around.
 | 11 — CI/CD + GitHub | Claude Code | ✅ CI verified passing on GitHub Actions (pytest included as of Phase 12); deploy workflow written but unexercised - needs `main` merge + 2 GitHub Secrets still pending from the user |
 | 12 — REST API contract-first hardening | Claude Code | ✅ Done - versioning, idempotency, rate limiting, validation bounds, error handling, pre-flight checks, all verified live and unit-tested |
 | 13 — Branch restructuring + CI/CD gates | Claude Code | ✅ Done - `main`/`developer`/`feature-kb-indexing-rag-pipeline` renamed to `master`/`develop`/`feature-langchain-rag-pipeline` on GitHub; `deploy.yml`/`ci.yml` triggers fixed to match; coverage floor, `bandit`, `pip-audit`, and a real post-deploy smoke test added to CI/CD; see `docs/CICD-BRANCHING-STRATEGY.md` |
+| 14 — LangChain/LlamaIndex pipeline rewrite (chunking, indexing, search), idempotency removed | Claude Code | 🚧 In progress, on `feature-langchain-rag-pipeline`. Phase 14.1 (idempotency removal) done; chunking/indexing/search rewrite not yet started |
 
 **If you're picking this up after a restart with no session memory**, the
 one thing to check first is Phase 10's actual live AWS state - it does not
@@ -935,6 +936,119 @@ Explicitly deferred to a later, separate wave - not part of the above:
   caused three real failures before (see "Three real bugs found the hard
   way" in `docs/AWS-DEVOPS-RUNBOOK.md`) and earns its own isolated test
   before being changed again.
+
+- [x] **Phase 14.1 (Claude Code, on request 2026-09-13) — Idempotency
+  removed.** User decision, made explicitly during a much longer
+  discussion about replacing the hand-rolled chunking/indexing/retrieval
+  code with direct LangChain (chunking, retrieval/generation) and
+  LlamaIndex (indexing) usage instead - see Phase 14.2 below for that
+  larger, separate effort. Idempotency was called out by name as one of
+  the "complex optional" pieces to drop for now, to be revisited later,
+  not a verdict on whether it's worth having.
+
+  All three mechanisms removed, not just the one literally named
+  "idempotency": the `Idempotency-Key` header cache
+  (`common/idempotency/idempotency_store.py`, on upload/index/query), the
+  SHA-256 content-hash duplicate-upload check
+  (`documents_service.save_upload()`'s `find_by_content_hash()` call), and
+  their dedicated tests
+  (`tests/hrb_chatbot/common/idempotency/test_idempotency_store.py`,
+  `tests/hrb_chatbot/api/rag/test_idempotency_and_rate_limiting.py`). The
+  third mechanism this project's own idempotency terminology never
+  actually named - `vector_indexer.py`'s deterministic chunk ids
+  (`{document_id}:{chunk_index}`, making a re-index an upsert rather than
+  a duplicate insert) - was deliberately left alone here; it will be
+  superseded naturally once Phase 14.2's LlamaIndex rewrite replaces
+  `vector_indexer.py` outright, not worth touching twice.
+
+  Behavior change: uploading identical content now always creates a new
+  document (`status: "uploaded"`, a fresh `document_id`) instead of being
+  detected as a `"duplicate"` of the existing one. `content_hash` is
+  still computed and stored on each document row (harmless, no schema
+  change needed), just no longer checked against on upload.
+
+  Verified: full test suite green (73/73) after the change, including two
+  rewritten tests in `test_routes_documents.py` that used to assert
+  duplicate-detection and now assert two independent documents are
+  created from identical content instead. `README.md`, `README_TEST.md`,
+  `docs/FAQ.md`, `docs/HANDOFF.md`, `docs/BACKLOG.md` updated to match -
+  `BACKLOG.md`'s idempotency line is deliberately un-struck-through
+  (back on the backlog as a real gap, not deleted from the project's
+  history of having built it once already).
+
+  **Planned re-implementation**: a real shared store (Redis), not the
+  same single-process in-memory cache - the fix already named as the
+  eventual next step even before removal, see the limitation noted in the
+  now-deleted module's own docstring and quoted throughout the docs
+  above. No timeline yet; picked up whenever the pipeline rewrite below
+  is stable.
+
+- [ ] **Phase 14.2 (Claude Code, in progress 2026-09-13) — Replace the
+  hand-written chunking/indexing/retrieval pipeline with direct
+  LangChain + LlamaIndex usage, mirroring
+  `support_desk_rag_workshop/SupportDesk-RAG-Workshop`'s modules
+  directly** (not reimplemented natively - the explicit point of this
+  phase is to stop hand-rolling what these libraries already do, per the
+  user's direct correction after an earlier, wrong assumption otherwise).
+  Framework split matches the workshop's own module split: **LangChain**
+  for chunking (module 2) and the retrieval/generation pipeline
+  (module 4); **LlamaIndex** for indexing (module 3) - a library this
+  project has not used before now.
+
+  **Chunking** (`ai/doc_processing/chunking/`) - six techniques as plain
+  functions (no classes/interfaces, mirroring `demo.py`'s own style, per
+  the user's explicit "coming from a Java background, keep the Python
+  simple" instruction): fixed-size (`CharacterTextSplitter`), recursive
+  (`RecursiveCharacterTextSplitter`, the default), semantic
+  (`SemanticChunker`), markdown-aware (`MarkdownHeaderTextSplitter`),
+  HTML-aware (`HTMLHeaderTextSplitter`), and whole-document/none. Each
+  technique gets its own dedicated endpoint
+  (`POST /v1/rag-ingestion/documents/{id}/index/<strategy>`) *and* the
+  existing endpoint gains an optional `chunking_strategy` field for
+  dynamic selection - both call the same underlying function. When not
+  specified explicitly, a small pre-processing function auto-selects
+  using rules sourced directly from the workshop's own
+  `modules/2_chunking/notes.md` decision matrix (markdown headers →
+  markdown; HTML tags → html; shorter than one chunk → none; otherwise →
+  recursive) - `semantic` is never auto-selected, since the workshop ties
+  it to "when accuracy is critical," not something detectable from the
+  text itself.
+
+  **Indexing** (`ai/doc_processing/indexing/`) - rebuilding
+  `vector_indexer.py` on LlamaIndex's `VectorStoreIndex` (user's explicit
+  choice over leaving the current raw-SDK version untouched), against
+  **both** ChromaDB and Pinecone (both already-configured backends kept,
+  per user request - not narrowing to one). MVP scope is Vector Index
+  only; Summary/Tree/Keyword-Table/Hybrid indexing (all demonstrated in
+  workshop module 3) are explicitly **deferred**, documented here rather
+  than built now, since Tree/Keyword/Hybrid need a second storage
+  structure beyond a flat vector index (an inverted keyword table, a
+  hierarchical summarized-node tree) that doesn't fit the current
+  `BaseVectorDBClient` contract - a bigger, separate design effort once
+  this MVP is stable.
+
+  **Search/retrieval** (`ai/rag_pipeline/query_retrieval/`) - rebuilding
+  the vector-store layer end-to-end on LangChain's `Chroma`/Pinecone
+  vectorstore wrappers (user's explicit choice over a smaller
+  search-path-only change), reading the same collection/index
+  LlamaIndex's indexing side writes to. MVP scope is Similarity (the
+  existing default behavior) and MMR only; score-threshold-gated
+  fallback and multi-turn query reformulation (both already implemented
+  today in the current hand-written `retriever.py`/`pipeline.py`, and
+  also present in workshop module 4) are carried forward as-is for now,
+  not rebuilt in this pass. Default when `search_strategy` isn't given
+  explicitly stays similarity, unchanged from today; MMR is opt-in via
+  the field or a dedicated `POST /v1/rag-retrieval/query/mmr` endpoint.
+
+  **Logging**: plain `logging.info(...)` lines at each selection point
+  (explicit vs. auto-selected strategy, which one, for which document/
+  query) - no structured/JSON logging, no tracing library, per the same
+  "keep it simple" instruction as the chunking style above.
+
+  Not started as of this entry - dependencies (`langchain-text-splitters`,
+  `langchain-experimental`, `llama-index-core` and its Chroma/Pinecone/
+  OpenAI integration packages, `langchain-chroma`, `langchain-pinecone`)
+  still need adding to `requirements.txt` and installing.
 
 ## Verification checklist (Phases 1-3)
 

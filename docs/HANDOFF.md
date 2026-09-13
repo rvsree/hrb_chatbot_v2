@@ -96,12 +96,12 @@ exactly what shipped and what's deliberately still missing.
 | Local dev (upload, index, health) | ✅ Working, verified live |
 | Deployed to AWS App Runner | ✅ `RUNNING` - confirmed again right before this handoff was written (real `200` from `GET /health`) |
 | RAG query (retrieval + generation) | ✅ MVP working, verified live with a real grounded answer - Claude-Code override, 2026-09-10. Decomposition/guardrails/evaluations still hand-written, still open |
-| Document metadata + upload dedup | ✅ Done, 2026-09-10 - version/chunk_count/embedding info tracked; identical-content re-uploads detected and not duplicated |
+| Document metadata + upload dedup | ✅ Done, 2026-09-10 - version/chunk_count/embedding info tracked. **Dedup removed 2026-09-13** - identical-content re-uploads are no longer detected, every upload creates a new document |
 | Document versioning, table extraction, doc-metadata extraction | ✅ Done, 2026-09-11 - explicit supersede flow, retrieval excludes superseded chunks (verified live: a real query returned 0 sources from a superseded document, 5/5 from the current one), PDF tables extracted as markdown, LLM extracts owner/department/doc_type/purpose on first index. Built/tested against ChromaDB; Pinecone portability by design (same interface), not yet exercised live - see Phase 4.4 in RAG-ROADMAP.md |
 | CI (GitHub Actions) | ✅ Green - verified passing on GitHub itself, not just locally |
 | CD (GitHub Actions → App Runner) | 🚧 Written, never actually triggered - see [Blocked on the user](#blocked-on-the-user---four-concrete-items) |
 | Golden dataset | ✅ Done (22 cases, real facts from the real PDFs) - a one-time Claude-Code override of the hand-written boundary, same as chunking/embedding/indexing was. Now exercisable against the real query endpoint |
-| REST API hardening (versioning, idempotency, rate limiting, error handling) | ✅ Done |
+| REST API hardening (versioning, idempotency, rate limiting, error handling) | ✅ Done. **Idempotency removed 2026-09-13** (see BACKLOG.md) - versioning/rate limiting/error handling unaffected |
 | Test suite | ✅ 56 tests, all passing, no test needs a key or network call |
 
 Full phase-by-phase detail: [`docs/RAG-ROADMAP.md`](RAG-ROADMAP.md)'s
@@ -195,7 +195,7 @@ Don't re-derive any of this from the code - it's already written down:
 | [`CODING-STANDARDS.md`](CODING-STANDARDS.md) | Error handling, logging, API contract conventions |
 | [`README.md`](../README.md) / [`README_TEST.md`](../README_TEST.md) | How to run it locally, and a verified-live test case for every endpoint (happy + edge) |
 | `resources/golden_dataset/golden_dataset.json` | 22 real Q&A cases, grounded in the actual PDFs, ready for Phase 6 |
-| `postman/hrb_chatbot.postman_collection.json` | Every endpoint, importable, including idempotency/rate-limit/validation demo cases |
+| `postman/hrb_chatbot.postman_collection.json` | Every endpoint, importable, including rate-limit/validation demo cases (idempotency demo cases removed 2026-09-13, see BACKLOG.md) |
 
 ## Known gotchas - condensed, full detail in the docs above
 
@@ -227,9 +227,10 @@ Don't re-derive any of this from the code - it's already written down:
   action here is scoped down (the *deploying* identity is broad; the
   *deployed service's own* roles are deliberately narrow - see
   `AWS-DEVOPS-RUNBOOK.md`'s IAM section for the distinction).
-- **In-memory state doesn't survive a restart**: the rate limiter and the
-  idempotency-key cache are both single-process, in-memory - documented
-  in their own module docstrings, not a surprise.
+- **In-memory state doesn't survive a restart**: the rate limiter is
+  single-process, in-memory - documented in its own module docstring, not
+  a surprise. (The idempotency-key cache that used to share this same
+  limitation was removed 2026-09-13 - see BACKLOG.md.)
 
 ## Real resource identifiers - useless from memory, write them down
 

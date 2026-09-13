@@ -120,10 +120,10 @@ curl -X POST http://127.0.0.1:8093/v1/rag-ingestion/documents/<document_id>/inde
 curl -X POST http://127.0.0.1:8093/v1/rag-retrieval/query -H "Content-Type: application/json" -d "{\"query\": \"How many weeks of parental leave do I get?\"}"
 ```
 
-Re-uploading a file whose content exactly matches one already uploaded
-returns `status: "duplicate"` pointing at the existing `document_id`
-instead of creating a new one - no `Idempotency-Key` needed, this is
-content-hash based and persistent.
+Idempotency (the `Idempotency-Key` header) and content-hash duplicate-upload
+detection were removed 2026-09-13 - re-uploading identical content now
+always creates a new document. See `docs/RAG-ROADMAP.md`'s phase entry for
+why, and for the planned Redis-backed idempotency re-implementation.
 
 For testing every endpoint from a GUI instead of curl, import
 [postman/hrb_chatbot.postman_collection.json](postman/hrb_chatbot.postman_collection.json)

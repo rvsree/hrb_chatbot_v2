@@ -436,16 +436,15 @@ An idempotent operation produces the same result no matter how many times
 it's retried with the same input - critical for anything that costs money
 or creates a resource, because a network timeout or a dropped connection
 right before the response arrives looks identical, from the client's side,
-to "did this actually happen?" Implemented here as an `Idempotency-Key`
-header (the same convention Stripe's API popularized) -
-`common/idempotency/idempotency_store.py`, applied to upload, index, and
-query. **Concrete example**: upload the same PDF twice with the same
-`Idempotency-Key` and you get back the *same* `document_id` both times,
-not two separate documents - verified live, not just unit-tested (see
-`tests/hrb_chatbot/api/rag/test_idempotency_and_rate_limiting.py`). Named
-limitation, not a surprise to discover later: in-memory, single-process -
-resets on every redeploy, and needs a real shared store (Redis) the moment
-this app scales past one instance.
+to "did this actually happen?" **Removed 2026-09-13**, during the
+LangChain/LlamaIndex pipeline rewrite (user decision, to simplify the
+request path while that rewrite is in progress) - previously implemented
+as an `Idempotency-Key` header (the same convention Stripe's API
+popularized) on upload/index/query, plus a separate content-hash
+duplicate-upload check. Neither exists right now: retrying a request, or
+re-uploading identical content, always creates a new resource. Planned
+to come back as a real shared store (Redis-backed, not in-memory) once
+the pipeline rewrite is stable - see `docs/RAG-ROADMAP.md`'s phase entry.
 
 ### "How would you rate-limit this, and what's the actual policy?"
 

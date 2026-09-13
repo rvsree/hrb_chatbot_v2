@@ -164,19 +164,16 @@ curl -X POST http://127.0.0.1:8093/v1/rag-ingestion/documents
 Expect `422` (FastAPI's own request-validation error, before this project's
 code ever runs) - `files` is a required field with no default.
 
-**2.7 Re-uploading identical content (content-hash dedup, added 2026-09-10)**
+**2.7 Re-uploading identical content (dedup removed 2026-09-13)**
 ```
 curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" \
   http://127.0.0.1:8093/v1/rag-ingestion/documents
 ```
-Run the exact same command a second time. Expect `200`, `uploaded_count: 0`,
-`duplicate_count: 1`, `status: "duplicate"` in the result, and the **same**
-`document_id` as the first upload - no new document was created. This is
-content-hash based (SHA-256 of the file bytes), not filename-based, and
-needs no `Idempotency-Key` header - it persists across server restarts,
-unlike the idempotency cache. Uploading a file with the same name but
-genuinely different content is *not* a duplicate - it gets a fresh
-`document_id` as normal.
+Run the exact same command a second time. Expect `200`, `uploaded_count: 1`,
+`duplicate_count: 0`, `status: "uploaded"` in both results, and a
+**different** `document_id` each time - content-hash dedup (and the
+`Idempotency-Key` header) were both removed; every upload now always
+creates a new document, identical content or not.
 
 ---
 

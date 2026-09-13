@@ -445,68 +445,6 @@
           }
         },
         {
-          "name": "Idempotent replay",
-          "request": {
-            "method": "POST",
-            "url": {
-              "raw": "{{base_url}}/v1/rag-ingestion/documents",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "v1",
-                "rag-ingestion",
-                "documents"
-              ]
-            },
-            "header": [
-              {
-                "key": "Idempotency-Key",
-                "value": "postman-demo-key-001"
-              }
-            ],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "files",
-                  "type": "file",
-                  "src": "{{kb_docs_dir}}/JPMC Paid TimeOff.pdf"
-                }
-              ]
-            },
-            "description": "Send this exact request twice. Same document_id both times - the second call replays the cached response instead of uploading again. Change the header value to get a genuinely new document_id."
-          }
-        },
-        {
-          "name": "Edge — re-upload identical content (duplicate, no Idempotency-Key needed)",
-          "request": {
-            "method": "POST",
-            "url": {
-              "raw": "{{base_url}}/v1/rag-ingestion/documents",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "v1",
-                "rag-ingestion",
-                "documents"
-              ]
-            },
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "files",
-                  "type": "file",
-                  "src": "{{kb_docs_dir}}/JPMC Healthcare Benefits.pdf"
-                }
-              ]
-            },
-            "description": "Run folder 2's first request (Single PDF) once, then run this one - same file, no special header needed. Expect status: \"duplicate\" in the result, duplicate_count: 1, and the SAME document_id as the first upload - content-hash based (SHA-256 of the bytes), so it catches this even without an Idempotency-Key and even across server restarts. A file with the same name but different content is NOT a duplicate."
-          }
-        },
-        {
           "name": "Upload a new version of an existing document (supersedes_document_id)",
           "request": {
             "method": "POST",
