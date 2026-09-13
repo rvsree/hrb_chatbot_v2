@@ -23,6 +23,15 @@ class RagQueryRequest(BaseModel):
     vector_db: str | None = Field(
         None, max_length=50, description="Override RAG_VECTOR_DB for this call: 'chromadb' or 'pinecone'."
     )
+    search_strategy: str | None = Field(
+        None,
+        max_length=20,
+        description=(
+            "Which retrieval technique to use: 'similarity' (the default) or 'mmr' (max marginal "
+            "relevance - more diverse, less redundant results). If omitted, defaults to 'similarity', "
+            "unchanged from before this field existed."
+        ),
+    )
     model_name: str | None = Field(
         None,
         max_length=100,
@@ -64,12 +73,14 @@ class RetrievedChunk(BaseModel):
     )
     chunk_index: int = Field(..., description="This chunk's position within that document.")
     text: str = Field(..., description="The chunk's text, as stored at index time.")
-    score: float = Field(
-        ...,
+    score: float | None = Field(
+        None,
         description=(
             "The vector store's own similarity score for this chunk. Not "
             "comparable across backends - see pinecone_client.py's docstring "
-            "on the score/distance inversion between ChromaDB and Pinecone."
+            "on the score/distance inversion between ChromaDB and Pinecone. "
+            "Null for MMR results - LangChain's max_marginal_relevance_search() "
+            "does not return a per-chunk score at all."
         ),
     )
 
@@ -89,3 +100,4 @@ class RagQueryResponse(BaseModel):
         ..., description="The chunks the answer was actually grounded in, most relevant first."
     )
     vector_db: str = Field(..., description="Which vector store this query actually ran against.")
+    search_strategy: str = Field(..., description="Which retrieval technique actually ran: 'similarity' or 'mmr'.")

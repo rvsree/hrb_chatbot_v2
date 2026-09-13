@@ -57,12 +57,15 @@ structlog==25.5.0
 # Database Drivers
 # -----------------------------------------------------------------------------
 chromadb==1.3.5
-# Downgraded from 10.0.0 - llama-index-vector-stores-pinecone==0.9.0 pins an
-# older pinecone client. Verified live against the real index after the
-# downgrade (GET /health?deep=true&vector_provider=pinecone still reports
+# 10.0.0 -> 9.1.0 -> 7.3.0 across two phases, not guessed - pip's resolver
+# rejected every other combination outright. llama-index-vector-stores-
+# pinecone==0.9.0 needs pinecone>=7,<10; langchain-pinecone==0.2.13 (added
+# this phase, for search) needs pinecone>=6,<8. 7.3.0 is the only version
+# satisfying both at once. Verified live against the real index after
+# landing here (GET /health?deep=true&vector_provider=pinecone still
 # healthy, correct total_vector_count) - pinecone_client.py only uses core
 # Pinecone/ServerlessSpec/Index APIs, stable across this version range.
-pinecone==9.1.0
+pinecone==7.3.0
 aiosqlite==0.19.0
 psycopg[binary]==3.2.5
 psycopg-pool==3.2.5
@@ -75,7 +78,14 @@ llama-index-embeddings-openai==0.7.0
 # -----------------------------------------------------------------------------
 # LLM and Agent Stack
 # -----------------------------------------------------------------------------
-openai==1.66.3
+# 1.66.3 -> 2.54.0 - forced by langchain-openai>=0.3.11 (langchain-pinecone==
+# 0.2.13, added this phase for search, requires it). Not optional - pip
+# rejected langchain-openai==0.3.9 outright once langchain-pinecone entered
+# the picture. Verified live before accepting: a real deep health check
+# (openai_client.py's .models.list() call) and a real end-to-end RAG query
+# (embeddings.create() + chat.completions.create(), both actually used in
+# production) both still work correctly against 2.54.0.
+openai==2.54.0
 # 0.40.0 (this project's original pin, unverified) has no .models attribute at
 # all - confirmed by inspection - so the deep health check always fails
 # regardless of key validity. 1.2.0 matches the sibling project's working
@@ -83,7 +93,8 @@ openai==1.66.3
 anthropic==1.2.0
 boto3==1.43.89
 langchain==0.3.20
-langchain-openai==0.3.9
+# 0.3.9 -> 0.3.35 - see the openai==2.54.0 note above; same forcing chain.
+langchain-openai==0.3.35
 langgraph==0.3.21
 langchain-community==0.3.19
 # Text splitters (chunking) - already a transitive dep of langchain, pinned
@@ -94,6 +105,16 @@ langchain-text-splitters==0.3.11
 langchain-experimental==0.3.4
 # HTMLHeaderTextSplitter's own dependency - not imported directly.
 beautifulsoup4==4.12.3
+# Search/retrieval (workshop Module 4) - both pinned <1.0 to stay on the
+# same langchain-core 0.3.x line as langchain==0.3.20/langchain-community
+# above; the latest release of each (langchain-chroma 1.1.0,
+# langchain-pinecone tested at 0.2.13 but resolves langchain-core>=1.0 once
+# paired with its own latest deps) pulled in langchain-core 1.6.3 and
+# openai 3.13.0 on first attempt - both immediately reverted, see git
+# history on this file, once pip itself flagged the conflict against
+# langchain==0.3.20's own langchain-core<1.0.0 requirement.
+langchain-chroma==0.2.6
+langchain-pinecone==0.2.13
 
 # -----------------------------------------------------------------------------
 # Observability and Metrics

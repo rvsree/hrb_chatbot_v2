@@ -382,6 +382,28 @@ with no relevant indexed content returns a fixed "I don't have any
 information about that" answer with empty `sources`, without spending an
 LLM call.
 
+**5.5 MMR search (added 2026-09-13) - dedicated endpoint**
+```
+curl -X POST http://127.0.0.1:8093/v1/rag-retrieval/query/mmr \
+  -H "Content-Type: application/json" \
+  -d '{"query": "How many weeks of paid time off do employees get per year?", "top_k": 3}'
+```
+Expect `200`, `search_strategy: "mmr"`, `score: null` on every source
+(LangChain's `max_marginal_relevance_search()` doesn't return a per-chunk
+score) - and, compared to 5.1's plain similarity search, sources drawn
+from more distinct documents rather than several near-duplicate chunks of
+the same one. Verified live: the exact same question returned 2 chunks
+from one document under plain similarity, vs. 3 chunks from 3 different
+documents under MMR.
+
+**5.6 MMR via the request body instead (dynamic selection)**
+```
+curl -X POST http://127.0.0.1:8093/v1/rag-retrieval/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "test", "search_strategy": "mmr"}'
+```
+Same effect as 5.5, selected dynamically instead of via a dedicated URL.
+
 ### Unhappy / edge cases (validation - unchanged by Phase 6 landing)
 
 **5.2 Empty query string**
@@ -407,6 +429,14 @@ Expect `422` - `top_k` has `le=20`.
 curl -i -X POST http://127.0.0.1:8093/v1/rag-retrieval/query -H "Content-Type: application/json" -d '{}'
 ```
 Expect `422` - `query` has no default.
+
+**5.7 Unknown `search_strategy`**
+```
+curl -i -X POST http://127.0.0.1:8093/v1/rag-retrieval/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "test", "search_strategy": "not-a-real-strategy"}'
+```
+Expect `422`, naming the unknown strategy and listing the valid ones.
 
 ---
 

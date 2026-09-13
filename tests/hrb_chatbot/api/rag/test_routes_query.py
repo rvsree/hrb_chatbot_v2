@@ -15,7 +15,9 @@ from src.hrb_chatbot.main import app
 client = TestClient(app)
 
 
-async def _fake_answer_query(query, top_k=5, vector_db=None, model_name=None, temperature=0.0, max_tokens=None):
+async def _fake_answer_query(
+    query, top_k=5, vector_db=None, search_strategy=None, model_name=None, temperature=0.0, max_tokens=None
+):
     return {
         "query": query,
         "answer": "This is a fake grounded answer.",
@@ -30,6 +32,7 @@ async def _fake_answer_query(query, top_k=5, vector_db=None, model_name=None, te
             }
         ],
         "vector_db": vector_db or "chromadb",
+        "search_strategy": search_strategy or "similarity",
     }
 
 
@@ -84,6 +87,26 @@ def test_temperature_out_of_range_is_rejected():
     response = client.post("/v1/rag-retrieval/query", json={"query": "test", "temperature": 5.0})
 
     assert response.status_code == 422
+
+
+def test_search_strategy_field_is_accepted_and_passed_through(monkeypatch):
+    monkeypatch.setattr(routes_query.rag_service, "answer_query", _fake_answer_query)
+
+    response = client.post("/v1/rag-retrieval/query", json={"query": "test", "search_strategy": "mmr"})
+
+    assert response.status_code == 200
+    assert response.json()["search_strategy"] == "mmr"
+
+
+def test_dedicated_mmr_endpoint_always_uses_mmr_even_if_body_says_otherwise(monkeypatch):
+    monkeypatch.setattr(routes_query.rag_service, "answer_query", _fake_answer_query)
+
+    response = client.post(
+        "/v1/rag-retrieval/query/mmr", json={"query": "test", "search_strategy": "similarity"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["search_strategy"] == "mmr"
 
 
 def test_unexpected_pipeline_failure_returns_a_clean_500(monkeypatch):

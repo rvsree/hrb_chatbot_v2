@@ -28,13 +28,15 @@ def decompose_query(query: str) -> list[str]:
     return [query]
 
 
-async def retrieve_chunks(queries: list[str], top_k: int = 5, vector_db: str | None = None) -> list[dict]:
+async def retrieve_chunks(
+    queries: list[str], top_k: int = 5, vector_db: str | None = None, search_strategy: str | None = None
+) -> list[dict]:
     """Embed each query and retrieve the top_k most relevant chunks overall.
 
     Each result dict has document_id, filename, chunk_index, text, score
     (models/rag.py's RetrievedChunk). See ai/rag_pipeline/query_retrieval/retriever.py.
     """
-    return await _retrieve_chunks(queries, top_k=top_k, vector_db=vector_db)
+    return await _retrieve_chunks(queries, top_k=top_k, vector_db=vector_db, search_strategy=search_strategy)
 
 
 def generate_answer(
@@ -57,6 +59,7 @@ async def answer_query(
     query: str,
     top_k: int = 5,
     vector_db: str | None = None,
+    search_strategy: str | None = None,
     model_name: str | None = None,
     temperature: float = 0.0,
     max_tokens: int | None = None,
@@ -66,11 +69,20 @@ async def answer_query(
     Exceptions are deliberately not caught here - the router turns them into a clear error response.
     """
     resolved_vector_db = vector_db or read_setting(None, "RAG_VECTOR_DB", "chromadb")
+    resolved_search_strategy = search_strategy or "similarity"
 
-    logger.info("Answering query %r (top_k=%s, vector_db=%s)", query, top_k, resolved_vector_db)
+    logger.info(
+        "Answering query %r (top_k=%s, vector_db=%s, search_strategy=%s)",
+        query,
+        top_k,
+        resolved_vector_db,
+        resolved_search_strategy,
+    )
 
     sub_queries = decompose_query(query)
-    chunks = await retrieve_chunks(sub_queries, top_k=top_k, vector_db=resolved_vector_db)
+    chunks = await retrieve_chunks(
+        sub_queries, top_k=top_k, vector_db=resolved_vector_db, search_strategy=resolved_search_strategy
+    )
     generation = generate_answer(
         query, chunks, model_name=model_name, temperature=temperature, max_tokens=max_tokens
     )
@@ -83,4 +95,5 @@ async def answer_query(
         "model_used": generation["model_used"],
         "sources": chunks,
         "vector_db": resolved_vector_db,
+        "search_strategy": resolved_search_strategy,
     }

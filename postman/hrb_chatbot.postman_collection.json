@@ -875,6 +875,91 @@
           }
         },
         {
+          "name": "MMR search - dedicated endpoint",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-retrieval/query/mmr",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-retrieval",
+                "query",
+                "mmr"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"How many weeks of paid parental leave does JPMorgan Chase provide?\",\n  \"top_k\": 5\n}"
+            },
+            "description": "Max Marginal Relevance - more diverse sources than plain similarity search (module 2's own rule of thumb: use this when you want relevant AND non-redundant context). search_strategy: \"mmr\" in the response; every source's score is null (LangChain's max_marginal_relevance_search() doesn't return a per-chunk score)."
+          }
+        },
+        {
+          "name": "MMR via the request body instead",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-retrieval/query",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-retrieval",
+                "query"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"How many weeks of paid parental leave does JPMorgan Chase provide?\",\n  \"search_strategy\": \"mmr\"\n}"
+            },
+            "description": "Same effect as the dedicated /query/mmr endpoint, selected dynamically via the request body instead."
+          }
+        },
+        {
+          "name": "Edge — unknown search_strategy (422)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-retrieval/query",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-retrieval",
+                "query"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"test\",\n  \"search_strategy\": \"not-a-real-strategy\"\n}"
+            },
+            "description": "Expect 422, naming the unknown strategy and listing the valid ones."
+          }
+        },
+        {
           "name": "Edge — empty query (422)",
           "request": {
             "method": "POST",

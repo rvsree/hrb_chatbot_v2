@@ -80,7 +80,8 @@ around.
 | 11 — CI/CD + GitHub | Claude Code | ✅ CI verified passing on GitHub Actions (pytest included as of Phase 12); deploy workflow written but unexercised - needs `main` merge + 2 GitHub Secrets still pending from the user |
 | 12 — REST API contract-first hardening | Claude Code | ✅ Done - versioning, idempotency, rate limiting, validation bounds, error handling, pre-flight checks, all verified live and unit-tested |
 | 13 — Branch restructuring + CI/CD gates | Claude Code | ✅ Done - `main`/`developer`/`feature-kb-indexing-rag-pipeline` renamed to `master`/`develop`/`feature-langchain-rag-pipeline` on GitHub; `deploy.yml`/`ci.yml` triggers fixed to match; coverage floor, `bandit`, `pip-audit`, and a real post-deploy smoke test added to CI/CD; see `docs/CICD-BRANCHING-STRATEGY.md` |
-| 14 — LangChain/LlamaIndex pipeline rewrite (chunking, indexing, search), idempotency removed | Claude Code | 🚧 In progress, on `feature-langchain-rag-pipeline`. 14.1 (idempotency removal) done, 14.2 chunking + indexing sub-phases done; search/retrieval sub-phase not yet started |
+| 14 — LangChain/LlamaIndex pipeline rewrite (chunking, indexing, search), idempotency removed | Claude Code | ✅ Done, on `feature-langchain-rag-pipeline`. All of 14.1 (idempotency removal) and 14.2 (chunking, indexing, search/retrieval sub-phases) complete |
+| 15 — Evaluation (Module 5) against the rebuilt pipeline | Claude Code | 📋 Planned, added 2026-09-13 - not started |
 
 **If you're picking this up after a restart with no session memory**, the
 one thing to check first is Phase 10's actual live AWS state - it does not
@@ -1230,8 +1231,131 @@ Explicitly deferred to a later, separate wave - not part of the above:
   relationship fix (bug #1 above), not just that the call didn't crash.
   Full suite green (84/84) throughout.
 
-  **Not done in this sub-phase**: the search/retrieval (LangChain)
-  rewrite described above - next.
+  **Search/retrieval sub-phase done, 2026-09-13** - `retriever.py`
+  rebuilt end-to-end on LangChain's own vector store wrappers
+  (`langchain_chroma.Chroma`, `langchain_pinecone.PineconeVectorStore`,
+  workshop Module 4), reading the exact same collection/namespace
+  `vector_indexer.py`'s LlamaIndex writes into. Two plain functions -
+  `search_similarity()` (the default) and `search_mmr()` - dispatched via
+  a `SEARCH_STRATEGIES` dict, same pattern as `text_chunker.py`'s
+  `CHUNKING_STRATEGIES`. Selection: an explicit `search_strategy` wins if
+  given (new field on `RagQueryRequest`, and a dedicated
+  `POST /v1/rag-retrieval/query/mmr` URL); otherwise defaults to
+  `'similarity'`, unchanged from before this field existed - no
+  auto-selection heuristic, since (as flagged when this was originally
+  planned) there's no sourced signal for picking between the two from
+  query text alone.
+
+  **Dependency crisis, caused and then fully resolved in the same pass -
+  documented in full because pip's resolver rejected three consecutive
+  attempts before landing on a working set, not because it should have
+  been hard:** installing `langchain-chroma`/`langchain-pinecone` with no
+  version pins pulled `langchain-core` 0.3.86 → 1.6.3 and `openai`
+  1.66.3 → 3.13.0 - both major-version jumps, and pip itself flagged the
+  langchain-core one as incompatible with the pinned `langchain==0.3.20`
+  (`requires langchain-core<1.0.0,>=0.3.41`). Reverted immediately, before
+  writing any retriever code on top of it. Re-pinning
+  `langchain-core<1.0.0` surfaced a second, three-way conflict:
+  `llama-index-vector-stores-pinecone==0.9.0` needs `pinecone>=7,<10`;
+  `langchain-pinecone` needs `pinecone>=6,<8` - `pinecone==7.3.0` is the
+  only version satisfying both. Pinning that then surfaced a third:
+  `langchain-pinecone==0.2.13` needs `langchain-openai>=0.3.11`, one
+  patch above this project's pinned `0.3.9`. Letting pip resolve
+  `langchain-openai` freely from there landed on `0.3.35`, which itself
+  needs `openai>=2.x` - accepted only after live-verifying it doesn't
+  break anything actually used: a real deep health check
+  (`openai_client.py`'s `.models.list()`) and a real end-to-end RAG query
+  (`embeddings.create()` + `chat.completions.create()`, the two calls
+  actually used in production) both still worked correctly against
+  `openai==2.54.0` before it was pinned. Final state: `langchain-core`
+  stayed at `0.3.86` (unchanged), `pinecone` at `7.3.0` (was `9.1.0` after
+  Phase 3, `10.0.0` originally), `openai` at `2.54.0` (was `1.66.3`),
+  `langchain-openai` at `0.3.35` (was `0.3.9`) - see `requirements.txt`'s
+  own comments for the exact forcing chain on each.
+
+  **Two more real integration bugs found live, same category as Phase
+  3's - a cross-library data-format mismatch, not guessable from docs:**
+
+  1. **LangChain's Pinecone integration expects chunk text under a plain
+     `"text"` metadata key, and silently *skips* (not just returns empty
+     for) any result missing it** - worse than Phase 3's finding, where
+     the old raw client at least returned empty text. LlamaIndex writes
+     text inside a `"_node_content"` JSON blob instead (same root cause
+     as Phase 3's finding, hit again here because LangChain's own
+     similarity/MMR code paths do their own metadata handling, not
+     `pinecone_client.py`'s query()). Fixed with
+     `_TextBackfillPineconeIndex`, a thin wrapper around the real
+     `pinecone.Index` that backfills a `"text"` key before LangChain ever
+     sees a result - confirmed live: every LlamaIndex-written match was
+     silently dropped without it, present and correct with it.
+
+  2. **LangChain's MMR code path for Pinecone does an unguarded
+     `metadata.pop("text")` (no fallback, unlike its similarity-search
+     path) - a real live `KeyError: 500` on a mixed-format namespace.**
+     Root cause, found by reading `langchain_pinecone`'s installed source
+     directly, not guessed: `max_marginal_relevance_search_by_vector()`
+     fetches `fetch_k` candidates (top_k × 3 by default - a wider net
+     than plain similarity's top_k), and this project's real Pinecone
+     namespace has vectors written *three* different ways across this
+     rewrite's own history - the original hand-written indexer
+     (`"document"` key), LlamaIndex (`"_node_content"`), and now this
+     phase's own testing - so MMR's wider net was likelier to include an
+     old-format vector with neither key. Fixed by extending the same
+     wrapper to also check the legacy `"document"` key, and to guarantee
+     `"text"` is always present afterward (empty string as the last
+     resort) so LangChain's unguarded `pop()` never raises. Verified
+     live: the exact request that 500'd before the fix returned a
+     correct, diverse, grounded MMR answer after it.
+
+  **Tests**: the old retriever tests used `FakeVectorStore` (a plain dict)
+  against the raw-client version's `vector_store.query()` call directly -
+  gone now, since `retriever.py` builds a real LangChain vector store
+  requiring a real collection object, same reasoning Phase 3's indexer
+  tests needed a real ephemeral Chroma collection. Rebuilt on the same
+  pattern, plus a new `FakeEmbeddings` (registers exact text → vector
+  pairs, no network call) so real cosine-similarity math runs against
+  real, hand-placed vectors without ever calling OpenAI. Each test gets
+  its own uuid-suffixed collection name (same fix Phase 3's tests needed
+  for the same reason - ephemeral clients share collection storage by
+  name within one process). All 10 original test cases adapted plus 2
+  new ones (MMR returns `score: null`, an unknown `search_strategy`
+  raises). 2 new route-level tests for the `/query/mmr` endpoint and the
+  dynamic `search_strategy` field. Full suite green (88/88).
+
+  **Verified live, real cost incurred, against both real backends**:
+  plain similarity and MMR against real ChromaDB (MMR's sources visibly
+  more diverse - one similarity source pulled 2 near-duplicate chunks
+  from the same document, MMR's 3 sources spanned 3 different documents,
+  for the identical query); plain similarity and MMR against real
+  Pinecone (confirming both integration-bug fixes above); the dedicated
+  `/query/mmr` endpoint and the dynamic `search_strategy` field, both
+  ways of reaching the same code; an unknown `search_strategy` → `422`.
+  Test documents deleted afterward.
+
+  `README_TEST.md` (new cases 5.5-5.7), `requirements.txt` (every version
+  change explained inline), and the Postman collection (4 new requests)
+  updated to match.
+
+  **Not done in this phase, carried forward as originally scoped**:
+  score-threshold-gated fallback and multi-turn query reformulation -
+  neither exists in this project today (the latter was incorrectly
+  described as "already implemented, carrying forward" in an earlier
+  status update to the user mid-phase; corrected once found not to be
+  true - `pipeline.py`'s `decompose_query()` is a trivial `return [query]`
+  stub, and `RagQueryRequest` has no `chat_history` field at all). Also
+  not done: Tree/Keyword-Table/Hybrid indexing (documented as deferred in
+  Phase 14.2's indexing entry above).
+
+- [ ] **Phase 15 (planned, added 2026-09-13 on request) — Evaluation
+  (workshop Module 5): retrieval metrics (Precision@K/Recall@K/F1) and
+  generation metrics (groundedness/completeness via LLM-as-judge)
+  against the now-rebuilt LangChain/LlamaIndex pipeline.** Distinct from
+  the older Phase 8 evaluation item below (golden dataset done, harness
+  planned, hand-written) - this is a new phase specifically for
+  evaluating Phase 14's rebuilt pipeline, added directly on request after
+  the user asked whether Module 5 had been included and was told it
+  hadn't been (Phases 14.1/14.2 map to modules 2-4 plus the idempotency
+  cleanup only). Not started.
 
 ## Verification checklist (Phases 1-3)
 

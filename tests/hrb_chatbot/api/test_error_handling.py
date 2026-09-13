@@ -71,6 +71,7 @@ def test_query_at_exactly_the_max_length_is_accepted_by_validation(monkeypatch):
             "model_used": "gpt-4.1-mini",
             "sources": [],
             "vector_db": "chromadb",
+            "search_strategy": "similarity",
         }
 
     monkeypatch.setattr(routes_query.rag_service, "answer_query", _fake_answer_query)
