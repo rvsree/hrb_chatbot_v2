@@ -169,6 +169,16 @@ class IndexRequest(BaseModel):
     vector_db: str | None = Field(
         None, max_length=50, description="Override RAG_VECTOR_DB for this call: 'chromadb' or 'pinecone'."
     )
+    chunking_strategy: str | None = Field(
+        None,
+        max_length=20,
+        description=(
+            "Which chunking technique to use: 'fixed', 'recursive' (the default when auto-selected), "
+            "'semantic', 'markdown', 'html', or 'none' (whole document, no splitting). If omitted, "
+            "one is auto-selected based on the document's content - see "
+            "ai/doc_processing/chunking/text_chunker.py's decide_chunking_strategy()."
+        ),
+    )
     chunk_size: int | None = Field(
         None, ge=100, le=8000, description="Override the default chunk size, in characters."
     )
@@ -221,6 +231,9 @@ class IndexResponse(BaseModel):
         ),
     )
     vector_db: str = Field(..., description="Which vector store this call actually wrote to.")
+    chunking_strategy: str = Field(
+        ..., description="Which chunking technique actually ran - explicit, or auto-selected."
+    )
     embedding_model: str = Field(..., description="Which embedding model this call actually used.")
     embedding_dimension: int = Field(
         ..., description="The real length of the embeddings this call produced - see "

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Body, Depends, File, Form, UploadFile
 
 from src.hrb_chatbot.ai.doc_processing import pipeline
+from src.hrb_chatbot.ai.doc_processing.chunking.text_chunker import CHUNKING_STRATEGIES
 from src.hrb_chatbot.api.admin.health_checks import check_llm, check_vector_database, is_working
 from src.hrb_chatbot.api.dependencies import json_error
 from src.hrb_chatbot.common import error_codes
@@ -108,16 +109,11 @@ def _preflight_backends_ready(vector_db: str | None) -> str | None:
     return None
 
 
-@router.post(
-    "/documents/{document_id}/index",
-    response_model=IndexResponse,
-    dependencies=[Depends(enforce_rate_limit)],
-)
-async def index_document(
-    document_id: str,
-    payload: IndexRequest = Body(default=IndexRequest()),
-):
-    # Chunk, embed, and index one already-uploaded document.
+async def _index_document(document_id: str, payload: IndexRequest):
+    # Chunk, embed, and index one already-uploaded document. Shared by both
+    # the dynamic endpoint (chunking_strategy from the request body, or
+    # auto-selected if omitted) and the per-strategy endpoints below
+    # (chunking_strategy fixed from the URL path).
     document = await documents_service.get_document(document_id)
     if document is None:
         return json_error(404, f"Unknown document '{document_id}'", code=error_codes.DOCUMENT_NOT_FOUND)
@@ -140,10 +136,13 @@ async def index_document(
             document_id,
             document["file_path"],
             vector_db=payload.vector_db,
+            chunking_strategy=payload.chunking_strategy,
             chunk_size=payload.chunk_size,
             chunk_overlap=payload.chunk_overlap,
             embedding_model=payload.embedding_model,
         )
+    except ValueError as error:
+        return json_error(422, str(error), code=error_codes.VALIDATION_ERROR)
     except Exception as error:
         # Full detail server-side only - see this file's own module
         # docstring for why the client never sees str(error) directly.
@@ -157,3 +156,42 @@ async def index_document(
     # write_chunks() -> record_successful_index() - one write for the whole
     # successful outcome, not a separate status update here too.
     return IndexResponse(**result)
+
+
+@router.post(
+    "/documents/{document_id}/index",
+    response_model=IndexResponse,
+    dependencies=[Depends(enforce_rate_limit)],
+)
+async def index_document(
+    document_id: str,
+    payload: IndexRequest = Body(default=IndexRequest()),
+):
+    # chunking_strategy comes from payload if given, or is auto-selected -
+    # see text_chunker.decide_chunking_strategy().
+    return await _index_document(document_id, payload)
+
+
+@router.post(
+    "/documents/{document_id}/index/{chunking_strategy}",
+    response_model=IndexResponse,
+    dependencies=[Depends(enforce_rate_limit)],
+)
+async def index_document_with_strategy(
+    document_id: str,
+    chunking_strategy: str,
+    payload: IndexRequest = Body(default=IndexRequest()),
+):
+    # One dedicated URL per chunking technique, e.g. .../index/recursive,
+    # .../index/semantic - same underlying pipeline as the dynamic endpoint
+    # above, just with chunking_strategy fixed from the URL instead of the
+    # request body (any chunking_strategy in the body is ignored here).
+    if chunking_strategy not in CHUNKING_STRATEGIES:
+        return json_error(
+            404,
+            f"Unknown chunking strategy {chunking_strategy!r} - choose one of {list(CHUNKING_STRATEGIES)}",
+            code=error_codes.VALIDATION_ERROR,
+        )
+
+    payload = payload.model_copy(update={"chunking_strategy": chunking_strategy})
+    return await _index_document(document_id, payload)

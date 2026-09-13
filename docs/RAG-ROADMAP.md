@@ -1045,10 +1045,64 @@ Explicitly deferred to a later, separate wave - not part of the above:
   query) - no structured/JSON logging, no tracing library, per the same
   "keep it simple" instruction as the chunking style above.
 
-  Not started as of this entry - dependencies (`langchain-text-splitters`,
-  `langchain-experimental`, `llama-index-core` and its Chroma/Pinecone/
-  OpenAI integration packages, `langchain-chroma`, `langchain-pinecone`)
-  still need adding to `requirements.txt` and installing.
+  **Chunking sub-phase done, 2026-09-13** - `text_chunker.py` rewritten on
+  the six LangChain functions described above; `pipeline.py`'s
+  `chunk_document()`/`index_document()` take an optional
+  `chunking_strategy`, resolve and log it whether explicit or
+  auto-selected, and report it back in `IndexResponse.chunking_strategy`
+  (`models/documents.py`). New deps installed and pinned in
+  `requirements.txt`: `langchain-text-splitters==0.3.11` (already a
+  transitive dep, now imported directly), `langchain-experimental==0.3.4`
+  (`SemanticChunker` only), `beautifulsoup4==4.12.3`
+  (`HTMLHeaderTextSplitter`'s own runtime dependency, not imported
+  directly - its absence surfaced as a live `ImportError` from inside
+  `langchain_text_splitters/html.py` while testing, not predicted in
+  advance). `routes_documents.py` gained
+  `POST /v1/rag-ingestion/documents/{id}/index/{chunking_strategy}` (one
+  dedicated URL per technique, an unknown strategy segment returns `404`)
+  alongside the existing endpoint's new optional field - both call one
+  shared `_index_document()` helper, no duplicated route logic.
+
+  Existing chunking tests rewritten, not just patched - two of the four
+  original tests asserted specific-to-the-old-hand-rolled-algorithm
+  invariants that don't hold for LangChain's splitter (a zero-overlap-vs-
+  real-overlap chunk-count ordering, and later a tail-substring overlap
+  check that passed by coincidence on repeated sentence text rather than
+  proving anything about overlap) - both replaced with more robust
+  checks against unique, non-repeating text. 16 tests total now, covering
+  all six strategies plus `decide_chunking_strategy()`'s four rules and
+  explicit-vs-auto dispatch in `chunk_text()`. `semantic` has no test -
+  it needs a real embedding call, same reasoning this project already
+  applies elsewhere for keeping real API cost out of `pytest`.
+
+  **Verified live, real cost incurred** (not just unit-tested): started
+  the app with uvicorn, uploaded a real PDF
+  (`JPMC Guild Tuition Assistance.pdf`), then in sequence -
+  `POST .../index/recursive` → `action: "insert"`, 45 chunks,
+  `chunking_strategy: "recursive"` in the response; `POST .../index` (no
+  strategy) → `action: "update"`, auto-selected `"recursive"` again (same
+  long plain-text PDF, so the same auto-selection rule applies both
+  times), 45 chunks unchanged; `POST .../index/none` → `action: "update"`,
+  1 chunk, `chunks_removed: 44` (stale-chunk cleanup still works
+  correctly against a real backend); `POST .../index/markdown` → 1 chunk
+  (no markdown headers in PDF-extracted text, so the whole document comes
+  back as one chunk - correct, not an error); `POST .../index/not-a-real-
+  strategy` → `404`. Confirmed the log lines read consistently at every
+  step (`chunking_strategy=recursive`/`auto` at the pipeline level,
+  `chunking: explicit/auto-selected strategy=...` at the chunker level) -
+  an earlier version of this logging showed `chunking_strategy=auto`
+  immediately followed by `chunking: explicit strategy=recursive`, which
+  was real but confusing: `pipeline.py` was resolving the strategy before
+  passing it down, so the chunker never saw that it had been auto-picked.
+  Fixed by passing the original (possibly `None`) value down unchanged,
+  and computing the resolved value again, separately, only for the
+  response - `decide_chunking_strategy()` is pure/deterministic, so this
+  costs one cheap extra call, not a second real decision that could
+  disagree with the first. Test document deleted afterward, full suite
+  green (84/84) throughout.
+
+  **Not done in this sub-phase**: the indexing (LlamaIndex) and
+  search/retrieval (LangChain) rewrites described above - next.
 
 ## Verification checklist (Phases 1-3)
 

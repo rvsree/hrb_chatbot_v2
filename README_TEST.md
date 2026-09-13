@@ -311,6 +311,41 @@ Expect `500` with `db_gateway.py`'s own `ValueError` message in the body
 this one *is* rejected, unlike the health-check query params in 1.4/1.5,
 because this path goes through `vector_store(provider=...)` directly.
 
+**4.8 Chunking strategy (added 2026-09-13) - dedicated endpoint per technique**
+```
+curl -X POST http://127.0.0.1:8093/v1/rag-ingestion/documents/<document_id>/index/recursive
+```
+Expect `200`, `chunking_strategy: "recursive"` in the response. Swap
+`recursive` for `fixed`, `semantic` (spends one embedding call per
+sentence - more expensive than the others), `markdown`, `html`, or
+`none` to use that technique instead - see
+`ai/doc_processing/chunking/text_chunker.py`'s `CHUNKING_STRATEGIES` for
+the full list.
+
+**4.9 Chunking strategy via the request body instead (dynamic selection)**
+```
+curl -X POST http://127.0.0.1:8093/v1/rag-ingestion/documents/<document_id>/index \
+  -H "Content-Type: application/json" \
+  -d '{"chunking_strategy": "none"}'
+```
+Expect `200`, `chunking_strategy: "none"`, `chunks_indexed: 1` - the
+whole document as one chunk, no splitting.
+
+**4.10 No `chunking_strategy` given at all (auto-selected)**
+```
+curl -X POST http://127.0.0.1:8093/v1/rag-ingestion/documents/<document_id>/index
+```
+Expect `200` with `chunking_strategy` reporting whichever one was
+actually auto-selected for this document's content (`"recursive"` for a
+typical PDF-extracted plain-text document) - see
+`decide_chunking_strategy()`'s docstring for the exact rules.
+
+**4.11 Unknown chunking strategy in the URL**
+```
+curl -i -X POST http://127.0.0.1:8093/v1/rag-ingestion/documents/<document_id>/index/not-a-real-strategy
+```
+Expect `404`, naming the unknown strategy and listing the valid ones.
+
 ---
 
 ## 5. RAG query - `POST /v1/rag-retrieval/query`

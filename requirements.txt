@@ -72,6 +72,14 @@ langchain==0.3.20
 langchain-openai==0.3.9
 langgraph==0.3.21
 langchain-community==0.3.19
+# Text splitters (chunking) - already a transitive dep of langchain, pinned
+# explicitly since ai/doc_processing/chunking/text_chunker.py imports it
+# directly now (workshop Module 2 strategies), not just via langchain.
+langchain-text-splitters==0.3.11
+# SemanticChunker only - not used anywhere else.
+langchain-experimental==0.3.4
+# HTMLHeaderTextSplitter's own dependency - not imported directly.
+beautifulsoup4==4.12.3
 
 # -----------------------------------------------------------------------------
 # Observability and Metrics

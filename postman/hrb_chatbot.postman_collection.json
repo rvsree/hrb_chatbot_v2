@@ -595,7 +595,79 @@
                 "index"
               ]
             },
-            "description": "Spends one real embedding call."
+            "description": "Spends one real embedding call. Auto-selects a chunking strategy - see the 'Chunking strategy' requests below to pick one explicitly."
+          }
+        },
+        {
+          "name": "Chunking strategy - dedicated endpoint (recursive)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents/{{document_id}}/index/recursive",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents",
+                "{{document_id}}",
+                "index",
+                "recursive"
+              ]
+            },
+            "description": "One dedicated URL per chunking technique - swap 'recursive' for 'fixed', 'semantic', 'markdown', 'html', or 'none'. Spends one real embedding call ('semantic' spends one per sentence, more expensive than the others)."
+          }
+        },
+        {
+          "name": "Chunking strategy - via request body (none)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents/{{document_id}}/index",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents",
+                "{{document_id}}",
+                "index"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chunking_strategy\": \"none\"\n}"
+            },
+            "description": "Dynamic selection via the request body instead of a dedicated URL - same underlying pipeline. 'none' = whole document as one chunk, no splitting."
+          }
+        },
+        {
+          "name": "Edge — unknown chunking strategy in URL (404)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents/{{document_id}}/index/not-a-real-strategy",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents",
+                "{{document_id}}",
+                "index",
+                "not-a-real-strategy"
+              ]
+            },
+            "description": "Expect 404, naming the unknown strategy and listing the valid ones."
           }
         },
         {

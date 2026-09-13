@@ -110,7 +110,9 @@ run against a real server):
 # upload a real PDF - copy the document_id from the response
 curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" http://127.0.0.1:8093/v1/rag-ingestion/documents
 
-# index it (spends: one real embedding call per chunk)
+# index it (spends: one real embedding call per chunk) - auto-selects a
+# chunking strategy if you don't pick one; see README_TEST.md section 4.8-4.10
+# for every technique and how to pick one explicitly (e.g. .../index/recursive)
 curl -X POST http://127.0.0.1:8093/v1/rag-ingestion/documents/<document_id>/index
 
 # ask a question - real retrieval + grounded generation (spends: one real
