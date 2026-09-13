@@ -1,17 +1,9 @@
 """OpenAI clients: one for chat (and tool calling), one for embeddings.
 
-Base URL
---------
-The correct base URL is https://api.openai.com/v1 - the "/v1" part IS required.
-The OpenAI library adds only the last part of the path (for example
-"/chat/completions"), so without "/v1" every request would return 404.
-
-Organization and Project
-------------------------
-OpenAI does not have something called a "workspace". Its equivalent is the pair
-Organization + Project. Both are optional. When you set them, OpenAI records the
-cost of each request against that project, which is handy when one key is shared
-by several apps.
+Base URL must include "/v1" (https://api.openai.com/v1) - unlike Anthropic,
+the OpenAI library only adds the last path segment, so omitting "/v1" 404s.
+Organization/Project (both optional) tag request cost when one key is shared
+by several apps - OpenAI's rough equivalent of a "workspace".
 """
 
 from openai import OpenAI
@@ -54,10 +46,8 @@ class OpenAIChatClient(BaseLLMClient):
         if not self.api_key:
             logger.warning("[OPENAI] OPENAI_API_KEY not set")
 
-        # Only build the OpenAI object when we actually have a key.
-        # If we passed api_key=None, the OpenAI library raises an error right here,
-        # and that error would crash the health endpoints - which are the very
-        # thing you use to find out that the key is missing.
+        # Only build when we have a key - passing api_key=None makes the OpenAI
+        # library raise immediately, which would crash the health endpoint that reports it's missing.
         if self.api_key:
             self.client = OpenAI(
                 api_key=self.api_key,
@@ -75,11 +65,7 @@ class OpenAIChatClient(BaseLLMClient):
         return self.client
 
     def get_configuration(self) -> dict:
-        """Return the settings this client is using, with no secrets in it.
-
-        The health endpoints include this so you can see which base URL and model
-        are actually in use without having to read the code.
-        """
+        """Return the settings this client is using, with no secrets in it."""
         return {
             "base_url": self.base_url,
             "model": self.model,
@@ -123,12 +109,8 @@ class OpenAIChatClient(BaseLLMClient):
         return response.model_dump()
 
     def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable.
-
-        deep=False: only checks that the API key is present. No network call.
-        deep=True: calls GET {base_url}/models. That call is free (it uses no
-        tokens) but it does prove the base URL is reachable and the key works.
-        """
+        """Report whether this client is usable. deep=False only checks the API key
+        is present; deep=True calls GET /models - free, but proves the URL and key both work."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 
@@ -212,17 +194,8 @@ class OpenAIEmbeddingClient:
         }
 
     def get_embeddings(self, texts: list[str], model: str | None = None) -> list[list[float]]:
-        """Turn a list of texts into a list of embeddings, in the same order.
-
-        `model` overrides OPENAI_EMBED_MODEL for this one call only - the
-        client's own configured model is untouched. Whoever passes a
-        different model is responsible for it producing the same dimension
-        the target vector store's index was created with - text-embedding-
-        3-small is 1536, text-embedding-3-large is 3072, and neither
-        ChromaDB nor Pinecone will explain that mismatch clearly if it
-        happens (Pinecone rejects the upsert outright once dimensions
-        disagree; Chroma's error is not much more informative).
-        """
+        """Turn a list of texts into embeddings, same order as input. `model` overrides
+        the configured model for this call only - it must match the target index's embedding dimension."""
         if not texts:
             return []
 
@@ -238,11 +211,8 @@ class OpenAIEmbeddingClient:
         return embeddings
 
     def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable.
-
-        deep=True also checks that the embedding model named in .env is one this
-        key is actually allowed to see.
-        """
+        """Report whether this client is usable. deep=True also checks that the
+        configured embedding model is one this key is actually allowed to see."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 

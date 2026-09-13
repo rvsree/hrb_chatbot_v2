@@ -1,48 +1,8 @@
-"""Pinecone client - an alternative vector store to ChromaDB.
+"""Pinecone client - an alternative vector store to ChromaDB, same BaseVectorDBClient contract.
 
-Same BaseVectorDBClient contract as chroma_client.py - the two are
-interchangeable behind db_gateway.py. ChromaDB is the active store today;
-this is real and tested on its own, so switching later is a config change
-plus a gateway call, matching how postgres_client.py relates to
-sqlite_client.py for document metadata.
-
-One index, namespaces instead of collections
-------------------------------------------------
-Pinecone's unit of isolation within one index is a "namespace", not a
-separately-dimensioned "collection" the way Chroma has - a single index has
-one fixed vector dimension for everything in it. So `collection_name` in
-every method below is passed straight through as the Pinecone namespace.
-One PINECONE_INDEX_NAME is configured for this whole client; if this project
-ever needs genuinely different embedding dimensions side by side, that
-needs a second index (and a second client instance), not a new namespace.
-
-Pinecone has no native "documents" field like Chroma
----------------------------------------------------------
-A Pinecone vector is just an id, its values (the embedding), and a metadata
-dict. To keep parity with Chroma - where `query()` hands back the original
-chunk text, not just an id - the raw text is stored under a `"document"`
-metadata key on upsert, and pulled back out of `match.metadata["document"]`
-on query.
-
-The score/distance inversion - read this before writing retrieval code
----------------------------------------------------------------------------
-Chroma's `query()` returns "distances": lower means more similar. Pinecone's
-`query()` returns "score": for the cosine metric this project uses, HIGHER
-means more similar - it is a similarity, not a distance. This method still
-returns the field under the key "distances" for shape-compatibility with
-ChromaDBClient, but the *number itself means the opposite thing* depending
-on which client answered. This is not silently corrected here (a
-1-minus-score transform is only valid for one specific metric convention,
-and guessing wrong would be worse than leaving it visible) - whatever reads
-this field to rank or filter results must know which backend produced it.
-
-Index creation happens lazily, on first real use
------------------------------------------------------
-Same reasoning as every other client here: health_check(deep=False) must
-stay instant. Creating a serverless index for real (deep=True, or the first
-upsert/query/delete) is not instant - Pinecone takes a few seconds to make a
-freshly created index ready, so _ensure_index() polls briefly rather than
-assuming it's ready the moment create_index() returns.
+Key gotcha: Pinecone's query() returns similarity "score" (higher = closer),
+not Chroma's "distance" (lower = closer) - both are returned under the key
+"distances" for shape-compatibility, but the number means the opposite thing.
 """
 
 import time
@@ -82,13 +42,8 @@ class PineconeClient(BaseVectorDBClient):
         metric: str | None = None,
         dimension: int | None = None,
     ):
-        """Read settings and build the lightweight Pinecone client object.
-
-        Building `Pinecone(api_key=...)` makes no network call by itself -
-        it is safe to do here rather than lazily, the same as OpenAI()'s
-        constructor. Creating/confirming the *index* is the part that is
-        deferred - see _ensure_index().
-        """
+        """Read settings and build the lightweight Pinecone client object - this
+        makes no network call by itself; creating/confirming the index is deferred, see _ensure_index()."""
         self.api_key = read_setting(api_key, "PINECONE_API_KEY")
         self.index_name = read_setting(index_name, "PINECONE_INDEX_NAME")
         self.cloud = read_setting(cloud, "PINECONE_CLOUD", self.DEFAULT_CLOUD)
@@ -175,26 +130,22 @@ class PineconeClient(BaseVectorDBClient):
         metadatas: list[dict] | None = None,
     ) -> None:
         if metadatas is None:
-            # No metadata given - one empty dict per id, so the loop below
-            # always has something to merge into, even if it's nothing.
+            # No metadata given - fill in an empty dict per id so the merge loop below
+            # always has something to write into.
             metadatas = []
             for _ in ids:
                 metadatas.append({})
 
-        # Build one Pinecone vector record per chunk. ids, embeddings,
-        # documents, and metadatas are four separate parallel lists - the
-        # item at index 0 of each belongs together, the item at index 1 of
-        # each belongs together, and so on - so this loop walks all four at
-        # the same time using Python's zip(), which pairs up corresponding
-        # items the way iterating four Java arrays with one shared index
-        # variable would. strict=True makes zip() raise an error instead of
-        # silently truncating if the four lists ever end up different
-        # lengths, which would otherwise be a confusing bug to track down.
+        # ids, embeddings, documents, and metadatas are four separate lists that
+        # line up by position (index 0 of each belongs together, index 1 of each
+        # belongs together...). zip() walks all four at once instead of writing
+        # `for i in range(len(ids)): ids[i], embeddings[i], ...` by hand - closest
+        # Java equivalent is iterating four arrays with one shared index variable.
+        # strict=True raises instead of silently truncating if their lengths differ.
         vectors = []
         for id_, embedding, document, metadata in zip(ids, embeddings, documents, metadatas, strict=True):
-            # Pinecone has no native "document text" field - store it as
-            # metadata like any other value, alongside whatever the caller
-            # already put in `metadata` (document_id, chunk_index).
+            # Pinecone has no native "document text" field - stash it in metadata
+            # alongside whatever the caller already put there (document_id, chunk_index).
             vector_metadata = dict(metadata)
             vector_metadata["document"] = document
             vectors.append({"id": id_, "values": embedding, "metadata": vector_metadata})
@@ -228,9 +179,8 @@ class PineconeClient(BaseVectorDBClient):
             metadatas.append(metadata)
             scores.append(match.score)
 
-        # Nested once, matching Chroma's shape for a single query embedding.
-        # "distances" here are Pinecone similarity SCORES (higher = closer for
-        # cosine) - see this module's docstring before ranking on this field.
+        # Nested once to match Chroma's shape. "distances" here are Pinecone
+        # similarity scores (higher = closer) - see module docstring.
         return {"ids": [ids], "documents": [documents], "metadatas": [metadatas], "distances": [scores]}
 
     def delete(self, collection_name: str, ids: list[str]) -> None:
@@ -239,13 +189,27 @@ class PineconeClient(BaseVectorDBClient):
         ):
             self.get_index().delete(ids=ids, namespace=collection_name)
 
-    def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable.
+    def update_metadata(self, collection_name: str, ids: list[str], metadatas: list[dict]) -> None:
+        """Pinecone's update() takes one id at a time (no batch metadata-update
+        call), and merges set_metadata into the existing dict rather than
+        replacing it - harmless here since callers always pass the complete
+        desired metadata anyway (see BaseVectorDBClient's contract). One real
+        gap: Pinecone stores chunk text under metadata["document"] (no native
+        text field, unlike Chroma) - a caller that omits "document" from the
+        dict it passes will lose that chunk's text on Pinecone specifically.
+        Acceptable today because the only caller (flipping is_current=false on
+        a superseded document) only ever affects chunks retrieval already
+        excludes - not acceptable if this method gains other callers later."""
+        with log_backend_call(
+            logger, "pinecone", "vector.update_metadata", namespace=collection_name, chunk_count=len(ids)
+        ):
+            index = self.get_index()
+            for id_, metadata in zip(ids, metadatas, strict=True):
+                index.update(id=id_, set_metadata=metadata, namespace=collection_name)
 
-        deep=False: only reports configured settings - no network call.
-        deep=True: lists indexes (free) and confirms/creates the configured
-        one, reporting whether it already existed or was just created.
-        """
+    def health_check(self, deep: bool = False) -> dict:
+        """Report whether this client is usable. deep=False only reports configured
+        settings; deep=True lists indexes and confirms/creates the configured one."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 

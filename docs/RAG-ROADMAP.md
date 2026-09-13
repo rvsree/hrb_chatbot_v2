@@ -63,12 +63,16 @@ around.
 | 3 — Indexing trigger endpoint | Claude Code | ✅ Done |
 | 4 — Chunking/embedding/indexing | Claude Code (override) | ✅ Done |
 | 4.1 — Per-call config overrides | Claude Code (override) | ✅ Done |
+| 4.2 — Document metadata expansion + content-hash dedup | Claude Code (override) | ✅ Done, 2026-09-10 |
+| 4.3 — Delete endpoint | Claude Code (override) | ✅ Done, 2026-09-10 |
+| 4.4 — Document versioning (supersede + is_current retrieval filtering), table extraction, document-metadata extraction | Claude Code (override) | ✅ Done, 2026-09-11 |
+| 4.5 — Retrieval relevance threshold, standardized error codes | Claude Code | ✅ Done, 2026-09-11 |
 | 5 — Query endpoint, stubbed | Claude Code | ✅ Done |
 | 5.1 — Query decomposition | Hand-written | 📋 Planned |
 | 5.2 — Query variants | Hand-written | 📋 Planned |
 | 5.3 — Prompt chaining + versioning | Hand-written | 📋 Planned |
-| 6 — Retrieval + grounded generation, COT | Hand-written | 📋 Planned |
-| 6.1 — Contracts/validation for query path | Claude Code | 📋 Planned (gated on Phase 6) |
+| 6 — Retrieval + grounded generation | Claude Code (override, 2026-09-10) | 🚧 MVP done - real retrieval + generation, no COT/guardrails yet; see Phase 6 detail below |
+| 6.1 — Contracts/validation for query path | Claude Code | ✅ Done alongside the Phase 6 MVP - `model_used` added to `RagQueryResponse` |
 | 7 — Guardrails (input + output) | Hand-written | 📋 Planned |
 | 8 — Golden dataset + evaluations + A/B | Hand-written | 🚧 Golden dataset done (override, 2026-09-08); evaluations/A/B harness still 📋 planned |
 | 9 — Bedrock as an LLM provider | Claude Code | ✅ Done |
@@ -96,7 +100,7 @@ bugs found the hard way" for why.
 
 - [x] **Phase 1 (Claude Code) — ChromaDB client + gateway.**
   `common/clients/db_client/chroma_client.py`, `db_gateway.py`.
-  `health_checks.py`'s `check_vector_database()` wired into `check_everything()`.
+  `health_checks.py`'s `check_vector_database()` wired into `check_all_backend_services()`.
   Verified: `GET /health?deep=true` reports ChromaDB healthy (persistent
   mode, `data/chroma_db/chroma.sqlite3` created).
 - [x] **Phase 2 (Claude Code) — Document upload API.** `POST /rag/documents`
@@ -204,6 +208,198 @@ bugs found the hard way" for why.
   Pinecone for that call; `{"chunk_size": 500, "chunk_overlap": 600}`
   (overlap ≥ size) → `422` with a clear validation message, not a
   confusing failure downstream.
+
+- [x] **Phase 4.2 (Claude Code, on request 2026-09-10) — document metadata
+  expansion + content-hash dedup.** Two related changes to the `documents`
+  table (SQLite + Postgres, migrated the same lazy `ADD COLUMN` way
+  `chunk_ids` was):
+
+  - **New columns**: `document_version` (1 on upload, +1 on every
+    successful index), `chunk_count`, `embedding_model`,
+    `embedding_dimension` (measured from the real embedding vector's
+    length, not a hardcoded model→dimension table), `vector_db`,
+    `chunk_size`, `chunk_overlap`, `last_indexed_at` (distinct from
+    `updated_at`, which also moves on a failed attempt), `file_size_bytes`.
+    All written in one new `record_successful_index()` call, replacing the
+    old separate `set_chunk_ids()` + `update_status("indexed")` pair.
+  - **Content-hash dedup**: every upload is SHA-256'd; a match against an
+    existing document's `content_hash` (new column + index) returns that
+    existing document instead of creating a new one (`status: "duplicate"`
+    in the response, plus a new `duplicate_count` on
+    `DocumentUploadResponse`). Persistent and header-independent - unlike
+    the `Idempotency-Key` cache, it catches identical content uploaded at
+    any time, survives restarts, since it's backed by the real DB.
+
+  Verified live: re-uploading the identical file twice → second call
+  returns `status: "duplicate"` pointing at the first upload's
+  `document_id`, no new row created. Verified the full insert→update cycle
+  separately: upload → `document_version: 1`; first `/index` →
+  `action: "insert"`, version → 2; second `/index` on the same id →
+  `action: "update"`, version → 3. 11 tests (8 upload/dedup, uuid-salted
+  content per test since these hit the real persistent SQLite file with no
+  per-test reset - a fixed literal would collide across separate test
+  *runs*, not just within one).
+
+- [x] **Phase 4.3 (Claude Code, on request 2026-09-10) — delete endpoint.**
+  `DELETE /v1/rag-ingestion/documents/{id}` (`documents_service.delete_document()`) -
+  a full delete, not selective: a document has one current state (no
+  retained version history to pick a version from - see Phase 4.2's
+  `document_version`, which is a counter, not stored history). Removes, in
+  order: the vector store's chunks (using the metadata store's `chunk_ids` -
+  skipped if the document was never indexed), the metadata row, and the
+  uploaded file on disk.
+
+  **Ordering is deliberate, same safety reasoning as the insert/update
+  path**: vectors are deleted first, while `chunk_ids` still exists to find
+  them; the metadata row (the only record of which vector ids belong to
+  this document) is removed last, once vectors are confirmed gone. A crash
+  mid-way leaves the metadata row intact so a retry can still finish the
+  job, rather than orphaning vectors with no way left to find them.
+
+  Verified live against real data, not just SQLite: indexed a real document
+  (40 real chunks) → confirmed via a direct Chroma query
+  (`collection.count()`, `collection.get(where={"document_id": ...})`) that
+  the vector store held 85 total / 40 for this document → called `DELETE`
+  → vector store count dropped to 45 (exactly the 40 removed), `GET` on the
+  id now `404`, and `data/uploads/{id}/` gone from disk. 4 new tests
+  (delete-then-gone, unknown id `404`, double-delete `404` the second
+  time) - vector-store deletion itself is verified live rather than
+  in the automated suite, matching this project's existing practice of not
+  spending real embedding/API cost inside `pytest`.
+
+- [x] **Phase 4.4 (Claude Code, on request 2026-09-11) — document versioning,
+  table extraction, document-metadata extraction.** Three related additions,
+  built and tested primarily against ChromaDB (free, local) - Pinecone
+  portability confirmed by design (both clients share `BaseVectorDBClient`;
+  `update_metadata()` was added to both), not yet exercised live against a
+  real Pinecone index; that's the deliberately deferred next step, once this
+  round is stable.
+
+  **Normalized `chunks` table** (SQLite + Postgres) - one row per chunk
+  (`chunk_id`, `document_id`, `chunk_index`, `created_at`, `is_current`),
+  replacing the need to parse `documents.chunk_ids`' JSON blob for any
+  per-chunk query. Populated inside `record_successful_index()` (delete-then-
+  insert per document, same shape as the vector store's own stale-chunk
+  cleanup).
+
+  **Document versioning via explicit supersede** - `POST
+  /v1/rag-ingestion/documents` gained an optional `supersedes_document_id`
+  form field (rejected with 422 on a batch upload - ambiguous which file
+  would supersede it; rejected as a per-file "rejected" result if the target
+  id doesn't exist). Upload only *records* the intent
+  (`documents.supersedes`); the old document isn't flipped until the *new*
+  one successfully indexes (`metadata_store.mark_superseded()`, called from
+  `vector_indexer.py`, only on that document's first index - not repeated on
+  a later re-index) - so there is never a window where neither version's
+  content is live. The flip touches three places: the old document's own SQL
+  row (`is_current=false`, `superseded_by` set), its rows in `chunks`, and -
+  via the vector store's new `update_metadata()` (added to
+  `BaseVectorDBClient`, implemented in both Chroma and Pinecone) - its actual
+  vectors' metadata, without a wasted re-embed.
+
+  **Retrieval excludes superseded chunks by default** -
+  `retriever.py`'s vector-store query now always filters
+  `where={"is_current": {"$ne": False}}` - `$ne`, not an `is_current: true`
+  equality match, deliberately: chunks indexed before this field existed
+  have no `is_current` key at all, and an equality filter would have
+  silently excluded those too. Only a chunk explicitly flipped to `false`
+  is excluded; nothing is deleted, so superseded content stays available for
+  direct/audit lookup (`collection.get(ids=...)`), just not surfaced to a
+  normal query.
+
+  **Table-aware PDF extraction** - new `ai/doc_processing/tables/table_extractor.py`
+  (pdfplumber, a new dependency - pypdf's `extract_text()` has no table
+  awareness at all). Tables are extracted separately per page, formatted as
+  markdown, and appended after the main extracted text (not inlined at their
+  original position - reconstructing exact layout position isn't needed for
+  chunking, only keeping row/column structure readable is).
+
+  **LLM-based document-metadata extraction** - new
+  `ai/doc_processing/metadata_extraction/document_metadata_extractor.py`.
+  Sends the first ~3000 characters of extracted text to the chat LLM, asking
+  for owner/department/doc_type/purpose as JSON (explicitly told to answer
+  `null`, not guess, for anything the text doesn't support). Runs once, on a
+  document's first successful index only (the result can't change between
+  re-indexes of the same content, so it's never re-billed on a re-index).
+  Best-effort by design: any extraction or parsing failure is logged and
+  swallowed, never allowed to fail the index itself.
+
+  **Verified live, real cost incurred** (not just unit-tested): uploaded a
+  real PDF with a real table (years-of-service → disability-pay-percentage),
+  indexed it, and confirmed via a direct Chroma query that a chunk contained
+  the table correctly reformatted as markdown. Confirmed document-metadata
+  extraction produced an accurate `doc_type` and one-sentence `purpose`
+  summary, and correctly returned `null` (not a hallucinated guess) for
+  `owner`/`department`, which the source document doesn't state. Ran the
+  full supersede flow end to end: uploaded v1, indexed it; uploaded v2 with
+  `supersedes_document_id` pointing at v1, indexed v2; confirmed v1 flipped
+  to `is_current: false` with `superseded_by` set, confirmed v1's vectors
+  are still physically present in Chroma (`collection.get(ids=...)` still
+  returns them) but `is_current: false`; then ran a real
+  `POST /v1/rag-retrieval/query` and confirmed **all 5** returned sources
+  were v2's chunks, **zero** from v1 - the actual point of the whole feature,
+  proven against a real query, not inferred from the write path alone.
+
+  17 new tests (fakes only, zero network): `vector_indexer.py`'s
+  `is_current`/timestamp tagging and full supersede-propagation flow
+  (including that a *second* re-index doesn't repeat the flip);
+  `retriever.py`'s exclusion of superseded chunks and backward-compatible
+  handling of chunks with no `is_current` field at all;
+  `document_metadata_extractor.py`'s clean/messy/failed LLM-response
+  handling; `table_extractor.py`'s markdown formatting; and route-level
+  validation for `supersedes_document_id` (batch rejection, unknown-target
+  rejection, successful recording). 76/76 total suite passing, stable across
+  repeated runs.
+
+- [x] **Phase 4.5 (Claude Code) — retrieval relevance threshold, standardized
+  error codes.** Two fixes found by reviewing a real query response, not
+  planned in advance.
+
+  **Relevance threshold**: `retriever.py` previously returned exactly
+  `top_k` results regardless of whether any were actually relevant - a
+  question about content nothing indexed covers still got "sources" that
+  looked plausible next to a correctly-hedged answer. Root cause in the one
+  case that surfaced this was pure data (a document uploaded but never
+  indexed), not a bug - but the underlying gap (no relevance floor) is
+  real regardless. Added `_meets_relevance_bar()`, direction-aware per
+  backend (Chroma's distance is lower=better, Pinecone's score is
+  higher=better). `MAX_CHROMA_DISTANCE = 1.1` is empirically calibrated,
+  not guessed: a real query's genuinely relevant chunks scored ~0.69-0.97,
+  its irrelevant ones (once nothing relevant was indexed) scored
+  ~1.22-1.27 - 1.1 sits between the two clusters with margin either side.
+  `MIN_PINECONE_SCORE = 0.5` is a reasoned starting point only, not yet
+  calibrated against a real Pinecone query. When every retrieved chunk
+  fails the bar, `chunks` comes back empty, which already triggers
+  `generate_answer()`'s existing no-context short-circuit - so this also
+  means a genuinely unanswerable question no longer spends an LLM call at
+  all. Verified live: re-ran the exact query that surfaced this after
+  indexing the real content it needed (10/10 correctly-sourced chunks),
+  then a genuinely unanswerable question (`sources: []`, no LLM call).
+
+  **Standardized error codes**: every error response now carries a stable
+  `code` (new `common/error_codes.py`) alongside its human-readable
+  `error` message - `json_error()`'s `code` parameter is required, not
+  optional, so a call site can't silently omit one. Found two real shape
+  inconsistencies while doing this, not just adding a field on top of what
+  existed: `RequestValidationError` (422) and `rate_limiter.py`'s raw
+  `HTTPException(429)` both bypassed `json_error()` entirely, returning
+  FastAPI's own `{"detail": ...}` shape - contradicting what
+  `docs/HANDOFF.md`/`README_TEST.md` already claimed ("every error has the
+  same shape"). Two new global handlers in `main.py` fix both, and
+  `json_error()` gained a `headers` parameter (separate from the JSON body
+  extras) so the 429 handler can preserve the real `Retry-After` header
+  rather than accidentally serializing it into the response body.
+  `DocumentUploadResult` also gained `error_code` for per-file upload
+  rejections (`INVALID_FILE_TYPE`, `EMPTY_FILE`, `FILE_TOO_LARGE`, etc.) -
+  the same "give a caller something to branch on, not just prose"
+  reasoning applies to a batch-uploading caller deciding which files are
+  worth retrying. Motivated directly by the planned agent work: a
+  LangGraph tool-calling loop needs a stable decision surface, not string-
+  matching message text. 9 new/extended tests, including two direct unit
+  tests of the new exception handlers (not routed through 100 real
+  requests to trip rate limiting) and live verification that the 422 shape
+  actually changed. 81/81 total suite passing.
+
 ## Phase 5 onward — RAG query, evaluations, guardrails, deployment
 
 Added 2026-09-09, tracking a much larger discussion in one place rather
@@ -227,12 +423,14 @@ later, separate wave once this core is solid.
   exactly) that raises `NotImplementedError` naming the exact file and
   workshop module for each step.
 
-  Verified live: a valid query → `501` naming
+  Verified live at the time: a valid query → `501` naming
   `ai/pre_processing/query_decompose.py` and Phase 5.1 specifically (not a
   generic error); empty `query` → `422` (min length); `top_k=100` → `422`
   (max 20) - both caught by the contract before a handler ever runs, not
   downstream. Confirmed no regression on `/health`, `/docs`, or the
-  existing `/rag/documents` endpoints.
+  existing `/rag/documents` endpoints. **Superseded by Phase 6 below** -
+  the `501` is no longer what a valid query returns; the `422` validation
+  behavior is unchanged.
 - [ ] **Phase 5.1 (hand-written) — Query decomposition.** `ai/pre_processing/
   query_decompose.py`. **LLM-based, not classical NLP** - confirmed with
   the user: a single prompt asking the model to break a complex question
@@ -247,15 +445,72 @@ later, separate wave once this core is solid.
   `ai/rag_pipeline/prompts/` (currently empty). A registry/versioning
   scheme for prompts used across decomposition, generation, and
   evaluation - not just a hardcoded string per call site.
-- [ ] **Phase 6 (hand-written) — Retrieval + grounded generation, with COT.**
-  `ai/rag_pipeline/query_retrieval/`, `ai/rag_pipeline/response_generation/`.
-  Workshop Module 4 (anti-hallucination/grounding). Chain-of-thought
-  prompting is part of this phase, not separate.
-- [ ] **Phase 6.1 (Claude Code) — Contracts/validation/logging for the query
-  path.** Same standard already applied to upload/indexing (typed
-  request/response, `json_error()` shape, try/except with logging) -
-  extended to cover the LLM response-generation call and the vector-store
-  query call specifically, per explicit instruction.
+- [x] **Phase 6 (Claude Code, built on explicit request 2026-09-10 - overrides
+  the original "hand-written" plan, same pattern as Phase 4) — MVP
+  retrieval + grounded generation.** The user asked directly for this
+  ("impl logic for rag search... endpoint"), after Phase 4's chunking/
+  embedding/indexing had already set the precedent that this project's
+  division of labor bends when explicitly, knowingly overridden - not a
+  silent drift. Recorded here for the same reason Phase 4 was: so it's
+  clear this didn't follow the original hand-written boundary, and why.
+
+  - **`ai/rag_pipeline/query_retrieval/retriever.py`** - embeds the query
+    (`OpenAIEmbeddingClient`), searches the configured vector store,
+    deduplicates chunks by `(document_id, chunk_index)` (so a chunk found
+    by more than one sub-query is only returned once - already written to
+    support Phase 5.1's future multi-query output without its own
+    signature changing), and attaches each chunk's source `filename` from
+    the metadata store - one lookup per distinct document, not per chunk.
+  - **`ai/rag_pipeline/response_generation/generator.py`** - builds a
+    grounded prompt (context blocks labeled `[filename, chunk N]`, an
+    explicit "answer using ONLY the context... say you don't know
+    otherwise" instruction folded into the question text, since
+    `BaseLLMClient.ask()` has no separate system-message parameter).
+    Empty retrieval short-circuits to a fixed "no information" answer
+    without spending an LLM call. `model_name` override builds a fresh,
+    one-off `OpenAIChatClient` (mirroring how `IndexRequest.embedding_model`
+    overrides `get_embeddings()`, since `ask()` has no per-call model
+    parameter to piggyback on); no override uses the shared `ClientGateway`
+    instance.
+  - **`ai/rag_pipeline/pipeline.py`'s `decompose_query()`** stays a
+    **trivial passthrough** (`return [query]`) - this is explicitly NOT
+    Phase 5.1. Real LLM-based decomposition remains hand-written, untouched,
+    in `ai/pre_processing/query_decompose.py` (still empty). The passthrough
+    exists only so `retrieve_chunks()` already accepts a list of sub-queries
+    without needing a signature change once Phase 5.1 lands for real.
+  - **Deliberately not built in this MVP**: chain-of-thought prompting,
+    query decomposition, multi-query expansion, prompt versioning (Phase
+    5.1-5.3), and both directions of guardrails (Phase 7) - explicitly
+    scoped out by the user ("keeping MVP deliverables in mind... I will
+    identify and pick up some other tasks later").
+
+  **Response contract also updated** (folded into this phase rather than
+  a separate Phase 6.1 pass): `RagQueryResponse` gained `model_used` -
+  the actually-resolved chat model, not just the possibly-null override -
+  matching the same "report what actually ran" convention `IndexResponse`
+  already established. `RetrievedChunk.filename` (added ahead of this
+  phase, alongside the document-metadata expansion) is now genuinely
+  populated instead of an unused contract field.
+
+  **Verified live, real cost incurred** (one real embedding call + one real
+  chat completion): asked "How many weeks of paid time off do employees
+  get per year?" against a real indexed document
+  (`JPMC Paid TimeOff.pdf`) → a correct, grounded answer ("3 to 5 weeks of
+  vacation annually based on years of service and pay grade"), traceable
+  to the real retrieved chunk text, with `sources` correctly showing the
+  real `filename`. Also unit-tested with fakes (no network): 9 tests
+  across `retriever.py` (filename attachment, sub-query dedup, missing-
+  metadata fallback, `top_k` limiting) and `generator.py` (no-chunks
+  short-circuit, grounding instruction present in the prompt, shared vs.
+  overridden client selection). Route-level tests updated to monkeypatch
+  `rag_service.answer_query()` rather than asserting the old `501` - one
+  of the pre-existing tests was found making a real, uncontrolled OpenAI
+  call before this fix.
+- [x] **Phase 6.1 (Claude Code) — Contracts/validation/logging for the query
+  path.** Folded into Phase 6 above rather than a separate pass -
+  `model_used` is the concrete contract addition; the existing
+  `json_error()`/try-except/logging shape from upload/indexing already
+  covered the rest and needed no changes.
 - [ ] **Phase 7 (hand-written) — Guardrails, both directions.**
   `ai/pre_processing/guardrails_input.py` (currently empty) - a validation
   gateway for the incoming query before it reaches retrieval.
@@ -278,8 +533,10 @@ later, separate wave once this core is solid.
   than agree with). Built as an explicit, one-time override of this
   phase's hand-written boundary - same pattern as Phase 4
   (chunking/embedding/indexing), not a precedent for the rest of Phase 8.
-  Can't be exercised yet since `POST /rag/query` is still the Phase 6
-  stub - it exists now so it's ready the moment Phase 6 lands.
+  Can now actually be exercised against `POST /v1/rag-retrieval/query`
+  since Phase 6's MVP landed - the evaluation metrics/A/B harness
+  themselves (Precision@K/Recall@K/F1, groundedness via LLM-as-judge)
+  are still the unbuilt, hand-written part of this phase.
 - [x] **Phase 9 (Claude Code) — Bedrock as an LLM provider.**
   `BedrockChatClient` implementing `BaseLLMClient` via the Converse API, wired
   into `/health` the same way as OpenAI/Anthropic/OpenRouter

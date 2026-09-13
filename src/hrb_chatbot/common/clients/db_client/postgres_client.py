@@ -1,38 +1,5 @@
-"""Postgres client - an alternative document-metadata store to SQLite.
-
-Same `documents` table shape as sqlite_client.py, same BaseMetadataClient
-contract - the two are interchangeable behind db_gateway.py. SQLite is what
-documents_service.py actually calls today; this exists, fully working and
-tested on its own, so switching the active store later is a config change
-plus a gateway call, not new code.
-
-Why sync psycopg wrapped in asyncio.to_thread, not psycopg's native async API
----------------------------------------------------------------------------------
-psycopg.AsyncConnection genuinely does not work on Windows under the default
-asyncio event loop (ProactorEventLoop) - it raises InterfaceError on
-connect(), confirmed while building this. The fix is not to change the
-process-wide event loop policy (uvicorn on Windows relies on Proactor for
-other things), it's to not use psycopg's async driver at all: run the
-ordinary synchronous psycopg.connect() calls inside asyncio.to_thread(),
-which is exactly what aiosqlite itself does internally for sqlite3 (which
-has no async driver either). Same portability, same non-blocking behaviour
-for the event loop, and it happens to work identically on Linux too - so
-this is the more portable choice for the eventual AWS deployment, not a
-Windows-only workaround.
-
-Why a fresh connection per call, not a pool
------------------------------------------------
-psycopg-pool is in requirements.txt and would be the right choice under
-real concurrent load. For this project's current scope, matching
-sqlite_client.py's own "connect, do one thing, close" style keeps both
-clients readable the same way - pooling is a legitimate later optimization,
-not a correctness requirement yet.
-
-Why the table is created lazily, on first real use
--------------------------------------------------------
-Same reasoning as every other client here: health_check(deep=False) must
-stay instant and touch nothing.
-"""
+"""Postgres client - an alternative document-metadata store to SQLite, same
+BaseMetadataClient contract as sqlite_client.py."""
 
 import asyncio
 import json
@@ -58,11 +25,48 @@ CREATE TABLE IF NOT EXISTS documents (
 )
 """
 
-# chunk_ids was added after this table already existed - CREATE TABLE IF NOT
-# EXISTS is a no-op against a table that's already there. Postgres (unlike
-# SQLite) supports IF NOT EXISTS on ADD COLUMN directly, so this needs no
-# try/except.
-ADD_CHUNK_IDS_COLUMN = "ALTER TABLE documents ADD COLUMN IF NOT EXISTS chunk_ids TEXT"
+# Each column below was added after the table already existed. Postgres
+# supports ADD COLUMN IF NOT EXISTS directly, unlike SQLite, so no try/except
+# is needed here.
+ADD_COLUMNS = [
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS chunk_ids TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS document_version INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS chunk_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS embedding_model TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS embedding_dimension INTEGER",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS vector_db TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS chunk_size INTEGER",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS chunk_overlap INTEGER",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS last_indexed_at TIMESTAMPTZ",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_size_bytes INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_current BOOLEAN NOT NULL DEFAULT true",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS supersedes TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS superseded_by TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS owner TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS department TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_type TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS purpose TEXT",
+]
+
+# Speeds up find_by_content_hash() - one lookup per upload, worth an index.
+CREATE_CONTENT_HASH_INDEX = (
+    "CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash)"
+)
+
+# Normalized chunk tracking - see sqlite_client.py's identical table for why.
+CREATE_CHUNKS_TABLE = """
+CREATE TABLE IF NOT EXISTS chunks (
+    chunk_id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    is_current BOOLEAN NOT NULL DEFAULT true
+)
+"""
+CREATE_CHUNKS_DOCUMENT_ID_INDEX = (
+    "CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id)"
+)
 
 
 class PostgresClient(BaseMetadataClient):
@@ -109,7 +113,11 @@ class PostgresClient(BaseMetadataClient):
     def _ensure_table_sync(self) -> None:
         with self._connect() as conn:
             conn.execute(CREATE_DOCUMENTS_TABLE)
-            conn.execute(ADD_CHUNK_IDS_COLUMN)
+            for add_column in ADD_COLUMNS:
+                conn.execute(add_column)
+            conn.execute(CREATE_CONTENT_HASH_INDEX)
+            conn.execute(CREATE_CHUNKS_TABLE)
+            conn.execute(CREATE_CHUNKS_DOCUMENT_ID_INDEX)
             conn.commit()
 
     async def _ensure_table(self) -> None:
@@ -119,19 +127,58 @@ class PostgresClient(BaseMetadataClient):
         await asyncio.to_thread(self._ensure_table_sync)
         self._table_ready = True
 
-    def _create_document_sync(self, document_id: str, filename: str, file_path: str) -> None:
+    def _create_document_sync(
+        self,
+        document_id: str,
+        filename: str,
+        file_path: str,
+        file_size_bytes: int,
+        content_hash: str,
+        supersedes: str | None,
+    ) -> None:
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO documents (id, filename, file_path, status, error_message, "
-                "created_at, updated_at) VALUES (%s, %s, %s, 'uploaded', NULL, now(), now())",
-                (document_id, filename, file_path),
+                "created_at, updated_at, document_version, file_size_bytes, content_hash, "
+                "is_current, supersedes) VALUES (%s, %s, %s, 'uploaded', NULL, now(), now(), 1, %s, %s, true, %s)",
+                (document_id, filename, file_path, file_size_bytes, content_hash, supersedes),
             )
             conn.commit()
 
-    async def create_document(self, document_id: str, filename: str, file_path: str) -> None:
+    async def find_by_content_hash(self, content_hash: str) -> dict | None:
+        await self._ensure_table()
+        with log_backend_call(logger, "postgres", "metadata.find_by_content_hash"):
+            return await asyncio.to_thread(self._find_by_content_hash_sync, content_hash)
+
+    def _find_by_content_hash_sync(self, content_hash: str) -> dict | None:
+        with self._connect() as conn:
+            with conn.cursor(row_factory=self._dict_row_factory) as cur:
+                cur.execute(
+                    "SELECT * FROM documents WHERE content_hash = %s ORDER BY created_at DESC LIMIT 1",
+                    (content_hash,),
+                )
+                return cur.fetchone()
+
+    async def create_document(
+        self,
+        document_id: str,
+        filename: str,
+        file_path: str,
+        file_size_bytes: int,
+        content_hash: str,
+        supersedes: str | None = None,
+    ) -> None:
         await self._ensure_table()
         with log_backend_call(logger, "postgres", "metadata.create_document", document_id=document_id):
-            await asyncio.to_thread(self._create_document_sync, document_id, filename, file_path)
+            await asyncio.to_thread(
+                self._create_document_sync,
+                document_id,
+                filename,
+                file_path,
+                file_size_bytes,
+                content_hash,
+                supersedes,
+            )
 
     def _update_status_sync(self, document_id: str, status: str, error_message: str | None) -> None:
         with self._connect() as conn:
@@ -170,6 +217,122 @@ class PostgresClient(BaseMetadataClient):
         ):
             await asyncio.to_thread(self._set_chunk_ids_sync, document_id, chunk_ids)
 
+    def _record_successful_index_sync(
+        self,
+        document_id: str,
+        chunk_ids: list[str],
+        embedding_model: str,
+        embedding_dimension: int,
+        vector_db: str,
+        chunk_size: int,
+        chunk_overlap: int,
+    ) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "UPDATE documents SET chunk_ids = %s, chunk_count = %s, embedding_model = %s, "
+                "embedding_dimension = %s, vector_db = %s, chunk_size = %s, chunk_overlap = %s, "
+                "status = 'indexed', error_message = NULL, last_indexed_at = now(), updated_at = now(), "
+                "document_version = document_version + 1 WHERE id = %s RETURNING document_version",
+                (
+                    json.dumps(chunk_ids),
+                    len(chunk_ids),
+                    embedding_model,
+                    embedding_dimension,
+                    vector_db,
+                    chunk_size,
+                    chunk_overlap,
+                    document_id,
+                ),
+            ).fetchone()
+
+            # Replace this document's rows in `chunks` - same delete-then-insert
+            # shape as sqlite_client.py and the vector store's own cleanup.
+            conn.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
+            if chunk_ids:
+                with conn.cursor() as cur:
+                    cur.executemany(
+                        "INSERT INTO chunks (chunk_id, document_id, chunk_index, created_at, is_current) "
+                        "VALUES (%s, %s, %s, now(), true)",
+                        [(chunk_id, document_id, index) for index, chunk_id in enumerate(chunk_ids)],
+                    )
+            conn.commit()
+        return row[0]
+
+    def _mark_superseded_sync(self, document_id: str, superseded_by: str) -> list[str]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT chunk_ids FROM documents WHERE id = %s", (document_id,)
+            ).fetchone()
+
+            conn.execute(
+                "UPDATE documents SET is_current = false, superseded_by = %s, updated_at = now() "
+                "WHERE id = %s",
+                (superseded_by, document_id),
+            )
+            conn.execute("UPDATE chunks SET is_current = false WHERE document_id = %s", (document_id,))
+            conn.commit()
+
+        if row is None or row[0] is None:
+            return []
+        return json.loads(row[0])
+
+    async def mark_superseded(self, document_id: str, superseded_by: str) -> list[str]:
+        await self._ensure_table()
+        with log_backend_call(
+            logger, "postgres", "metadata.mark_superseded", document_id=document_id, superseded_by=superseded_by
+        ):
+            return await asyncio.to_thread(self._mark_superseded_sync, document_id, superseded_by)
+
+    def _record_document_metadata_sync(
+        self, document_id: str, owner: str | None, department: str | None, doc_type: str | None, purpose: str | None
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE documents SET owner = %s, department = %s, doc_type = %s, purpose = %s, "
+                "updated_at = now() WHERE id = %s",
+                (owner, department, doc_type, purpose, document_id),
+            )
+            conn.commit()
+
+    async def record_document_metadata(
+        self,
+        document_id: str,
+        owner: str | None,
+        department: str | None,
+        doc_type: str | None,
+        purpose: str | None,
+    ) -> None:
+        await self._ensure_table()
+        with log_backend_call(logger, "postgres", "metadata.record_document_metadata", document_id=document_id):
+            await asyncio.to_thread(
+                self._record_document_metadata_sync, document_id, owner, department, doc_type, purpose
+            )
+
+    async def record_successful_index(
+        self,
+        document_id: str,
+        chunk_ids: list[str],
+        embedding_model: str,
+        embedding_dimension: int,
+        vector_db: str,
+        chunk_size: int,
+        chunk_overlap: int,
+    ) -> int:
+        await self._ensure_table()
+        with log_backend_call(
+            logger, "postgres", "metadata.record_successful_index", document_id=document_id
+        ):
+            return await asyncio.to_thread(
+                self._record_successful_index_sync,
+                document_id,
+                chunk_ids,
+                embedding_model,
+                embedding_dimension,
+                vector_db,
+                chunk_size,
+                chunk_overlap,
+            )
+
     def _get_document_sync(self, document_id: str) -> dict | None:
         with self._connect() as conn:
             with conn.cursor(row_factory=self._dict_row_factory) as cur:
@@ -192,20 +355,28 @@ class PostgresClient(BaseMetadataClient):
         with log_backend_call(logger, "postgres", "metadata.list_documents"):
             return await asyncio.to_thread(self._list_documents_sync)
 
+    def _delete_document_sync(self, document_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM documents WHERE id = %s", (document_id,))
+            conn.commit()
+
+    async def delete_document(self, document_id: str) -> None:
+        await self._ensure_table()
+        with log_backend_call(logger, "postgres", "metadata.delete_document", document_id=document_id):
+            await asyncio.to_thread(self._delete_document_sync, document_id)
+
     @staticmethod
     def _dict_row_factory(cursor):
-        """Turn each result row into a dict keyed by column name.
-
-        psycopg's built-in dict_row does the same thing - this is written
-        out rather than imported so the shape returned matches
-        sqlite_client.py's aiosqlite.Row-to-dict conversion exactly, with no
-        surprises about a datetime object where SQLite would give a string.
-        """
+        """Turn each result row into a dict keyed by column name, matching
+        sqlite_client.py's row shape (ISO datetime strings, not datetime objects)."""
         columns = [desc.name for desc in cursor.description]
 
         def make_row(values):
             row = dict(zip(columns, values, strict=True))
-            for key in ("created_at", "updated_at"):
+            # last_indexed_at was missed here when it was added - a real bug,
+            # not a new field: DocumentRecord expects a string, and this left
+            # a raw datetime object leaking through on Postgres specifically.
+            for key in ("created_at", "updated_at", "last_indexed_at"):
                 if row.get(key) is not None:
                     row[key] = row[key].isoformat()
             return row
@@ -213,15 +384,8 @@ class PostgresClient(BaseMetadataClient):
         return make_row
 
     def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable.
-
-        deep=False: only reports the configured connection settings - no
-        socket is opened.
-        deep=True: connects for real, creates the table if missing (same as
-        Postgres always does for a fresh database), and counts rows. This
-        runs synchronously - health_check is not async on any client in this
-        project, and it runs once per health check, not per request.
-        """
+        """Report whether this client is usable. deep=False only reports the
+        configured connection settings; deep=True connects, creates the table if missing, and counts rows."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 
@@ -245,7 +409,8 @@ class PostgresClient(BaseMetadataClient):
             )
             try:
                 connection.execute(CREATE_DOCUMENTS_TABLE)
-                connection.execute(ADD_CHUNK_IDS_COLUMN)
+                for add_column in ADD_COLUMNS:
+                    connection.execute(add_column)
                 connection.commit()
                 document_count = connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
             finally:

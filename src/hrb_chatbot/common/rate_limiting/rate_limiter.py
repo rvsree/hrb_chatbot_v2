@@ -1,24 +1,8 @@
 """A simple in-memory rate limiter - fixed window, one window per client.
 
-Why in-memory, not Redis or a real distributed limiter
------------------------------------------------------------
-This project runs as a single App Runner instance, not a scaled-out fleet
-(see docs/AWS-DEVOPS-RUNBOOK.md) - a distributed rate limiter needs a
-shared store (Redis, DynamoDB) specifically so multiple processes agree on
-one count. With one process, a plain in-memory dict is the honest choice,
-not an under-engineered shortcut - reaching for Redis here would be
-solving a scaling problem this project doesn't have yet. The real
-limitation worth knowing: this resets to zero on every restart/redeploy,
-and stops being correct the moment this app ever runs as more than one
-instance at once - a real distributed store is the fix then, not a bigger
-dict.
-
-Finally gives two settings a job
-------------------------------------
-APP_RATE_LIMITING, APP_RATE_LIMIT_REQUESTS, and APP_RATE_LIMIT_DURATION
-have been sitting in .env since the very first commit, flagged in
-docs/BACKLOG.md as "orphan config" - declared, never read by anything.
-This is that read.
+Single-process only: resets on restart and stops being correct once this
+app runs as more than one instance - a real distributed store (Redis) is
+the fix then, not a bigger dict.
 """
 
 import time
@@ -94,8 +78,7 @@ class RateLimiter:
 
 
 # Same lazy-singleton pattern as ClientGateway/DBGateway - one shared
-# limiter for the whole process, so every request's count is checked
-# against the same in-memory state.
+# limiter for the whole process.
 _shared_rate_limiter: RateLimiter | None = None
 
 
@@ -110,9 +93,7 @@ def get_rate_limiter() -> RateLimiter:
 def reset_rate_limiter() -> None:
     """Throw away the shared limiter so the next call builds a fresh one.
 
-    Only needed in tests - a test that changes APP_RATE_LIMITING or the
-    request/window settings must clear this cache for the change to take
-    effect, same reasoning as reset_client_gateway()/reset_db_gateway().
+    Only needed in tests - same reasoning as reset_client_gateway()/reset_db_gateway().
     """
     global _shared_rate_limiter
     _shared_rate_limiter = None
@@ -120,9 +101,7 @@ def reset_rate_limiter() -> None:
 
 def enforce_rate_limit(request: Request) -> None:
     """FastAPI dependency - add `Depends(enforce_rate_limit)` to any route
-    that should be rate-limited. Keys on the caller's IP address; falls
-    back to "unknown" if FastAPI can't determine one (some test/proxy
-    setups don't populate request.client)."""
+    that should be rate-limited. Keys on the caller's IP, or "unknown" if request.client is unset."""
     if request.client:
         client_key = request.client.host
     else:

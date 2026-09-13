@@ -34,8 +34,13 @@ pydantic-settings==2.6.1
 # instead of this line on a bare Windows machine with no system libmagic.
 python-magic==0.4.27
 pypdf==6.1.1
-pdfminer.six==20251107
-Pillow==10.0.1
+pdfminer.six==20260107
+Pillow==12.3.0
+# pdfplumber - table-aware PDF parsing (ai/doc_processing/tables/table_extractor.py),
+# separate from pypdf's plain-text extraction in text_chunker.py. Bundles/pins
+# pdfminer.six and Pillow above to the versions it actually needs.
+pdfplumber==0.11.10
+pypdfium2==5.13.0
 
 # -----------------------------------------------------------------------------
 # Logging

@@ -1,31 +1,9 @@
 """ChromaDB client - the vector store this project indexes into.
 
-Two modes, chosen by CHROMA_DB_MODE
-------------------------------------
-"persistent" (the default): an embedded database that writes to a local
-folder (CHROMA_DB_PERSIST_DIR) - no server process to run, matches this
-project's local-dev-first priority.
-"http": talks to a separately-running Chroma server at CHROMA_DB_HOST:
-CHROMA_DB_PORT - for when the store needs to live outside this process
-(shared across processes, or run in its own container later).
-
-Why the client is built lazily, not in __init__
--------------------------------------------------
-Every other client in this project treats health_check(deep=False) as
-free and instant - no network, no disk I/O beyond reading .env. In "http"
-mode, constructing chromadb's HttpClient can perform a handshake against the
-server, which would break that contract if it happened eagerly in __init__.
-So the real client is only built the first time a method actually needs it
-(get_client()), the same shape as OpenAIChatClient only building its client
-when there is a key to build it with - just for a different reason here.
-
-Collection names are sanitized
--------------------------------
-ChromaDB requires collection names to be 3-512 characters, only
-[a-zA-Z0-9._-], and to start/end with an alphanumeric character. A name that
-violates this doesn't fail with a clear message - so it's sanitized here once,
-rather than becoming a confusing error at the exact moment a document is
-first indexed.
+Two modes via CHROMA_DB_MODE: "persistent" (embedded, local folder, default)
+or "http" (a separately-running Chroma server). The real client is built
+lazily in get_client(), not __init__, because constructing an HttpClient can
+handshake over the network - health_check(deep=False) must stay instant.
 """
 
 import re
@@ -151,14 +129,16 @@ class ChromaDBClient(BaseVectorDBClient):
         with log_backend_call(logger, "chromadb", "vector.delete", collection=collection_name, chunk_count=len(ids)):
             collection.delete(ids=ids)
 
-    def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable.
+    def update_metadata(self, collection_name: str, ids: list[str], metadatas: list[dict]) -> None:
+        collection = self.get_collection(collection_name)
+        with log_backend_call(
+            logger, "chromadb", "vector.update_metadata", collection=collection_name, chunk_count=len(ids)
+        ):
+            collection.update(ids=ids, metadatas=metadatas)
 
-        deep=False: only reports the settings in use - no client is built, so
-        "http" mode makes no network call here.
-        deep=True: builds the client and calls list_collections(), which for
-        "http" mode is also the first real proof the server is reachable.
-        """
+    def health_check(self, deep: bool = False) -> dict:
+        """Report whether this client is usable. deep=False only reports the
+        settings in use - no client is built; deep=True builds it and calls list_collections()."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 

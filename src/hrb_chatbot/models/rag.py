@@ -4,21 +4,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class RagQueryRequest(BaseModel):
-    """What POST /rag/query accepts.
-
-    model_config below turns off Pydantic's "model_" protected-namespace
-    warning specifically - Pydantic reserves fields starting with "model_"
-    for its own internal use (model_config, model_fields, ...) and warns on
-    any field name that collides with that prefix. model_name here is a
-    genuinely different thing (which LLM model to call), not a clash worth
-    renaming the field over.
-
-    Every field below query is optional - the request body {"query": "..."}
-    on its own is enough. Each optional field only overrides its one .env
-    default for this one call, the same pattern IndexRequest already uses in
-    models/documents.py - a caller only needs to name the values that differ
-    from the default, not repeat every setting on every request.
-    """
 
     model_config = ConfigDict(protected_namespaces=())
 
@@ -73,6 +58,10 @@ class RetrievedChunk(BaseModel):
     """One chunk the retrieval step considered relevant to the query."""
 
     document_id: str = Field(..., description="Which uploaded document this chunk came from.")
+    filename: str = Field(
+        ..., description="That document's original filename - a citation should show this, not the "
+        "opaque document_id. Looked up from the metadata store at retrieval time."
+    )
     chunk_index: int = Field(..., description="This chunk's position within that document.")
     text: str = Field(..., description="The chunk's text, as stored at index time.")
     score: float = Field(
@@ -88,8 +77,14 @@ class RetrievedChunk(BaseModel):
 class RagQueryResponse(BaseModel):
     """What POST /rag/query returns."""
 
+    model_config = ConfigDict(protected_namespaces=())
+
     query: str = Field(..., description="The question that was asked.")
     answer: str = Field(..., description="The generated, grounded answer.")
+    model_used: str = Field(
+        ..., description="Which chat model actually generated this answer - resolved, not just the "
+        "possibly-null model_name override that was requested."
+    )
     sources: list[RetrievedChunk] = Field(
         ..., description="The chunks the answer was actually grounded in, most relevant first."
     )

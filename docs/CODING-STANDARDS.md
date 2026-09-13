@@ -57,7 +57,7 @@ bare dict FastAPI happens to serialize. This is what makes `/docs` actually
 useful and catches a malformed request before a handler ever runs.
 
 **Health/diagnostic endpoints are the deliberate exception** - `GET /health`
-returns whatever `check_everything()` produces, wrapped by `health_response()`,
+returns whatever `check_all_backend_services()` produces, wrapped by `health_response()`,
 with no declared `response_model`. This matches the sibling project's own
 convention, not a gap: what's being checked grows over time (an LLM check
 today, a database check added this week, more later), and forcing that into

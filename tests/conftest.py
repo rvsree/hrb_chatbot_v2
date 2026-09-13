@@ -1,26 +1,8 @@
-"""Shared test fixtures - the fakes every test file below imports instead of
-each writing its own.
-
-Why fakes, not real backends
------------------------------
-No test in this suite may reach a real network, cost money, or need an API
-key - the same rule the reference project (w1_agentic_foundations) already
-follows, and the same reason for it here: a test that calls the real
-OpenAI API is flaky (network, rate limits), slow, and either needs a key
-in CI or gets silently skipped there. A fake with the exact same method
-signatures as the real client (FakeEmbeddingClient looks like
-OpenAIEmbeddingClient to any code that calls it) tests the same logic
-without any of that.
-
-Why "monkeypatch", for anyone coming from Java
--------------------------------------------------
-pytest's `monkeypatch` fixture temporarily replaces one function/attribute
-for the duration of a single test, then puts the original back
-automatically when the test ends - closest Java analogue is a mocking
-framework like Mockito swapping in a mock for the scope of one test method,
-except monkeypatch works directly on Python's module-level names rather
-than needing an interface to mock against.
-"""
+"""Shared test fixtures - fakes every test file below imports instead of
+writing its own. No test may hit a real network, cost money, or need an
+API key, so these fakes match the real clients' method signatures exactly.
+`monkeypatch` (pytest) swaps a function/attribute for one test, then
+restores it automatically - like Mockito, but on Python's module names."""
 
 from src.hrb_chatbot.common.clients.db_client.base_metadata_client import BaseMetadataClient
 from src.hrb_chatbot.common.clients.db_client.base_vector_db_client import BaseVectorDBClient
@@ -43,15 +25,40 @@ class FakeEmbeddingClient:
         return embeddings
 
 
-class FakeClientGateway:
-    """Stands in for ClientGateway - just enough to return a FakeEmbeddingClient
-    where real code calls get_client_gateway().openai_embedding()."""
+class FakeChatClient:
+    """Stands in for OpenAIChatClient - no network, a canned answer, and a
+    record of every call so a test can assert on what was actually asked
+    (the question text, the context, temperature/max_tokens)."""
 
-    def __init__(self, embedding_client: FakeEmbeddingClient | None = None):
+    def __init__(self, model: str = "fake-chat-model", answer: str = "This is a fake grounded answer."):
+        self.model = model
+        self._answer = answer
+        self.calls: list[dict] = []
+
+    def ask(self, question: str, context: str | None = None, temperature: float = 0.0, max_tokens=None) -> str:
+        self.calls.append(
+            {"question": question, "context": context, "temperature": temperature, "max_tokens": max_tokens}
+        )
+        return self._answer
+
+
+class FakeClientGateway:
+    """Stands in for ClientGateway - just enough to return a FakeEmbeddingClient/
+    FakeChatClient where real code calls get_client_gateway().openai_embedding()/openai_chat()."""
+
+    def __init__(
+        self,
+        embedding_client: FakeEmbeddingClient | None = None,
+        chat_client: FakeChatClient | None = None,
+    ):
         self._embedding_client = embedding_client or FakeEmbeddingClient()
+        self._chat_client = chat_client or FakeChatClient()
 
     def openai_embedding(self) -> FakeEmbeddingClient:
         return self._embedding_client
+
+    def openai_chat(self) -> FakeChatClient:
+        return self._chat_client
 
 
 class FakeVectorStore(BaseVectorDBClient):
@@ -66,6 +73,10 @@ class FakeVectorStore(BaseVectorDBClient):
         self.collections: dict[str, dict[str, dict]] = {}
         self.upsert_calls: list[dict] = []
         self.delete_calls: list[dict] = []
+        # A test can set score_overrides["chunk_id"] = 1.5 before calling
+        # query() to simulate a specific relevance score - real backends
+        # compute this from embedding similarity, which this fake doesn't do.
+        self.score_overrides: dict[str, float] = {}
 
     def upsert(self, collection_name, ids, documents, embeddings, metadatas=None):
         self.upsert_calls.append({"collection_name": collection_name, "ids": list(ids)})
@@ -82,13 +93,49 @@ class FakeVectorStore(BaseVectorDBClient):
             collection[chunk_id] = {"document": document, "embedding": embedding, "metadata": metadata}
 
     def query(self, collection_name, query_embedding, top_k=5, where=None):
-        return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+        # No real similarity math - just echoes back whatever was upserted
+        # and matches `where`, up to top_k, in insertion order. Enough to
+        # test the *pipeline* around a vector query (retrieval, is_current
+        # filtering, filename lookup, dedup) without needing real embeddings
+        # to rank against. Only supports the operators this project's own
+        # code actually sends: plain equality and {"$ne": value}.
+        collection = self.collections.get(collection_name, {})
+        ids, documents, metadatas, scores = [], [], [], []
+        for chunk_id, entry in collection.items():
+            if not self._matches_where(entry["metadata"], where):
+                continue
+            ids.append(chunk_id)
+            documents.append(entry["document"])
+            metadatas.append(entry["metadata"])
+            scores.append(self.score_overrides.get(chunk_id, 0.9))
+            if len(ids) >= top_k:
+                break
+        return {"ids": [ids], "documents": [documents], "metadatas": [metadatas], "distances": [scores]}
+
+    @staticmethod
+    def _matches_where(metadata, where):
+        if not where:
+            return True
+        for key, condition in where.items():
+            actual = metadata.get(key)
+            if isinstance(condition, dict) and "$ne" in condition:
+                if actual == condition["$ne"]:
+                    return False
+            elif actual != condition:
+                return False
+        return True
 
     def delete(self, collection_name, ids):
         self.delete_calls.append({"collection_name": collection_name, "ids": list(ids)})
         collection = self.collections.get(collection_name, {})
         for chunk_id in ids:
             collection.pop(chunk_id, None)
+
+    def update_metadata(self, collection_name, ids, metadatas):
+        collection = self.collections.get(collection_name, {})
+        for chunk_id, metadata in zip(ids, metadatas, strict=True):
+            if chunk_id in collection:
+                collection[chunk_id]["metadata"] = metadata
 
     def health_check(self, deep=False):
         return {"provider": self.PROVIDER_NAME, "status": "healthy"}
@@ -103,7 +150,9 @@ class FakeMetadataStore(BaseMetadataClient):
     def __init__(self):
         self.documents: dict[str, dict] = {}
 
-    async def create_document(self, document_id, filename, file_path):
+    async def create_document(
+        self, document_id, filename, file_path, file_size_bytes=0, content_hash="", supersedes=None
+    ):
         self.documents[document_id] = {
             "id": document_id,
             "filename": filename,
@@ -111,7 +160,33 @@ class FakeMetadataStore(BaseMetadataClient):
             "status": "uploaded",
             "error_message": None,
             "chunk_ids": None,
+            "document_version": 1,
+            "file_size_bytes": file_size_bytes,
+            "content_hash": content_hash,
+            "chunk_count": 0,
+            "embedding_model": None,
+            "embedding_dimension": None,
+            "vector_db": None,
+            "chunk_size": None,
+            "chunk_overlap": None,
+            "last_indexed_at": None,
+            "is_current": True,
+            "supersedes": supersedes,
+            "superseded_by": None,
+            "owner": None,
+            "department": None,
+            "doc_type": None,
+            "purpose": None,
         }
+
+    async def find_by_content_hash(self, content_hash):
+        matches = [doc for doc in self.documents.values() if doc.get("content_hash") == content_hash]
+        if not matches:
+            return None
+        return matches[-1]
+
+    async def delete_document(self, document_id):
+        self.documents.pop(document_id, None)
 
     async def update_status(self, document_id, status, error_message=None):
         if document_id in self.documents:
@@ -123,6 +198,49 @@ class FakeMetadataStore(BaseMetadataClient):
 
         if document_id in self.documents:
             self.documents[document_id]["chunk_ids"] = json.dumps(chunk_ids)
+
+    async def record_successful_index(
+        self,
+        document_id,
+        chunk_ids,
+        embedding_model=None,
+        embedding_dimension=None,
+        vector_db=None,
+        chunk_size=None,
+        chunk_overlap=None,
+    ):
+        import json
+
+        document = self.documents[document_id]
+        document["chunk_ids"] = json.dumps(chunk_ids)
+        document["chunk_count"] = len(chunk_ids)
+        document["embedding_model"] = embedding_model
+        document["embedding_dimension"] = embedding_dimension
+        document["vector_db"] = vector_db
+        document["chunk_size"] = chunk_size
+        document["chunk_overlap"] = chunk_overlap
+        document["status"] = "indexed"
+        document["error_message"] = None
+        document["document_version"] += 1
+        return document["document_version"]
+
+    async def mark_superseded(self, document_id, superseded_by):
+        import json
+
+        document = self.documents.get(document_id)
+        if document is None:
+            return []
+        document["is_current"] = False
+        document["superseded_by"] = superseded_by
+        return json.loads(document["chunk_ids"]) if document.get("chunk_ids") else []
+
+    async def record_document_metadata(self, document_id, owner, department, doc_type, purpose):
+        document = self.documents.get(document_id)
+        if document is not None:
+            document["owner"] = owner
+            document["department"] = department
+            document["doc_type"] = doc_type
+            document["purpose"] = purpose
 
     async def get_document(self, document_id):
         return self.documents.get(document_id)
@@ -136,9 +254,8 @@ class FakeMetadataStore(BaseMetadataClient):
 
 class FakeDBGateway:
     """Stands in for DBGateway - returns the one FakeVectorStore/FakeMetadataStore
-    given to it, regardless of which provider name is asked for. A test that
-    needs to tell two different providers apart should use two FakeDBGateway
-    instances, not rely on this one to fake that distinction."""
+    given to it regardless of provider name. A test needing two distinct
+    providers should use two FakeDBGateway instances instead."""
 
     def __init__(self, vector_store: FakeVectorStore | None = None, metadata_store: FakeMetadataStore | None = None):
         self._vector_store = vector_store or FakeVectorStore()

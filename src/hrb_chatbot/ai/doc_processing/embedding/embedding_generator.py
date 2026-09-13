@@ -1,10 +1,7 @@
 """Turns chunk texts into embedding vectors.
 
-Workshop Module 1 covers what an embedding actually is and how similarity
-between two of them is measured. This module is thin on purpose - the real
-work is `OpenAIEmbeddingClient.get_embeddings()`, already built and tested
-in common/clients/llm_client/openai_client.py; this just names the one call
-the indexing pipeline needs, so pipeline.py doesn't reach into the client
+Thin on purpose: the real work is OpenAIEmbeddingClient.get_embeddings();
+this just names the one call so pipeline.py doesn't reach into the client
 gateway directly.
 """
 
@@ -18,8 +15,7 @@ def generate_embeddings(chunks: list[str], embedding_model: str | None = None) -
     """Return one embedding vector per chunk, in the same order as chunks.
 
     `embedding_model` overrides OPENAI_EMBED_MODEL for this call only - see
-    OpenAIEmbeddingClient.get_embeddings()'s docstring for the dimension-
-    mismatch risk that comes with actually using this.
+    get_embeddings()'s docstring for the dimension-mismatch risk.
     """
     if not chunks:
         return []

@@ -1,21 +1,8 @@
 """One place that hands out every client the project uses.
 
-Why this exists
----------------
-Without it, every module that needed a model would create its own
-OpenAIChatClient, its own TavilyClient, and so on. That means the same settings get read over and over, and
-if you ever need to change how a client is built you have to find every copy.
-
-How to use it
--------------
-    from src.hrb_chatbot.common.clients.llm_client.client_gateway import get_client_gateway
-
-    gateway = get_client_gateway()
-    answer = gateway.openai_chat().ask("What is 2+2?")
-
-Each client is created the first time you ask for it and then kept, so calling
-gateway.openai_chat() a hundred times still only builds one client. Holding on to
-an object like this instead of rebuilding it is called caching.
+Avoids every module building its own OpenAIChatClient/TavilyClient/etc. and
+re-reading the same settings. Each client is created on first request, then
+cached (get_client_gateway().openai_chat() always returns the same object).
 """
 
 from src.hrb_chatbot.common.clients.llm_client.anthropic_client import AnthropicChatClient
@@ -32,13 +19,8 @@ class ClientGateway:
     """Creates each client once, then returns that same client every time."""
 
     def __init__(self):
-        """Start with no clients built yet.
-
-        Each one stays None until somebody actually asks for it. This is called
-        "lazy" creation, and it matters here: if we built all five up front, a
-        project that only needs Tavily would still print warnings about missing
-        OpenAI keys.
-        """
+        """Start with no clients built yet - each stays None until first requested,
+        so a project that only needs Tavily never sees OpenAI key warnings."""
         self.openai_chat_client = None
         self.openai_embedding_client = None
         self.anthropic_chat_client = None
@@ -83,11 +65,11 @@ class ClientGateway:
         return self.tavily_search_client
 
 
-# The single gateway shared by the whole program.
-# It starts as None and is built the first time get_client_gateway() is called.
-# The leading underscore is a Python convention meaning "this belongs to this
-# file - please use the function below instead of touching it directly".
-_shared_gateway = None
+# Singleton, Python-style: no DI container/@Component here like Spring's
+# ApplicationContext - this module-level variable IS the one shared instance.
+# `global` tells the function below "reuse the outer variable, don't create a
+# new local one" - the same effect a Spring singleton bean gives you for free.
+_shared_gateway: ClientGateway | None = None
 
 
 def get_client_gateway() -> ClientGateway:
@@ -101,11 +83,7 @@ def get_client_gateway() -> ClientGateway:
 
 
 def reset_client_gateway():
-    """Throw away the shared gateway so the next call builds a fresh one.
-
-    Only needed in tests: the clients read their settings once, when they are
-    built, so a test that changes an environment variable must clear the cache
-    for the change to have any effect.
-    """
+    """Throw away the shared gateway so the next call builds a fresh one - only
+    needed in tests, since clients read settings once, at construction time."""
     global _shared_gateway
     _shared_gateway = None

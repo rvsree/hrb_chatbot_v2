@@ -108,26 +108,33 @@ run against a real server):
 
 ```powershell
 # upload a real PDF - copy the document_id from the response
-curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" http://127.0.0.1:8093/v1/rag/documents
+curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" http://127.0.0.1:8093/v1/rag-ingestion/documents
 
 # index it (spends: one real embedding call per chunk)
-curl -X POST http://127.0.0.1:8093/v1/rag/documents/<document_id>/index
+curl -X POST http://127.0.0.1:8093/v1/rag-ingestion/documents/<document_id>/index
 
-# ask a question - the query endpoint itself works, but the underlying
-# retrieval/generation pipeline (Phase 6) is hand-written and not built yet,
-# so this returns 501 naming ai/rag_pipeline/pipeline.py until it lands
-curl -X POST http://127.0.0.1:8093/v1/rag/query -H "Content-Type: application/json" -d "{\"query\": \"How many weeks of parental leave do I get?\"}"
+# ask a question - real retrieval + grounded generation (spends: one real
+# embedding call + one real chat completion). Query decomposition, guardrails,
+# and evaluations are still hand-written and not built yet - see Phase 6 in
+# docs/RAG-ROADMAP.md for exactly what's in and what's deliberately deferred
+curl -X POST http://127.0.0.1:8093/v1/rag-retrieval/query -H "Content-Type: application/json" -d "{\"query\": \"How many weeks of parental leave do I get?\"}"
 ```
+
+Re-uploading a file whose content exactly matches one already uploaded
+returns `status: "duplicate"` pointing at the existing `document_id`
+instead of creating a new one - no `Idempotency-Key` needed, this is
+content-hash based and persistent.
 
 For testing every endpoint from a GUI instead of curl, import
 [postman/hrb_chatbot.postman_collection.json](postman/hrb_chatbot.postman_collection.json)
 into Postman - it covers the same happy-path and edge cases as
 README_TEST.md, ready to run against `{{base_url}}` (local or the deployed
-App Runner URL). Once Phase 6 exists,
+App Runner URL).
 [resources/golden_dataset/golden_dataset.json](resources/golden_dataset/golden_dataset.json)
 has 22 real question/expected-answer pairs grounded in the actual
 `resources/kb_docs/` PDFs, for evaluating whether real answers are grounded
-and correct rather than hallucinated.
+and correct rather than hallucinated - exercisable against the real query
+endpoint now.
 
 ## Running in a container
 

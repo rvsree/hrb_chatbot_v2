@@ -1,16 +1,9 @@
 """The shared interface that every LLM provider client implements.
 
-Why this file exists
---------------------
-OpenAI, Anthropic and OpenRouter all have different Python libraries with
-different method names. This class defines the three methods our own code cares
-about, so the rest of the project can call `client.ask(...)` without knowing or
-caring which provider is behind it.
-
-`ABC` means "Abstract Base Class". A class that inherits from it and does not
-write all the `@abstractmethod` methods cannot be created - Python raises an
-error straight away. That is a helpful safety net: if you add a new provider and
-forget `health_check`, you find out immediately.
+OpenAI, Anthropic and OpenRouter each have different client libraries; this
+defines the three methods the rest of the project relies on (`ask`,
+`ask_with_tools`, `health_check`) so calling code doesn't need to know which
+provider is behind it. ABC enforces that a subclass implements all of them.
 """
 
 from abc import ABC, abstractmethod
@@ -43,18 +36,12 @@ class BaseLLMClient(ABC):
         max_tokens: int | None = None,
         tool_choice: str = "auto",
     ) -> dict:
-        """Ask a question and let the model call tools (also called "functions").
-
-        Every provider returns this in the OpenAI response shape, so calling code
-        can always read `response["choices"][0]["message"]["tool_calls"]`.
-        """
+        """Ask a question and let the model call tools ("functions"). Every provider
+        returns this in the OpenAI response shape (response["choices"][0]["message"]["tool_calls"])."""
         raise NotImplementedError
 
     @abstractmethod
     def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable.
-
-        deep=False: only check that the API key is present. No network call.
-        deep=True: make one real (but free) call to confirm the key works.
-        """
+        """Report whether this client is usable. deep=False only checks that the
+        API key is present; deep=True makes one real, free call to confirm it works."""
         raise NotImplementedError

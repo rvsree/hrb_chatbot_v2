@@ -19,7 +19,7 @@ the kind of question an FDE interview round tends to probe hardest.
 
 **What this project does today**: full re-index only. `ai/doc_processing/indexing/vector_indexer.py`'s
 `write_chunks()` re-chunks, re-embeds, and re-upserts the *entire* document
-every time `POST /v1/rag/documents/{id}/index` is called again - there is no
+every time `POST /v1/rag-ingestion/documents/{id}/index` is called again - there is no
 concept of "only section 3 changed, only re-embed section 3." Deterministic
 chunk ids (`f"{document_id}:{chunk_index}"`) mean re-upserting naturally
 overwrites chunks that still exist at the same position; a real
@@ -101,12 +101,26 @@ database. That's exactly the split this project already has -
 same idea LlamaIndex formalizes as a separate `DocStore` / `IndexStore` /
 `VectorStore` rather than one store trying to do all three jobs.
 
+**Document metadata was expanded (2026-09-10)** beyond the original
+filename/status/timestamps: `document_version` (starts at 1 on upload,
+increments on every successful re-index), `chunk_count`, `file_size_bytes`,
+and - the fields that actually matter for retrieval correctness -
+`embedding_model`, `embedding_dimension`, `vector_db`, `chunk_size`,
+`chunk_overlap`, and `last_indexed_at` (distinct from `updated_at`, which
+also moves on a failed attempt). `embedding_dimension` is measured from the
+real embedding vector's length at index time, not looked up from a
+hardcoded model-name table - correct for any model, including ones no
+lookup table knows about yet. All of it is written in one
+`record_successful_index()` call (`base_metadata_client.py`), replacing the
+old separate `set_chunk_ids()` + `update_status("indexed")` pair - one
+successful index is one fact, not two writes that could disagree.
+
 ---
 
 ## 3. How are indexes created, and did you classify documents into categories to speed up search?
 
 **What "index" means here - two different things worth not confusing**:
-in this project's code, "index" (`POST /v1/rag/documents/{id}/index`, `index_document()`)
+in this project's code, "index" (`POST /v1/rag-ingestion/documents/{id}/index`, `index_document()`)
 means *writing a document's chunks into the vector store* - an
 application-level operation. The vector store's own internal search
 *structure* (an ANN index - typically HNSW for both Chroma and Pinecone)

@@ -31,9 +31,8 @@ def test_empty_chunk_list_returns_empty_without_calling_the_client(monkeypatch):
     embeddings = embedding_generator.generate_embeddings([])
 
     assert embeddings == []
-    # Confirms this is a real short-circuit, not just an empty result from
-    # calling the client with no texts - see the "if not chunks: return []"
-    # guard at the top of generate_embeddings().
+    # Confirms this is a real short-circuit (the "if not chunks: return []"
+    # guard), not just an empty result from calling the client with no texts.
     assert fake_client.calls == []
 
 

@@ -1,40 +1,16 @@
-"""Document upload and listing - free, no model call, no cost (except
-POST .../index, which calls the real embedding model - see that
-endpoint's own docstring).
-
-Upload is deliberately decoupled from indexing (see docs/RAG-ROADMAP.md):
-this router only stores files and records their metadata. A separate
-POST /rag/documents/{id}/index endpoint - added alongside the chunking/
-embedding/indexing work - is what actually processes a stored file. That
-split means re-running indexing while developing chunking logic never
-requires re-uploading.
-
-Standardized here, across every endpoint that spends money or writes
-state (see docs/FAQ.md's REST API contract-first section for the fuller
-reasoning behind each):
-- **Idempotency-Key support** - a client-supplied header; replaying the
-  same key returns the cached response instead of re-running the request.
-- **Rate limiting** - `Depends(enforce_rate_limit)`, off by default
-  (APP_RATE_LIMITING in .env), per-client-IP when on.
-- **A pre-flight config check before any real backend call** - fail with a
-  clean 503 naming what's unconfigured, before spending anything, rather
-  than letting a deep-in-the-pipeline exception surface as a raw 500.
-- **No raw exception text in a client-facing response** - the full error
-  is always logged server-side (see `logger.error(...)` calls below); the
-  client gets a generic, safe message.
-"""
-
-from fastapi import APIRouter, Body, Depends, File, Header, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, Header, UploadFile
 from fastapi.responses import JSONResponse
 
 from src.hrb_chatbot.ai.doc_processing import pipeline
 from src.hrb_chatbot.api.admin.health_checks import check_llm, check_vector_database, is_working
 from src.hrb_chatbot.api.dependencies import json_error
+from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
 from src.hrb_chatbot.common.idempotency.idempotency_store import get_idempotency_store
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rate_limiting.rate_limiter import enforce_rate_limit
 from src.hrb_chatbot.models.documents import (
+    DocumentDeleteResponse,
     DocumentListResponse,
     DocumentRecord,
     DocumentUploadResponse,
@@ -45,24 +21,28 @@ from src.hrb_chatbot.services import documents_service
 
 logger = get_logger("routes_documents")
 
-router = APIRouter(prefix="/rag", tags=["documents"])
+router = APIRouter(tags=["documents"])
 
 
 @router.post("/documents", response_model=DocumentUploadResponse, dependencies=[Depends(enforce_rate_limit)])
 async def upload_documents(
     files: list[UploadFile] = File(...),
+    supersedes_document_id: str | None = Form(
+        default=None,
+        description="Explicitly marks this upload as a new version of an existing document. Only valid "
+        "with exactly one file - the old document is flipped to is_current=false once this one "
+        "successfully indexes, not immediately on upload.",
+    ),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
-    """Upload one or more PDF documents - a single file is just a list of one.
+    # Upload one or more PDF documents - a single file is just a list of one.
 
-    Each file is validated and stored independently: one rejected file in a
-    batch does not affect the others. Check each result's `status` rather
-    than assuming the whole batch succeeded because the call returned 200.
-
-    Pass an `Idempotency-Key` header to make a retry of this exact call
-    safe - replaying the same key returns the same result instead of
-    uploading the same file a second time under a new document_id.
-    """
+    # Idempotency check: if this Idempotency-Key header was already used, hand
+    # back the exact response from that first call and stop - `return` here
+    # skips the rest of this function, so no upload happens a second time.
+    # No key at all is fine too - idempotency_key is then None, every `if
+    # idempotency_key:` check below is simply skipped, and this endpoint
+    # behaves as if idempotency didn't exist.
     store = get_idempotency_store()
     if idempotency_key:
         cached = store.get(idempotency_key)
@@ -70,21 +50,29 @@ async def upload_documents(
             status_code, body = cached
             return JSONResponse(status_code=status_code, content=body)
 
-    results = await documents_service.save_uploads(files)
+    if supersedes_document_id and len(files) != 1:
+        return json_error(
+            422,
+            "supersedes_document_id is only valid with exactly one file - ambiguous for a batch upload.",
+            code=error_codes.VALIDATION_ERROR,
+        )
 
-    # Count how many results have status "uploaded" - written as an explicit
-    # loop rather than Python's sum(1 for ... if ...) idiom, which reads
-    # naturally once you're used to it but is genuinely unfamiliar syntax
-    # coming from Java (there's no direct equivalent to a generator
-    # expression passed straight into a function call).
+    results = await documents_service.save_uploads(files, supersedes_document_id=supersedes_document_id)
+
     uploaded_count = 0
+    duplicate_count = 0
     for result in results:
         if result.status == "uploaded":
             uploaded_count += 1
-    rejected_count = len(results) - uploaded_count
+        elif result.status == "duplicate":
+            duplicate_count += 1
+    rejected_count = len(results) - uploaded_count - duplicate_count
 
     response = DocumentUploadResponse(
-        uploaded_count=uploaded_count, rejected_count=rejected_count, results=results
+        uploaded_count=uploaded_count,
+        duplicate_count=duplicate_count,
+        rejected_count=rejected_count,
+        results=results,
     )
 
     if idempotency_key:
@@ -106,25 +94,28 @@ async def get_document(document_id: str):
     document = await documents_service.get_document(document_id)
 
     if document is None:
-        return json_error(404, f"Unknown document '{document_id}'")
+        return json_error(404, f"Unknown document '{document_id}'", code=error_codes.DOCUMENT_NOT_FOUND)
 
     return DocumentRecord(**document)
 
 
-def _preflight_backends_ready(vector_db: str | None) -> str | None:
-    """Check (cheap, no network call - deep=False) that the embedding
-    provider and the target vector store are at least configured, before
-    attempting the real index operation.
+@router.delete(
+    "/documents/{document_id}", response_model=DocumentDeleteResponse, dependencies=[Depends(enforce_rate_limit)]
+)
+async def delete_document(document_id: str):
+    """Delete one document completely: its vectors, its metadata row, and its
+    uploaded file. A full delete, not selective - see DocumentDeleteResponse's
+    docstring for why "delete one version, keep another" doesn't apply here."""
+    result = await documents_service.delete_document(document_id)
 
-    Returns a human-readable reason if something's missing, or None if
-    it's safe to proceed. This deliberately does NOT make a deep (real
-    network) call - that would just repeat the same cost the real
-    operation is about to spend anyway, defeating the point of checking
-    first. "Configured" only proves settings are present, not that the
-    provider is actually reachable right now - the real call still catches
-    that; this only catches the cheap, common mistake (a missing API key)
-    before any money is spent trying.
-    """
+    if result is None:
+        return json_error(404, f"Unknown document '{document_id}'", code=error_codes.DOCUMENT_NOT_FOUND)
+
+    return DocumentDeleteResponse(**result)
+
+
+def _preflight_backends_ready(vector_db: str | None) -> str | None:
+    # Check embedding LLM and vector store health before initiating the process.
     llm_status = check_llm(deep=False)
     if not is_working(llm_status):
         return f"LLM provider is not configured: {llm_status.get('status')}"
@@ -146,20 +137,9 @@ async def index_document(
     payload: IndexRequest = Body(default=IndexRequest()),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
-    """Chunk, embed, and index one already-uploaded document.
 
-    The body is entirely optional - every field defaults to this project's
-    .env-configured default. Pass any subset of vector_db, chunk_size,
-    chunk_overlap, embedding_model to override just that one setting for
-    this call, without touching .env or affecting any other request.
-
-    Safe to call more than once for the same document even without an
-    Idempotency-Key: the second call is an update, not a duplicate - see
-    ai/doc_processing/indexing/vector_indexer.py for how stale chunks from
-    a previous index are removed rather than left behind. An
-    Idempotency-Key is still worth sending anyway to avoid a real retry
-    re-spending a real embedding call for no reason.
-    """
+    # Chunk, embed, and index one already-uploaded document.
+    # Same cache-check-then-cache-result idempotency pattern as upload_documents() above.
     store = get_idempotency_store()
     if idempotency_key:
         cached = store.get(idempotency_key)
@@ -169,16 +149,20 @@ async def index_document(
 
     document = await documents_service.get_document(document_id)
     if document is None:
-        return json_error(404, f"Unknown document '{document_id}'")
+        return json_error(404, f"Unknown document '{document_id}'", code=error_codes.DOCUMENT_NOT_FOUND)
 
     preflight_failure_reason = _preflight_backends_ready(payload.vector_db)
     if preflight_failure_reason:
         logger.error(
-            "Refusing to index document %s - preflight check failed: %s",
+            "Document indexing failed %s - preflight health check failed with Vector database: %s",
             document_id,
             preflight_failure_reason,
         )
-        return json_error(503, "The indexing pipeline is not ready to accept requests right now.")
+        return json_error(
+            503,
+            "The indexing pipeline is not available to process the requests right now.",
+            code=error_codes.BACKEND_UNAVAILABLE,
+        )
 
     try:
         result = await pipeline.index_document(
@@ -194,9 +178,13 @@ async def index_document(
         # docstring for why the client never sees str(error) directly.
         logger.error("Indexing failed for document %s: %s: %s", document_id, type(error).__name__, error)
         await get_db_gateway().metadata_store().update_status(document_id, "failed", str(error))
-        return json_error(500, "Indexing failed. Please try again.", document_id=document_id)
+        return json_error(
+            500, "Indexing failed. Please try again.", code=error_codes.INDEXING_FAILED, document_id=document_id
+        )
 
-    await get_db_gateway().metadata_store().update_status(document_id, "indexed")
+    # status -> "indexed" already happened inside pipeline.index_document() ->
+    # write_chunks() -> record_successful_index() - one write for the whole
+    # successful outcome, not a separate status update here too.
     response = IndexResponse(**result)
 
     if idempotency_key:

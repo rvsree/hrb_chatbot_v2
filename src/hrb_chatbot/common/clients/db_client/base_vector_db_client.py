@@ -1,26 +1,9 @@
 """The shared interface every vector database client implements.
 
-Why this file exists
---------------------
-ChromaDB, Pinecone and any future vector store all have different client
-libraries with different method names and different call shapes. This class
-defines the four operations the RAG pipeline actually needs, so calling code
-can call `store.query(...)` without knowing or caring which backend is behind
-it - the same reason BaseLLMClient exists for the LLM providers.
-
-`ABC` means "Abstract Base Class". A class that inherits from it and does not
-write all the `@abstractmethod` methods cannot be created - Python raises an
-error straight away. That is what makes swapping the backend later safe: add
-ChromaDBClient today, PineconeClient tomorrow, and forgetting a method on
-either one fails immediately instead of at 2am in production.
-
-What is deliberately NOT in this contract
-------------------------------------------
-`list_collections` and `delete_collection` are real operations ChromaDB
-supports, but they are admin/maintenance actions, not something the RAG query
-path or the indexing path needs on every call. Keeping them out of the
-required contract keeps this interface small on purpose - add them back if a
-concrete client actually needs to expose them.
+ChromaDB, Pinecone, etc. have different client libraries; this defines the
+four operations the RAG pipeline needs so calling code can use any backend
+interchangeably. Admin-only operations like list_collections/delete_collection
+are deliberately left out to keep the required contract small.
 """
 
 from abc import ABC, abstractmethod
@@ -42,12 +25,8 @@ class BaseVectorDBClient(ABC):
         embeddings: list[list[float]],
         metadatas: list[dict] | None = None,
     ) -> None:
-        """Add or update chunks in one collection.
-
-        `documents` is the chunk text itself (kept alongside the vector so a
-        query result can return the original text, not just an id).
-        `embeddings` must be the same length and order as `ids`/`documents`.
-        """
+        """Add or update chunks in one collection. `documents` is the chunk text
+        (kept so a query result can return it, not just an id); `embeddings` must align by index with `ids`."""
         raise NotImplementedError
 
     @abstractmethod
@@ -58,14 +37,9 @@ class BaseVectorDBClient(ABC):
         top_k: int = 5,
         where: dict | None = None,
     ) -> dict:
-        """Return the top_k chunks closest to query_embedding.
-
-        `where` is an optional metadata filter (for example
-        {"source_document": "healthcare_benefits.pdf"}) - every backend that
-        implements this contract must support at least equality filtering on
-        metadata fields, since the RAG pipeline's access-control and
-        search-filter steps depend on it.
-        """
+        """Return the top_k chunks closest to query_embedding. `where` is an optional
+        metadata filter; every backend must support at least equality filtering on it,
+        since the RAG pipeline's access-control and search-filter steps depend on it."""
         raise NotImplementedError
 
     @abstractmethod
@@ -74,12 +48,16 @@ class BaseVectorDBClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable.
+    def update_metadata(self, collection_name: str, ids: list[str], metadatas: list[dict]) -> None:
+        """Update only the metadata on existing chunks, without re-supplying
+        embeddings/documents - used to flip is_current=false on a superseded
+        document's chunks without a wasted re-embed. `metadatas[i]` REPLACES
+        the full metadata dict for `ids[i]`, not a merge - callers must pass
+        every field they want kept, not just the ones changing."""
+        raise NotImplementedError
 
-        deep=False: only check that the connection settings are present. No
-        network call.
-        deep=True: make one real (but free/cheap) call to confirm the
-        connection actually works - listing collections/indexes, not a query.
-        """
+    @abstractmethod
+    def health_check(self, deep: bool = False) -> dict:
+        """Report whether this client is usable. deep=False only checks that
+        connection settings are present; deep=True makes one cheap real call (listing collections/indexes)."""
         raise NotImplementedError

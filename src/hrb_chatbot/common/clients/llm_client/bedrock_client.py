@@ -1,40 +1,9 @@
-"""Bedrock client: talks to any model hosted on AWS Bedrock, via the Converse API.
+"""Bedrock client: talks to any model hosted on AWS Bedrock via the unified
+Converse API (one request/response shape per call, unlike the older
+InvokeModel API's per-model-family JSON shapes).
 
-Why Converse, not the older per-model InvokeModel API
-----------------------------------------------------------
-Bedrock originally required a different JSON request/response body per model
-family (Anthropic's shape, Amazon's shape, Meta's shape, all different). The
-Converse API is Bedrock's newer, unified interface - one request/response
-shape regardless of which model answers - which is exactly this project's
-own reason for BaseLLMClient existing at all. Converse is what makes this
-client roughly a third the size a per-model implementation would be.
-
-Two different boto3 clients, on purpose
--------------------------------------------
-"bedrock-runtime" (self.client) is the data plane - Converse and
-InvokeModel, the calls that actually run a model. "bedrock" (built lazily,
-only for the deep health check) is the control plane - ListFoundationModels,
-which does not exist on bedrock-runtime. This is a real AWS API split, not
-a design choice made here.
-
-Credentials
------------
-If AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are both set in .env, they are
-passed explicitly. If either is missing, boto3's own default credential chain
-is used instead (environment variables it reads itself, ~/.aws/credentials,
-an EC2/ECS/Lambda IAM role) - this client does not require .env to be the
-only source of credentials, unlike the API-key-based providers, because AWS
-credentials legitimately come from many places boto3 already knows how to
-check.
-
-UNTESTED against a real account as of the commit that added this file
----------------------------------------------------------------------------
-No AWS credentials were available in this project's .env or on the machine
-building this client. ask() and health_check() are straightforward enough
-that they are very likely correct; ask_with_tools()'s message/tool format
-conversion (OpenAI shape <-> Bedrock Converse shape) is the more intricate
-part and has not been exercised against a real Bedrock endpoint. Treat it
-as reviewed, not verified, until it's actually run against a real account.
+Untested against a real AWS account - ask_with_tools()'s OpenAI<->Bedrock
+conversion has not been exercised against a live endpoint; treat as reviewed, not verified.
 """
 
 import boto3
@@ -54,9 +23,8 @@ class BedrockChatClient(BaseLLMClient):
     ENV_KEY = "AWS_REGION"
 
     DEFAULT_REGION = "us-east-1"
-    # Amazon's own model, not Anthropic's - this project already has a direct
-    # Anthropic client, so Bedrock is more useful as access to a genuinely
-    # different model family than as a second, indirect path to Claude.
+    # Amazon's own model, not Anthropic's - Bedrock is more useful here as
+    # access to a different model family than as an indirect path to Claude.
     DEFAULT_MODEL = "amazon.nova-pro-v1:0"
 
     def __init__(
@@ -79,10 +47,8 @@ class BedrockChatClient(BaseLLMClient):
             self._client_kwargs["aws_access_key_id"] = self.access_key_id
             self._client_kwargs["aws_secret_access_key"] = self.secret_access_key
 
-        # Building a boto3 client makes no network call by itself - safe to
-        # do here rather than lazily, the same as OpenAI()'s constructor.
-        # Actual credential validity is only proven by a real call (deep
-        # health check, or a genuine ask()).
+        # Building a boto3 client makes no network call by itself, so this is
+        # safe to do eagerly; only a real call proves credentials are valid.
         self.client = boto3.client("bedrock-runtime", **self._client_kwargs)
 
     def get_configuration(self) -> dict:
@@ -116,12 +82,8 @@ class BedrockChatClient(BaseLLMClient):
                 inferenceConfig=inference_config,
             )
 
-        # Converse can return several content blocks (e.g. text plus a
-        # citation block); join their text into the single string every
-        # other provider's ask() already returns. Written as an explicit
-        # loop rather than "".join(... for ...) - a generator expression
-        # passed straight into a function call - which has no direct Java
-        # equivalent.
+        # Converse can return several content blocks (e.g. text plus a citation
+        # block); join their text into one string, matching every other provider's ask().
         blocks = response["output"]["message"]["content"]
         answer_text = ""
         for block in blocks:
@@ -129,13 +91,8 @@ class BedrockChatClient(BaseLLMClient):
         return answer_text
 
     def ask_with_tools(self, messages, tools, temperature=0.0, max_tokens=None, tool_choice="auto"):
-        """Ask a question and let the model call tools.
-
-        Takes OpenAI-shaped messages and tools, returns an OpenAI-shaped
-        reply, so the rest of the project can treat every provider the
-        same way - the two conversions happen in the helper methods below,
-        the same pattern anthropic_client.py uses for the same reason.
-        """
+        """Ask a question and let the model call tools. Takes OpenAI-shaped messages/tools,
+        returns an OpenAI-shaped reply - same conversion pattern anthropic_client.py uses."""
         bedrock_tools = self._convert_tools_to_bedrock_format(tools)
         system_text, bedrock_messages = self._convert_messages_to_bedrock_format(messages)
 
@@ -161,12 +118,8 @@ class BedrockChatClient(BaseLLMClient):
 
     @staticmethod
     def _convert_tools_to_bedrock_format(tools: list[dict]) -> list[dict]:
-        """Rewrite OpenAI-style tool definitions into Bedrock's toolSpec shape.
-
-        OpenAI nests everything under a "function" key; Bedrock wants name,
-        description, and schema under "toolSpec", and calls the schema
-        "inputSchema": {"json": ...} instead of "parameters".
-        """
+        """Rewrite OpenAI-style tool defs into Bedrock's toolSpec shape: name,
+        description, and schema nested under "toolSpec", schema key "inputSchema": {"json": ...}."""
         bedrock_tools = []
         for tool in tools:
             if tool.get("type") != "function":
@@ -188,16 +141,8 @@ class BedrockChatClient(BaseLLMClient):
     def _convert_messages_to_bedrock_format(
         messages: list[dict],
     ) -> tuple[str | None, list[dict]]:
-        """Rewrite an OpenAI-shaped conversation into Bedrock's Converse shape.
-
-        Three shape differences to reconcile:
-        - Bedrock takes the system prompt as its own top-level argument, not
-          a message - so it's split out here, same as anthropic_client.py.
-        - An assistant message's tool_calls become toolUse content blocks.
-        - OpenAI gives each tool result its own "tool"-role message; Bedrock
-          has no such role - every tool result for one assistant turn is
-          grouped into content blocks on a single following "user" turn.
-        """
+        """Rewrite OpenAI-shaped messages into Bedrock's Converse shape: splits out
+        the system message, and groups tool results into "user" turns since Bedrock has no "tool" role."""
         system_text = None
         bedrock_messages: list[dict] = []
         pending_tool_results: list[dict] = []
@@ -295,17 +240,8 @@ class BedrockChatClient(BaseLLMClient):
         }
 
     def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable.
-
-        deep=False: reports configured region/model/credential-source only -
-        no network call. Unlike the API-key providers, "configured" here
-        cannot mean "a key is present" (AWS credentials may legitimately
-        come from an IAM role this code never sees) - only deep=True
-        actually proves anything works.
-        deep=True: calls the separate "bedrock" control-plane client's
-        ListFoundationModels - free, no tokens spent, and it's the only way
-        to genuinely confirm credentials + region + model all work together.
-        """
+        """Report whether this client is usable. deep=False only echoes config since
+        AWS creds may come from an IAM role; deep=True calls ListFoundationModels to confirm."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 

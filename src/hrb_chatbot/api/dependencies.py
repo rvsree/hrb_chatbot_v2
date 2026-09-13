@@ -1,9 +1,4 @@
-"""Shared request parameters and response helpers for the routers in this folder.
-
-Declared once here so a description doesn't drift between endpoints that share
-the same query parameter - see the health router, which uses both DEEP_QUERY and
-PROVIDER_QUERY.
-"""
+"""Shared request parameters and response helpers for the routers in this folder."""
 
 from fastapi import Query
 from fastapi.responses import JSONResponse
@@ -40,19 +35,24 @@ VECTOR_PROVIDER_QUERY = Query(
 )
 
 
-def json_error(status_code: int, message: str, **extra) -> JSONResponse:
-    """Build an error response with a consistent shape: {"error": "...", ...extra}."""
-    body = {"error": message}
+def json_error(
+    status_code: int, message: str, code: str, headers: dict | None = None, **extra
+) -> JSONResponse:
+    """Build an error response with a consistent shape: {"error": "...", "code": "...", ...extra}.
+    `code` is required, not optional-with-a-default - every call site must
+    pick one from common/error_codes.py, on purpose, rather than one being
+    silently forgotten. `message` can change wording freely; `code` is the
+    stable part a caller should actually branch on. `headers` becomes real
+    HTTP response headers (e.g. Retry-After) - kept separate from `extra`
+    so it can never accidentally leak into the JSON body instead."""
+    body = {"error": message, "code": code}
     body.update(extra)
-    return JSONResponse(status_code=status_code, content=body)
+    return JSONResponse(status_code=status_code, content=body, headers=headers)
 
 
 def health_response(report: dict) -> JSONResponse:
-    """Turn a health report into a response with the right status code.
-
-    200 when the report says healthy, 503 when it does not - a monitoring tool
-    watches the status code and never reads the body.
-    """
+    """Turn a health report into a response with the right status code - 200 when
+    healthy, 503 otherwise, since a monitoring tool reads the status code, not the body."""
     if report["status"] == "healthy":
         status_code = 200
     else:

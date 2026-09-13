@@ -1,394 +1,972 @@
 {
   "info": {
     "name": "HRB Chatbot API",
-    "description": "Every current REST endpoint (health, document upload/index, RAG query), happy path and edge cases side by side. Mirrors README_TEST.md - every case there was verified against a live server; the same claims apply here. Business endpoints live under /v1 (health deliberately does not - see docs/FAQ.md section 6). Set the `base_url` variable to your local server (http://127.0.0.1:8093) or the deployed App Runner URL. Set `document_id` after running 'Upload - happy - single PDF' once, using its response.results[0].document_id.",
+    "description": "There are only 7 real endpoints. Each top-level folder below is one endpoint (folder 3 covers two - list/get and delete share the same resource path); the requests inside it are that endpoint's happy path plus its edge cases, in that order.\n\n1. GET /health — is the service and its backends up\n2. POST /v1/rag-ingestion/documents — upload a PDF (identical content re-uploaded is detected and not duplicated - see folder note)\n3. GET /v1/rag-ingestion/documents[/{id}] — list or fetch documents; DELETE /v1/rag-ingestion/documents/{id} — full delete (vectors + metadata + file)\n4. POST /v1/rag-ingestion/documents/{id}/index — chunk, embed, and index one (same endpoint handles both first-time insert and re-index update)\n5. POST /v1/rag-retrieval/query — ask a question against indexed content; real retrieval + grounded generation (MVP), not a stub\n\nSetup: set `base_url` (local: http://127.0.0.1:8093, or the deployed App Runner URL). Run folder 2's first request once, then copy `results[0].document_id` from the response into the `document_id` variable — folders 3 and 4 need it.\n\nFile uploads (folder 2): the `kb_docs_dir` variable holds the absolute path to resources/kb_docs/ on disk - Postman can't use a relative path there the way curl can, because it has no concept of \"run from the repo root\". Update that one variable if this repo lives somewhere else on your machine. If a file field still shows empty/red after that, click it and re-browse to the PDF by hand - that's a normal Postman re-attach, not a bug.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "base_url", "value": "http://127.0.0.1:8093" },
-    { "key": "document_id", "value": "" }
+    {
+      "key": "base_url",
+      "value": "http://localhost:8093"
+    },
+    {
+      "key": "document_id",
+      "value": ""
+    },
+    {
+      "key": "kb_docs_dir",
+      "value": "C:/workspace/2026-v1/interview-kickstart/hrb_chatbot_v2/resources/kb_docs"
+    }
   ],
   "item": [
     {
-      "name": "Health",
+      "name": "1. Health — GET /health",
       "item": [
         {
-          "name": "Shallow health (default, instant, free)",
-          "request": {
-            "method": "GET",
-            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
-          }
-        },
-        {
-          "name": "Deep health - default provider (free call)",
+          "name": "Shallow (instant, no cost)",
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{base_url}}/health?deep=true",
-              "host": ["{{base_url}}"], "path": ["health"],
-              "query": [{ "key": "deep", "value": "true" }]
-            }
-          }
-        },
-        {
-          "name": "Deep health - specific provider + vector + metadata store (all at once)",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{base_url}}/health?deep=true&provider=anthropic&vector_provider=pinecone&metadata_provider=postgres",
-              "host": ["{{base_url}}"], "path": ["health"],
-              "query": [
-                { "key": "deep", "value": "true" },
-                { "key": "provider", "value": "anthropic" },
-                { "key": "vector_provider", "value": "pinecone" },
-                { "key": "metadata_provider", "value": "postgres" }
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
               ]
             }
           }
         },
         {
-          "name": "LLM providers (deep, one call per provider)",
+          "name": "Deep, all backends at once",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/health?deep=true&provider=anthropic&vector_provider=pinecone&metadata_provider=postgres",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ],
+              "query": [
+                {
+                  "key": "deep",
+                  "value": "true"
+                },
+                {
+                  "key": "provider",
+                  "value": "anthropic"
+                },
+                {
+                  "key": "vector_provider",
+                  "value": "pinecone"
+                },
+                {
+                  "key": "metadata_provider",
+                  "value": "postgres"
+                }
+              ]
+            },
+            "description": "One real, free call per backend - LLM + vector store + metadata store together."
+          }
+        },
+        {
+          "name": "By LLM provider (deep)",
           "item": [
             {
               "name": "openai (default)",
               "request": {
                 "method": "GET",
-                "url": { "raw": "{{base_url}}/health?deep=true&provider=openai", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "provider", "value": "openai" }] }
+                "url": {
+                  "raw": "{{base_url}}/health?deep=true&provider=openai",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "health"
+                  ],
+                  "query": [
+                    {
+                      "key": "deep",
+                      "value": "true"
+                    },
+                    {
+                      "key": "provider",
+                      "value": "openai"
+                    }
+                  ]
+                }
               }
             },
             {
               "name": "anthropic",
               "request": {
                 "method": "GET",
-                "url": { "raw": "{{base_url}}/health?deep=true&provider=anthropic", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "provider", "value": "anthropic" }] }
+                "url": {
+                  "raw": "{{base_url}}/health?deep=true&provider=anthropic",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "health"
+                  ],
+                  "query": [
+                    {
+                      "key": "deep",
+                      "value": "true"
+                    },
+                    {
+                      "key": "provider",
+                      "value": "anthropic"
+                    }
+                  ]
+                }
               }
             },
             {
               "name": "openrouter",
               "request": {
                 "method": "GET",
-                "url": { "raw": "{{base_url}}/health?deep=true&provider=openrouter", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "provider", "value": "openrouter" }] }
+                "url": {
+                  "raw": "{{base_url}}/health?deep=true&provider=openrouter",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "health"
+                  ],
+                  "query": [
+                    {
+                      "key": "deep",
+                      "value": "true"
+                    },
+                    {
+                      "key": "provider",
+                      "value": "openrouter"
+                    }
+                  ]
+                }
               }
             },
             {
               "name": "bedrock",
               "request": {
                 "method": "GET",
-                "url": { "raw": "{{base_url}}/health?deep=true&provider=bedrock", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "provider", "value": "bedrock" }] }
+                "url": {
+                  "raw": "{{base_url}}/health?deep=true&provider=bedrock",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "health"
+                  ],
+                  "query": [
+                    {
+                      "key": "deep",
+                      "value": "true"
+                    },
+                    {
+                      "key": "provider",
+                      "value": "bedrock"
+                    }
+                  ]
+                }
               }
             }
           ]
         },
         {
-          "name": "Vector stores (deep, one call per store)",
+          "name": "By vector store (deep)",
           "item": [
             {
               "name": "chromadb (default)",
               "request": {
                 "method": "GET",
-                "url": { "raw": "{{base_url}}/health?deep=true&vector_provider=chromadb", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "vector_provider", "value": "chromadb" }] }
+                "url": {
+                  "raw": "{{base_url}}/health?deep=true&vector_provider=chromadb",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "health"
+                  ],
+                  "query": [
+                    {
+                      "key": "deep",
+                      "value": "true"
+                    },
+                    {
+                      "key": "vector_provider",
+                      "value": "chromadb"
+                    }
+                  ]
+                }
               }
             },
             {
               "name": "pinecone",
               "request": {
                 "method": "GET",
-                "url": { "raw": "{{base_url}}/health?deep=true&vector_provider=pinecone", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "vector_provider", "value": "pinecone" }] }
+                "url": {
+                  "raw": "{{base_url}}/health?deep=true&vector_provider=pinecone",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "health"
+                  ],
+                  "query": [
+                    {
+                      "key": "deep",
+                      "value": "true"
+                    },
+                    {
+                      "key": "vector_provider",
+                      "value": "pinecone"
+                    }
+                  ]
+                }
               }
             }
           ]
         },
         {
-          "name": "Metadata stores (deep, one call per store)",
+          "name": "By metadata store (deep)",
           "item": [
             {
               "name": "sqlite (default)",
               "request": {
                 "method": "GET",
-                "url": { "raw": "{{base_url}}/health?deep=true&metadata_provider=sqlite", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "metadata_provider", "value": "sqlite" }] }
+                "url": {
+                  "raw": "{{base_url}}/health?deep=true&metadata_provider=sqlite",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "health"
+                  ],
+                  "query": [
+                    {
+                      "key": "deep",
+                      "value": "true"
+                    },
+                    {
+                      "key": "metadata_provider",
+                      "value": "sqlite"
+                    }
+                  ]
+                }
               }
             },
             {
               "name": "postgres",
               "request": {
                 "method": "GET",
-                "url": { "raw": "{{base_url}}/health?deep=true&metadata_provider=postgres", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }, { "key": "metadata_provider", "value": "postgres" }] },
-                "description": "Not the active metadata store in the deployed App Runner service yet (see docs/AWS-DEVOPS-RUNBOOK.md) - fully working locally, or once Neon is provisioned."
+                "url": {
+                  "raw": "{{base_url}}/health?deep=true&metadata_provider=postgres",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "health"
+                  ],
+                  "query": [
+                    {
+                      "key": "deep",
+                      "value": "true"
+                    },
+                    {
+                      "key": "metadata_provider",
+                      "value": "postgres"
+                    }
+                  ]
+                },
+                "description": "Healthy locally; not the active store in the deployed app yet."
               }
             }
           ]
         },
         {
-          "name": "Edge - unknown provider (silently falls back to openai, not a 400)",
+          "name": "Edge — unknown provider name",
           "request": {
             "method": "GET",
             "url": {
               "raw": "{{base_url}}/health?provider=made_up_provider",
-              "host": ["{{base_url}}"], "path": ["health"],
-              "query": [{ "key": "provider", "value": "made_up_provider" }]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ],
+              "query": [
+                {
+                  "key": "provider",
+                  "value": "made_up_provider"
+                }
+              ]
+            },
+            "description": "Falls back to the default silently (not a 400) - same for vector_provider/metadata_provider."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Upload — POST /v1/rag-ingestion/documents",
+      "item": [
+        {
+          "name": "Single PDF",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": "{{kb_docs_dir}}/JPMC Healthcare Benefits.pdf"
+                }
+              ]
+            },
+            "description": "Uploads one PDF. On success, this request's Tests script auto-saves results[0].document_id into the document_id collection variable - folders 3 and 4 pick it up automatically, no manual copy-paste needed."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Auto-saves the new document_id so you do not have to copy it by hand.",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set(\"document_id\", body.results[0].document_id);",
+                  "    console.log(\"document_id set to:\", body.results[0].document_id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Batch, two valid PDFs",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": "{{kb_docs_dir}}/JPMC Paid TimeOff.pdf"
+                },
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": "{{kb_docs_dir}}/JPMC Guild Tuition Assistance.pdf"
+                }
+              ]
             }
           }
         },
         {
-          "name": "Edge - unknown vector_provider (also silently falls back, not a 400)",
+          "name": "Edge — one invalid file in a batch",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": "{{kb_docs_dir}}/JPMC Unpaid TimeOff.pdf"
+                },
+                {
+                  "key": "files",
+                  "type": "text",
+                  "value": "In Postman, replace this row with a File field pointing at any non-PDF (e.g. a .txt)."
+                }
+              ]
+            },
+            "description": "Still 200 - the bad file is rejected on its own, the good one still lands."
+          }
+        },
+        {
+          "name": "Edge — no file provided (422)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": []
+            }
+          }
+        },
+        {
+          "name": "Idempotent replay",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents"
+              ]
+            },
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "postman-demo-key-001"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": "{{kb_docs_dir}}/JPMC Paid TimeOff.pdf"
+                }
+              ]
+            },
+            "description": "Send this exact request twice. Same document_id both times - the second call replays the cached response instead of uploading again. Change the header value to get a genuinely new document_id."
+          }
+        },
+        {
+          "name": "Edge — re-upload identical content (duplicate, no Idempotency-Key needed)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": "{{kb_docs_dir}}/JPMC Healthcare Benefits.pdf"
+                }
+              ]
+            },
+            "description": "Run folder 2's first request (Single PDF) once, then run this one - same file, no special header needed. Expect status: \"duplicate\" in the result, duplicate_count: 1, and the SAME document_id as the first upload - content-hash based (SHA-256 of the bytes), so it catches this even without an Idempotency-Key and even across server restarts. A file with the same name but different content is NOT a duplicate."
+          }
+        },
+        {
+          "name": "Upload a new version of an existing document (supersedes_document_id)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": "{{kb_docs_dir}}/JPMC Guild Tuition Assistance.pdf"
+                },
+                {
+                  "key": "supersedes_document_id",
+                  "type": "text",
+                  "value": "{{document_id}}"
+                }
+              ]
+            },
+            "description": "Set the document_id variable to an existing (ideally already-indexed) document first. Only valid with exactly one file (422 on a batch - ambiguous which file supersedes it) and only if the target id exists (per-file \"rejected\" otherwise). The old document is NOT flipped to is_current=false yet at this point - only once THIS upload is indexed (folder 4) does that happen. Check the old document afterward (folder 3) to see is_current go false and superseded_by get set; a folder-5 query should then only ever cite the new document."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. List, get & delete — GET/DELETE /v1/rag-ingestion/documents[/{id}]",
+      "item": [
+        {
+          "name": "List all",
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{base_url}}/health?deep=true&vector_provider=made_up_store",
-              "host": ["{{base_url}}"], "path": ["health"],
-              "query": [{ "key": "deep", "value": "true" }, { "key": "vector_provider", "value": "made_up_store" }]
+              "raw": "{{base_url}}/v1/rag-ingestion/documents",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get one by id",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents/{{document_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents",
+                "{{document_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Edge — unknown id (404)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents/does-not-exist",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents",
+                "does-not-exist"
+              ]
+            },
+            "description": "Every error in this API returns the same {\"error\": \"...\"} shape, never a raw stack trace, regardless of status code."
+          }
+        },
+        {
+          "name": "Delete one document (full delete: vectors + metadata + file)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents/{{document_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents",
+                "{{document_id}}"
+              ]
+            },
+            "description": "Deletes the document's vectors (if indexed), its metadata row, and its uploaded file, all in one call. Not selective - a document has one current state, not a retained version history to pick from. Expect 200 with chunks_removed (0 if it was never indexed). Run one of folder 2's upload requests first if document_id is empty."
+          }
+        },
+        {
+          "name": "Edge — delete unknown id (404)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents/does-not-exist",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents",
+                "does-not-exist"
+              ]
             }
           }
         }
       ]
     },
     {
-      "name": "Documents - upload",
+      "name": "4. Index — POST /v1/rag-ingestion/documents/{id}/index",
       "item": [
         {
-          "name": "Happy - single PDF upload",
+          "name": "Default settings",
           "request": {
             "method": "POST",
-            "url": { "raw": "{{base_url}}/v1/rag/documents", "host": ["{{base_url}}"], "path": ["v1", "rag", "documents"] },
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                { "key": "files", "type": "file", "src": "resources/kb_docs/JPMC Healthcare Benefits.pdf" }
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents/{{document_id}}/index",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents",
+                "{{document_id}}",
+                "index"
               ]
             },
-            "description": "After running this, copy response.results[0].document_id into the `document_id` collection variable for the index/get requests below."
+            "description": "Spends one real embedding call."
           }
         },
         {
-          "name": "Happy - batch upload, two valid PDFs",
+          "name": "Custom chunk size/overlap + vector store",
           "request": {
             "method": "POST",
-            "url": { "raw": "{{base_url}}/v1/rag/documents", "host": ["{{base_url}}"], "path": ["v1", "rag", "documents"] },
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                { "key": "files", "type": "file", "src": "resources/kb_docs/JPMC Paid TimeOff.pdf" },
-                { "key": "files", "type": "file", "src": "resources/kb_docs/JPMC Guild Tuition Assistance.pdf" }
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents/{{document_id}}/index",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents",
+                "{{document_id}}",
+                "index"
               ]
-            }
-          }
-        },
-        {
-          "name": "Edge - batch with one invalid file (must still 200, one rejected)",
-          "request": {
-            "method": "POST",
-            "url": { "raw": "{{base_url}}/v1/rag/documents", "host": ["{{base_url}}"], "path": ["v1", "rag", "documents"] },
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                { "key": "files", "type": "file", "src": "resources/kb_docs/JPMC Unpaid TimeOff.pdf" },
-                { "key": "files", "type": "text", "value": "In Postman, replace this row with a File field pointing at any non-PDF (e.g. a .txt) to reproduce README_TEST.md case 2.3." }
-              ]
-            }
-          }
-        },
-        {
-          "name": "Edge - no files field at all (expect 422)",
-          "request": {
-            "method": "POST",
-            "url": { "raw": "{{base_url}}/v1/rag/documents", "host": ["{{base_url}}"], "path": ["v1", "rag", "documents"] },
-            "body": { "mode": "formdata", "formdata": [] }
-          }
-        }
-      ]
-    },
-    {
-      "name": "Documents - list, get, index",
-      "item": [
-        {
-          "name": "Happy - list all documents",
-          "request": {
-            "method": "GET",
-            "url": { "raw": "{{base_url}}/v1/rag/documents", "host": ["{{base_url}}"], "path": ["v1", "rag", "documents"] }
-          }
-        },
-        {
-          "name": "Happy - get one document by id",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{base_url}}/v1/rag/documents/{{document_id}}",
-              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "{{document_id}}"]
-            }
-          }
-        },
-        {
-          "name": "Edge - unknown document id (expect 404)",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{base_url}}/v1/rag/documents/does-not-exist",
-              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "does-not-exist"]
-            }
-          }
-        },
-        {
-          "name": "Happy - index with defaults (spends: real embedding call)",
-          "request": {
-            "method": "POST",
-            "url": {
-              "raw": "{{base_url}}/v1/rag/documents/{{document_id}}/index",
-              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "{{document_id}}", "index"]
-            }
-          }
-        },
-        {
-          "name": "Happy - index with per-call overrides (spends: real embedding call)",
-          "request": {
-            "method": "POST",
-            "url": {
-              "raw": "{{base_url}}/v1/rag/documents/{{document_id}}/index",
-              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "{{document_id}}", "index"]
             },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"chunk_size\": 500,\n  \"chunk_overlap\": 50,\n  \"vector_db\": \"chromadb\"\n}"
+            },
+            "description": "All fields optional - each defaults to the .env-wide setting when omitted. Spends one real embedding call."
+          }
+        },
+        {
+          "name": "Edge — overlap ≥ chunk size (422)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents/{{document_id}}/index",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents",
+                "{{document_id}}",
+                "index"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chunk_size\": 200,\n  \"chunk_overlap\": 200\n}"
             }
           }
         },
         {
-          "name": "Edge - chunk_overlap >= chunk_size (expect 422)",
+          "name": "Edge — chunk size below minimum (422)",
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{base_url}}/v1/rag/documents/{{document_id}}/index",
-              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "{{document_id}}", "index"]
+              "raw": "{{base_url}}/v1/rag-ingestion/documents/{{document_id}}/index",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents",
+                "{{document_id}}",
+                "index"
+              ]
             },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"chunk_size\": 200,\n  \"chunk_overlap\": 200\n}" }
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chunk_size\": 50\n}"
+            },
+            "description": "Minimum is 100."
           }
         },
         {
-          "name": "Edge - chunk_size below minimum of 100 (expect 422)",
+          "name": "Edge — unknown vector store name (500)",
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{base_url}}/v1/rag/documents/{{document_id}}/index",
-              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "{{document_id}}", "index"]
+              "raw": "{{base_url}}/v1/rag-ingestion/documents/{{document_id}}/index",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents",
+                "{{document_id}}",
+                "index"
+              ]
             },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"chunk_size\": 50\n}" }
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vector_db\": \"made_up_store\"\n}"
+            },
+            "description": "Client sees a generic \"Indexing failed. Please try again.\" (the real ValueError naming valid options is logged server-side only, never returned raw to the client - see docs/CODING-STANDARDS.md's error-handling convention)."
           }
         },
         {
-          "name": "Edge - unknown vector_db name (expect 500, error names valid options)",
+          "name": "Edge — unknown document id (404)",
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{base_url}}/v1/rag/documents/{{document_id}}/index",
-              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "{{document_id}}", "index"]
+              "raw": "{{base_url}}/v1/rag-ingestion/documents/does-not-exist/index",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents",
+                "does-not-exist",
+                "index"
+              ]
             },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"vector_db\": \"made_up_store\"\n}" }
-          }
-        },
-        {
-          "name": "Edge - index unknown document id (expect 404, no embedding call made)",
-          "request": {
-            "method": "POST",
-            "url": {
-              "raw": "{{base_url}}/v1/rag/documents/does-not-exist/index",
-              "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "does-not-exist", "index"]
-            }
+            "description": "No embedding call is made - fails before spending anything."
           }
         }
       ]
     },
     {
-      "name": "RAG query (Phase 6 stub - all cases return 501 or a 4xx today)",
+      "name": "5. Query — POST /v1/rag-retrieval/query",
+      "description": "Real retrieval + grounded generation (MVP, as of 2026-09-10) - not a stub. A well-formed query spends one real embedding call + one real chat completion, and needs the target content already indexed (run folder 2 then folder 4 on a real PDF first). Query decomposition, guardrails, and evaluations are still hand-written and not built. resources/golden_dataset/golden_dataset.json has 22 real question/expected-answer pairs grounded in the actual PDFs, ready to try here.",
       "item": [
         {
-          "name": "\"Happy\" for a stub - well-formed query (expect 501, names ai/rag_pipeline/pipeline.py)",
+          "name": "Well-formed query (real grounded answer)",
           "request": {
             "method": "POST",
-            "url": { "raw": "{{base_url}}/v1/rag/query", "host": ["{{base_url}}"], "path": ["v1", "rag", "query"] },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/v1/rag-retrieval/query",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-retrieval",
+                "query"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"query\": \"How many weeks of paid parental leave does JPMorgan Chase provide?\",\n  \"top_k\": 5\n}"
             },
-            "description": "Once Phase 6 (hand-written retrieval + generation) lands, swap in queries from resources/golden_dataset/golden_dataset.json - every case there has a real expected_answer grounded in the actual PDFs, verified by hand against the source text."
+            "description": "Expect 200, a real answer grounded in whatever's actually indexed, sources with real filename/chunk_index/score, and model_used naming the model that generated it. If nothing relevant is indexed yet, expect a fixed \"I don't have any information about that\" answer with empty sources, not an error."
           }
         },
         {
-          "name": "Edge - empty query string (expect 422)",
+          "name": "Edge — empty query (422)",
           "request": {
             "method": "POST",
-            "url": { "raw": "{{base_url}}/v1/rag/query", "host": ["{{base_url}}"], "path": ["v1", "rag", "query"] },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"query\": \"\"\n}" }
-          }
-        },
-        {
-          "name": "Edge - top_k out of range, 100 > max of 20 (expect 422)",
-          "request": {
-            "method": "POST",
-            "url": { "raw": "{{base_url}}/v1/rag/query", "host": ["{{base_url}}"], "path": ["v1", "rag", "query"] },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"query\": \"test\",\n  \"top_k\": 100\n}" }
-          }
-        },
-        {
-          "name": "Edge - missing query field entirely (expect 422)",
-          "request": {
-            "method": "POST",
-            "url": { "raw": "{{base_url}}/v1/rag/query", "host": ["{{base_url}}"], "path": ["v1", "rag", "query"] },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{}" }
-          }
-        }
-      ]
-    },
-    {
-      "name": "Standardization - idempotency, rate limiting, validation bounds",
-      "description": "See docs/FAQ.md section 6 for the full reasoning behind each of these.",
-      "item": [
-        {
-          "name": "Idempotency - upload with a key (run this request twice with the same key)",
-          "request": {
-            "method": "POST",
-            "url": { "raw": "{{base_url}}/v1/rag/documents", "host": ["{{base_url}}"], "path": ["v1", "rag", "documents"] },
-            "header": [{ "key": "Idempotency-Key", "value": "postman-demo-key-001" }],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                { "key": "files", "type": "file", "src": "resources/kb_docs/JPMC Paid TimeOff.pdf" }
+            "url": {
+              "raw": "{{base_url}}/v1/rag-retrieval/query",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-retrieval",
+                "query"
               ]
             },
-            "description": "Send this exact request twice (same Idempotency-Key header both times). The second response's results[0].document_id will match the first - a real upload never happened twice, the second call replayed the cached response. Change the Idempotency-Key value and resend to see a genuinely new document_id instead."
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"\"\n}"
+            }
           }
         },
         {
-          "name": "Edge - query over the 2000-character max_length (expect 422)",
+          "name": "Edge — missing query field (422)",
           "request": {
             "method": "POST",
-            "url": { "raw": "{{base_url}}/v1/rag/query", "host": ["{{base_url}}"], "path": ["v1", "rag", "query"] },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"query\": \"{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}\"\n}" },
-            "description": "Postman's {{$randomLoremParagraphs}} dynamic variable generates enough text to exceed 2000 characters when repeated 10 times - confirms the max_length bound added in Phase 12 actually rejects an oversized query before it reaches the stub."
+            "url": {
+              "raw": "{{base_url}}/v1/rag-retrieval/query",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-retrieval",
+                "query"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
           }
         },
         {
-          "name": "Edge - vector_db name over 50 characters (expect 422)",
+          "name": "Edge — top_k over 20 (422)",
           "request": {
             "method": "POST",
-            "url": { "raw": "{{base_url}}/v1/rag/query", "host": ["{{base_url}}"], "path": ["v1", "rag", "query"] },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"query\": \"test\",\n  \"vector_db\": \"this-is-a-deliberately-long-fake-vector-store-name-well-past-fifty-characters\"\n}" }
+            "url": {
+              "raw": "{{base_url}}/v1/rag-retrieval/query",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-retrieval",
+                "query"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"test\",\n  \"top_k\": 100\n}"
+            }
           }
         },
         {
-          "name": "Error handling - unknown document id returns a clean, generic 404 (not a stack trace)",
+          "name": "Edge — query over 2000 characters (422)",
           "request": {
-            "method": "GET",
-            "url": { "raw": "{{base_url}}/v1/rag/documents/does-not-exist", "host": ["{{base_url}}"], "path": ["v1", "rag", "documents", "does-not-exist"] },
-            "description": "Every error response in this project has the same {\"error\": \"...\"} shape (json_error() in api/dependencies.py) regardless of which layer produced it - a 404 here looks structurally identical to a 500 from main.py's global exception handler, just with a different status code and message."
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-retrieval/query",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-retrieval",
+                "query"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}\"\n}"
+            },
+            "description": "Postman's dynamic lorem-paragraph variable, repeated 10x, comfortably clears the 2000-char cap."
+          }
+        },
+        {
+          "name": "Edge — vector_db name over 50 characters (422)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-retrieval/query",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-retrieval",
+                "query"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"test\",\n  \"vector_db\": \"this-is-a-deliberately-long-fake-vector-store-name-well-past-fifty-characters\"\n}"
+            }
           }
         }
       ]

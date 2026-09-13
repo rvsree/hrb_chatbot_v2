@@ -1,10 +1,8 @@
 """Runs a query through the RAG pipeline.
 
-Thin on purpose: the actual decompose/retrieve/generate logic lives in
-ai/rag_pipeline/pipeline.py (a scaffold today, hand-written logic once
-Phase 6 lands - see docs/RAG-ROADMAP.md). This file exists so the router
-doesn't import from ai/ directly, matching documents_service.py's own
-relationship to ai/doc_processing/pipeline.py.
+Thin on purpose: the real decompose/retrieve/generate logic lives in
+ai/rag_pipeline/pipeline.py. This file exists only so the router doesn't
+import from ai/ directly.
 """
 
 from src.hrb_chatbot.ai.rag_pipeline import pipeline

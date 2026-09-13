@@ -1,38 +1,9 @@
 """Anthropic client: chat and tool calling with Claude models.
 
-Base URL
---------
-The correct base URL is https://api.anthropic.com - the host name ONLY, with no
-"/v1" on the end. This is the opposite of OpenAI. The Anthropic library adds the
-whole path itself ("/v1/messages"), so if you put "/v1" in the base URL the
-request goes to "/v1/v1/messages" and returns 404.
-
-Workspace
----------
-A workspace is Anthropic's way of separating environments (dev, prod, and so on)
-and tracking spend per environment.
-
-* If your API key was created inside one workspace, you do not need to do
-  anything - leave ANTHROPIC_WORKSPACE_ID blank in .env.
-* If your API key is a multi-workspace key (the Console shows "All workspaces"),
-  then EVERY request must include the workspace id or it fails. Put the id in
-  ANTHROPIC_WORKSPACE_ID and this client sends it as the "anthropic-workspace-id"
-  header.
-
-Copy the id from the ID column in Console -> Settings -> Workspaces. It looks
-like "wrkspc_01JwQvzr7rXLA5AGx3HKfFUJ" - it is not the workspace's name.
-
-Temperature
------------
-Anthropic has deprecated the `temperature` setting: models released after Claude
-Opus 4.6 reject any value other than 1.0, and version 1.2 of the anthropic
-library removed the argument from messages.create() altogether. Passing it now
-raises "unexpected keyword argument 'temperature'".
-
-So the `temperature` argument on the methods below is accepted (because the
-shared BaseLLMClient interface has it, and OpenAI still uses it) but is not sent
-to Anthropic. The modern replacement is `output_config.effort`, which takes
-"low", "medium", "high", "xhigh" or "max" instead of a number.
+Base URL is host-only (https://api.anthropic.com, no "/v1" - the library adds
+the full path itself). Temperature is deprecated by Anthropic (newer models
+reject any value but 1.0), so this client accepts `temperature` for interface
+parity with OpenAI but never sends it - see `output_config.effort` instead.
 """
 
 import anthropic
@@ -93,12 +64,8 @@ class AnthropicChatClient(BaseLLMClient):
             self.client = None
 
     def warn_if_workspace_id_looks_wrong(self):
-        """Print a warning if ANTHROPIC_WORKSPACE_ID looks like a name, not an id.
-
-        Pasting the workspace's name instead of its id is an easy mistake, and the
-        only clue you get from the API is an unhelpful 400 error. Catching it here
-        saves a lot of guessing.
-        """
+        """Warn if ANTHROPIC_WORKSPACE_ID looks like a pasted workspace name rather
+        than its id - the only other symptom is an unhelpful 400 error from the API."""
         if not self.workspace_id:
             return
 
@@ -127,18 +94,14 @@ class AnthropicChatClient(BaseLLMClient):
         }
 
     def ask(self, question, context=None, temperature=0.0, max_tokens=None):
-        """Ask one question and return the answer text.
-
-        `temperature` is accepted but ignored - Anthropic has deprecated it.
-        See the note at the top of this file.
-        """
+        """Ask one question and return the answer text. `temperature` is accepted
+        but ignored - Anthropic has deprecated it, see module docstring."""
         if context:
             message_text = f"Context:\n{context}\n\nQuestion:\n{question}"
         else:
             message_text = question
 
-        # temperature is deliberately not passed - see the note at the top of
-        # this file. The anthropic library would reject it outright.
+        # temperature deliberately not passed - the anthropic library rejects it now.
         with log_backend_call(logger, "anthropic", "messages.ask", model=self.model):
             response = self.get_client().messages.create(
                 model=self.model,
@@ -154,12 +117,8 @@ class AnthropicChatClient(BaseLLMClient):
         return answer
 
     def ask_with_tools(self, messages, tools, temperature=0.0, max_tokens=None, tool_choice="auto"):
-        """Ask a question and let Claude call tools.
-
-        This method takes OpenAI-shaped messages and tools and returns an
-        OpenAI-shaped reply, so the rest of the project can treat every provider
-        the same way. The two conversions happen in the helper methods below.
-        """
+        """Ask a question and let Claude call tools. Takes OpenAI-shaped messages
+        and tools, returns an OpenAI-shaped reply - conversions happen in the helpers below."""
         claude_tools = self.convert_tools_to_claude_format(tools)
         system_text, chat_messages = self.split_out_system_message(messages)
 
@@ -183,12 +142,8 @@ class AnthropicChatClient(BaseLLMClient):
 
     @staticmethod
     def convert_tools_to_claude_format(tools: list[dict]) -> list[dict]:
-        """Rewrite OpenAI-style tool definitions into the shape Claude expects.
-
-        OpenAI nests everything under a "function" key; Claude wants the name,
-        description and schema at the top level, and calls the schema
-        "input_schema" instead of "parameters".
-        """
+        """Rewrite OpenAI-style tool defs into Claude's shape: name/description/schema
+        at the top level instead of nested under "function", schema key "input_schema"."""
         claude_tools = []
         for tool in tools:
             if tool.get("type") != "function":
@@ -206,10 +161,8 @@ class AnthropicChatClient(BaseLLMClient):
 
     @staticmethod
     def split_out_system_message(messages: list[dict]) -> tuple[str | None, list[dict]]:
-        """Separate the system message from the rest of the conversation.
-
-        Returns two things: the system text (or None), and the remaining messages.
-        """
+        """Separate the system message from the rest of the conversation; returns
+        (system_text or None, remaining_messages)."""
         system_text = None
         chat_messages = []
 
@@ -223,11 +176,8 @@ class AnthropicChatClient(BaseLLMClient):
 
     @staticmethod
     def convert_response_to_openai_format(response) -> dict:
-        """Rewrite Claude's reply into the shape OpenAI uses.
-
-        Doing this here means calling code only ever has to understand one reply
-        format, no matter which provider answered.
-        """
+        """Rewrite Claude's reply into the OpenAI reply shape, so calling code
+        only ever has to understand one format."""
         answer_text = ""
         tool_calls = []
 
@@ -264,13 +214,8 @@ class AnthropicChatClient(BaseLLMClient):
         }
 
     def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable.
-
-        deep=False: only checks that the API key is present. No network call.
-        deep=True: calls GET {base_url}/v1/models. That call is free (it uses no
-        tokens) and it checks three things at once: the base URL is right, the key
-        works, and the workspace header (if needed) is accepted.
-        """
+        """Report whether this client is usable. deep=False only checks that the
+        key is present; deep=True calls GET /v1/models, confirming URL, key, and workspace header at once."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 

@@ -1,20 +1,8 @@
 """Sets up logging so every file in the project prints messages the same way.
 
-This is the get_logger(name) factory every client imports. It is deliberately
-separate from log_helper.py, which does something different: log_helper.py
-formats an agent-type tag onto a message you hand it, using a logger you already
-have - it does not create one. This module is what creates that logger.
-
-How to use it
--------------
-    from src.hrb_chatbot.common.logging.logger import get_logger
-
-    logger = get_logger("my_module")
-    logger.info("Starting up")
-    logger.warning("OPENAI_API_KEY not set")
-
-Output looks like:
-    21:00:43 | WARNING  | openai_client | OPENAI_API_KEY not set
+get_logger(name) factory used throughout the project. Distinct from
+log_helper.py, which formats a tag onto an existing logger's message rather
+than creating one.
 """
 
 import logging
@@ -29,10 +17,7 @@ TIME_FORMAT = "%H:%M:%S"
 def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     """Return a logger with the given name, setting it up on first use.
 
-    It is safe to call this as many times as you like with the same name: Python
-    keeps one logger per name, and the `if not logger.handlers` check below stops
-    us attaching a second printer to it. Without that check, calling this twice
-    would make every message appear twice.
+    Safe to call repeatedly with the same name - the handlers check below stops a second call from attaching a duplicate printer.
     """
     logger = logging.getLogger(name)
 

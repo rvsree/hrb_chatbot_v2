@@ -80,10 +80,14 @@ boilerplate and infrastructure; the user hand-writes the actual RAG logic**
 single most important thing to not violate, see
 [Division of labor](#division-of-labor---read-before-touching-anything-under-ai). Thirteen
 phases are done (upload, index, deploy to real AWS, CI/CD, a full REST API
-hardening pass, and now a real branch/testing strategy). The core RAG query pipeline itself
-(`ai/rag_pipeline/pipeline.py`) is **still an intentional stub** -
-`POST /v1/rag/query` returns 501 by design, not by accident, until the
-user builds Phase 6 by hand.
+hardening pass, and now a real branch/testing strategy). **Update
+2026-09-10**: the RAG query pipeline (`ai/rag_pipeline/pipeline.py`) is no
+longer a stub - real retrieval + grounded generation exist now, built by
+Claude Code on the user's explicit request (an override of the original
+hand-written boundary, same pattern as Phase 4). Query decomposition
+(Phase 5.1), guardrails (Phase 7), and evaluations (Phase 8) remain
+hand-written and still open - see Phase 6 in `docs/RAG-ROADMAP.md` for
+exactly what shipped and what's deliberately still missing.
 
 ## Current status snapshot
 
@@ -91,12 +95,14 @@ user builds Phase 6 by hand.
 |---|---|
 | Local dev (upload, index, health) | ✅ Working, verified live |
 | Deployed to AWS App Runner | ✅ `RUNNING` - confirmed again right before this handoff was written (real `200` from `GET /health`) |
-| RAG query (retrieval + generation) | ❌ Stub only - `501`, by design, Phase 6 is the user's hand-written work |
-| CI (GitHub Actions) | ✅ Green - 35 tests, verified passing on GitHub itself, not just locally |
+| RAG query (retrieval + generation) | ✅ MVP working, verified live with a real grounded answer - Claude-Code override, 2026-09-10. Decomposition/guardrails/evaluations still hand-written, still open |
+| Document metadata + upload dedup | ✅ Done, 2026-09-10 - version/chunk_count/embedding info tracked; identical-content re-uploads detected and not duplicated |
+| Document versioning, table extraction, doc-metadata extraction | ✅ Done, 2026-09-11 - explicit supersede flow, retrieval excludes superseded chunks (verified live: a real query returned 0 sources from a superseded document, 5/5 from the current one), PDF tables extracted as markdown, LLM extracts owner/department/doc_type/purpose on first index. Built/tested against ChromaDB; Pinecone portability by design (same interface), not yet exercised live - see Phase 4.4 in RAG-ROADMAP.md |
+| CI (GitHub Actions) | ✅ Green - verified passing on GitHub itself, not just locally |
 | CD (GitHub Actions → App Runner) | 🚧 Written, never actually triggered - see [Blocked on the user](#blocked-on-the-user---four-concrete-items) |
-| Golden dataset | ✅ Done (22 cases, real facts from the real PDFs) - a one-time Claude-Code override of the hand-written boundary, same as chunking/embedding/indexing was |
-| REST API hardening (versioning, idempotency, rate limiting, error handling) | ✅ Done, this session |
-| Test suite | ✅ 35 tests, all passing, no test needs a key or network call |
+| Golden dataset | ✅ Done (22 cases, real facts from the real PDFs) - a one-time Claude-Code override of the hand-written boundary, same as chunking/embedding/indexing was. Now exercisable against the real query endpoint |
+| REST API hardening (versioning, idempotency, rate limiting, error handling) | ✅ Done |
+| Test suite | ✅ 56 tests, all passing, no test needs a key or network call |
 
 Full phase-by-phase detail: [`docs/RAG-ROADMAP.md`](RAG-ROADMAP.md)'s
 "Status at a glance" table - this snapshot is a summary of that summary;
@@ -160,13 +166,15 @@ internalized it:
 | FastAPI routes, request/response models, infra (rate limiting, idempotency, versioning) | **Claude Code** | `api/`, `models/`, `common/` |
 | Client/gateway layer (LLM providers, vector stores, metadata stores) | **Claude Code** | `common/clients/` |
 | Chunking, embedding, indexing | Claude Code, **but only because of an explicit one-time override** the user granted (matches the golden dataset's own override) | `ai/doc_processing/` |
-| Retrieval, generation, query decomposition, guardrails, evaluations | **Hand-written by the user** - still stubs, `NotImplementedError` on purpose | `ai/rag_pipeline/`, `ai/pre_processing/` |
+| Retrieval, grounded generation (MVP) | Claude Code, **same kind of explicit override**, granted 2026-09-10 - see Phase 6 in `docs/RAG-ROADMAP.md` | `ai/rag_pipeline/query_retrieval/`, `ai/rag_pipeline/response_generation/` |
+| Query decomposition, guardrails, evaluations | **Still hand-written by the user** - still stubs/empty files, on purpose | `ai/pre_processing/`, `ai/rag_pipeline/evaluations/` |
 
-**Do not implement `ai/rag_pipeline/pipeline.py`'s real logic (or
-`ai/pre_processing/`) without the user explicitly asking again the same
-way they asked for the chunking/embedding/indexing override** - that's
-the whole point of this project for them. If asked to "move the project
-forward" without qualification, the correct read is: continue
+**Do not implement `ai/pre_processing/`'s real logic (query decomposition,
+guardrails) or `ai/rag_pipeline/evaluations/` without the user explicitly
+asking again the same way they asked for the chunking/embedding/indexing
+and retrieval/generation overrides** - that's the whole point of this
+project for them. If asked to "move the project forward" without
+qualification, the correct read is: continue
 Claude-Code-owned infrastructure work, or ask which specific hand-written
 phase (5.1-8 in RAG-ROADMAP.md) they want to do together, not silently
 write their RAG logic for them.
@@ -191,9 +199,12 @@ Don't re-derive any of this from the code - it's already written down:
 
 ## Known gotchas - condensed, full detail in the docs above
 
-- **Every `/rag/...` path is now `/v1/rag/...`** (`GET /health` is the one
-  exception, deliberately unversioned). A fresh agent testing against an
-  old memory of `/rag/documents` will get a `404`, not a bug.
+- **Document endpoints live under `/v1/rag-ingestion/...`, query endpoints
+  under `/v1/rag-retrieval/...`** (`GET /health` is the one exception,
+  deliberately unversioned). One shared `/v1`, then a context segment - not
+  two independently-versioned prefixes - a fresh agent testing against an
+  old memory of `/v1/rag/...` or
+  `/rag/documents` will get a `404`, not a bug.
 - **Git Bash's MSYS layer mangles absolute Unix-style paths** (`/tmp/...`)
   passed to `curl -F` or AWS CLI args - corrupts them before the tool even
   sees them. Use relative paths from the repo root instead - see

@@ -61,7 +61,7 @@ up, rather than marking it done in place here.
   exists and is wired into `client_gateway.py`, but nothing calls its
   `health_check()` from `/health` - unlike the three LLM providers, it isn't
   an LLM so it doesn't belong under `check_llm()`. Needs its own
-  `check_web_search()` (or similar) folded into `check_everything()`.
+  `check_web_search()` (or similar) folded into `check_all_backend_services()`.
 
 ## AWS deployment (Phase 10, in progress)
 

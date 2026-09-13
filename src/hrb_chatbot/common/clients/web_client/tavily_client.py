@@ -1,26 +1,8 @@
-"""Tavily client: web search built for AI agents.
+"""Tavily client: web search built for AI agents, called via plain HTTP with
+`requests` (no official library dependency).
 
-Tavily has no official-library dependency here - we call it with plain HTTP
-using the `requests` library, which makes every part of the request easy to see.
-
-Base URL
---------
-The correct base URL is https://api.tavily.com - the host name ONLY, no "/v1".
-The two endpoints we use are:
-    POST /search   run a web search (costs credits)
-    GET  /usage    report how many credits are left (free)
-
-Authentication
---------------
-Tavily expects the key in a header: `Authorization: Bearer tvly-...`.
-An older style put the key in the JSON body instead. This client uses the header,
-which is what Tavily's current API reference documents.
-
-Project
--------
-TAVILY_PROJECT_ID is Tavily's version of a workspace. It is sent as the
-"X-Project-ID" header and is used purely to group usage when one key is shared by
-several apps. It does not restrict what the key can do.
+Base URL is host-only (https://api.tavily.com, no "/v1"); auth is a header
+(`Authorization: Bearer tvly-...`), not the older body-embedded-key style.
 """
 
 import time
@@ -100,16 +82,8 @@ class TavilyClient:
         include_answer: bool = True,
         max_retries: int = 3,
     ) -> dict:
-        """Search the web and return the results.
-
-        This method never raises. It always returns a dictionary containing
-        "results", "answer" and "query". If something went wrong, the dictionary
-        also contains an "error" key - so check for that before using the results.
-
-        If the request fails it is retried, waiting longer after each failure
-        (2 seconds, then 4, then 8). This is called "exponential backoff", and it
-        gives a busy or briefly offline server time to recover.
-        """
+        """Search the web; never raises - always returns a dict with results/answer/
+        query, plus "error" on failure. Retries with exponential backoff before giving up."""
         if not self.api_key:
             return self.build_empty_result(query, "TAVILY_API_KEY not configured")
 
@@ -160,11 +134,8 @@ class TavilyClient:
 
     @staticmethod
     def build_empty_result(query: str, error_message: str) -> dict:
-        """Build the "nothing found" reply used whenever a search fails.
-
-        Returning the same shape on success and on failure means calling code
-        never has to guess which keys exist.
-        """
+        """Build the "nothing found" reply used on failure - same shape as a
+        successful result, so calling code never has to guess which keys exist."""
         return {
             "results": [],
             "answer": "",
@@ -173,13 +144,8 @@ class TavilyClient:
         }
 
     def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable.
-
-        deep=False: only checks that the API key is present. No network call.
-        deep=True: calls GET {base_url}/usage. That call spends no search credits,
-        and it also tells you how many credits are left - a problem an ordinary
-        test search would not reveal until it suddenly started failing.
-        """
+        """Report whether this client is usable. deep=False only checks the API key
+        is present; deep=True calls GET /usage - free, and shows remaining credits."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 

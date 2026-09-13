@@ -1,25 +1,8 @@
-"""OpenRouter client: one key that reaches models from many different vendors.
+"""OpenRouter client: one key reaching models from many vendors, via OpenAI's
+API shape (this reuses the openai library, just with a different base URL).
 
-OpenRouter copies OpenAI's API exactly, so we can reuse the OpenAI library here
-and only change the base URL.
-
-Base URL
---------
-The correct base URL is https://openrouter.ai/api/v1 - the "/v1" IS required,
-the same as OpenAI.
-
-Model names
------------
-OpenRouter model names include the vendor, for example "openai/gpt-4.1-mini" or
-"anthropic/claude-haiku-4-5". A plain "gpt-4.1-mini" will not be found.
-
-Workspace
----------
-OpenRouter added Workspaces in 2026, but a key belongs to whichever workspace it
-was created in and there is no header to change that per request. So there is no
-workspace setting in .env for OpenRouter. Instead the deep health check calls
-GET /key, which reports the key's label and credit limit - that tells you which
-key, and therefore which workspace, the app is running as.
+Model names need the vendor prefix (e.g. "anthropic/claude-haiku-4-5"); there's
+no per-request workspace header, so the deep health check calls GET /key instead.
 """
 
 import requests
@@ -73,11 +56,8 @@ class OpenRouterChatClient(BaseLLMClient):
             self.client = None
 
     def build_attribution_headers(self) -> dict:
-        """Build the two optional headers that credit your app on OpenRouter.
-
-        These are only used for OpenRouter's public leaderboard. They are entirely
-        optional, so we leave them out when the settings are blank.
-        """
+        """Build the optional headers that credit this app on OpenRouter's public
+        leaderboard - left out entirely when the settings are blank."""
         headers = {}
         if self.site_url:
             headers["HTTP-Referer"] = self.site_url
@@ -138,13 +118,8 @@ class OpenRouterChatClient(BaseLLMClient):
         return response.model_dump()
 
     def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable.
-
-        deep=False: only checks that the API key is present. No network call.
-        deep=True: calls GET {base_url}/key. It is free, and it is the only check
-        that really tests the key - OpenRouter's /models list is public, so it
-        would happily answer "200 OK" even for a made-up key.
-        """
+        """Report whether this client is usable. deep=False only checks the key is
+        present; deep=True calls GET /key, since /models is public and would 200 for a made-up key."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 
