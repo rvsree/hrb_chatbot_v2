@@ -701,6 +701,37 @@
           }
         },
         {
+          "name": "Index against Pinecone instead of ChromaDB",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rag-ingestion/documents/{{document_id}}/index/recursive",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "rag-ingestion",
+                "documents",
+                "{{document_id}}",
+                "index",
+                "recursive"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vector_db\": \"pinecone\"\n}"
+            },
+            "description": "Writes via LlamaIndex's VectorStoreIndex into the real Pinecone index (PINECONE_INDEX_NAME) instead of ChromaDB - same response shape either way. Spends one real embedding call per chunk."
+          }
+        },
+        {
           "name": "Edge — overlap ≥ chunk size (422)",
           "request": {
             "method": "POST",
