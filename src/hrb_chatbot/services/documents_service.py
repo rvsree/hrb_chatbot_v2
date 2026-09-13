@@ -82,33 +82,11 @@ async def save_upload(upload: UploadFile, supersedes_document_id: str | None = N
             error_code=code,
         )
 
-    # Same bytes = same document, regardless of filename - catches "uploaded
-    # this exact PDF before" without needing the caller to send an
-    # Idempotency-Key (that only dedupes a retry of the SAME request within
-    # its cache window; this catches ANY upload of identical content, any
-    # time, even across server restarts, since it's backed by the real DB).
+    # content_hash is still recorded on the document row (useful for manual
+    # lookup/audit), but no idempotency/dedup check is done against it -
+    # every upload always creates a new document, even if identical content
+    # was uploaded before.
     content_hash = hashlib.sha256(content).hexdigest()
-    existing = await get_db_gateway().metadata_store().find_by_content_hash(content_hash)
-    if existing is not None:
-        logger.info(
-            "Upload %r matches existing document %s (%s) by content - no new document created",
-            upload.filename,
-            existing["id"],
-            existing["filename"],
-        )
-        return DocumentUploadResult(
-            filename=upload.filename,
-            document_id=existing["id"],
-            status="duplicate",
-            error=None,
-            message=(
-                f"Identical content already uploaded as document {existing['id']} "
-                f"({existing['filename']!r}), version {existing['document_version']}. "
-                "No new document was created - use that document_id to re-index if needed."
-            ),
-            file_size_bytes=existing["file_size_bytes"],
-            document_version=existing["document_version"],
-        )
 
     if supersedes_document_id:
         target = await get_db_gateway().metadata_store().get_document(supersedes_document_id)

@@ -1,12 +1,10 @@
-from fastapi import APIRouter, Body, Depends, File, Form, Header, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Body, Depends, File, Form, UploadFile
 
 from src.hrb_chatbot.ai.doc_processing import pipeline
 from src.hrb_chatbot.api.admin.health_checks import check_llm, check_vector_database, is_working
 from src.hrb_chatbot.api.dependencies import json_error
 from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
-from src.hrb_chatbot.common.idempotency.idempotency_store import get_idempotency_store
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rate_limiting.rate_limiter import enforce_rate_limit
 from src.hrb_chatbot.models.documents import (
@@ -33,22 +31,8 @@ async def upload_documents(
         "with exactly one file - the old document is flipped to is_current=false once this one "
         "successfully indexes, not immediately on upload.",
     ),
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     # Upload one or more PDF documents - a single file is just a list of one.
-
-    # Idempotency check: if this Idempotency-Key header was already used, hand
-    # back the exact response from that first call and stop - `return` here
-    # skips the rest of this function, so no upload happens a second time.
-    # No key at all is fine too - idempotency_key is then None, every `if
-    # idempotency_key:` check below is simply skipped, and this endpoint
-    # behaves as if idempotency didn't exist.
-    store = get_idempotency_store()
-    if idempotency_key:
-        cached = store.get(idempotency_key)
-        if cached is not None:
-            status_code, body = cached
-            return JSONResponse(status_code=status_code, content=body)
 
     if supersedes_document_id and len(files) != 1:
         return json_error(
@@ -74,9 +58,6 @@ async def upload_documents(
         rejected_count=rejected_count,
         results=results,
     )
-
-    if idempotency_key:
-        store.set(idempotency_key, 200, response.model_dump())
 
     return response
 
@@ -135,18 +116,8 @@ def _preflight_backends_ready(vector_db: str | None) -> str | None:
 async def index_document(
     document_id: str,
     payload: IndexRequest = Body(default=IndexRequest()),
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
-
     # Chunk, embed, and index one already-uploaded document.
-    # Same cache-check-then-cache-result idempotency pattern as upload_documents() above.
-    store = get_idempotency_store()
-    if idempotency_key:
-        cached = store.get(idempotency_key)
-        if cached is not None:
-            status_code, body = cached
-            return JSONResponse(status_code=status_code, content=body)
-
     document = await documents_service.get_document(document_id)
     if document is None:
         return json_error(404, f"Unknown document '{document_id}'", code=error_codes.DOCUMENT_NOT_FOUND)
@@ -185,9 +156,4 @@ async def index_document(
     # status -> "indexed" already happened inside pipeline.index_document() ->
     # write_chunks() -> record_successful_index() - one write for the whole
     # successful outcome, not a separate status update here too.
-    response = IndexResponse(**result)
-
-    if idempotency_key:
-        store.set(idempotency_key, 200, response.model_dump())
-
-    return response
+    return IndexResponse(**result)

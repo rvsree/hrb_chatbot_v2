@@ -18,11 +18,8 @@ client = TestClient(app)
 
 def _pdf_file(filename: str = "policy.pdf", content: bytes | None = None):
     # A fresh random default per call, not one shared literal - tests hit the
-    # real SQLite DB with no per-test reset, and content-hash dedup (see
-    # test_uploading_identical_content_twice_is_a_duplicate_not_a_new_document
-    # below) means two tests uploading the same literal bytes would now
-    # collide with each other. Tests that want to deliberately reuse the same
-    # content across two uploads still pass content= explicitly.
+    # real SQLite DB with no per-test reset. Tests that want to deliberately
+    # reuse the same content across two uploads still pass content= explicitly.
     if content is None:
         content = f"%PDF-1.4 fake content {uuid.uuid4().hex}".encode()
     return {"files": (filename, io.BytesIO(content), "application/pdf")}
@@ -176,44 +173,23 @@ def test_deleting_the_same_document_twice_is_404_the_second_time():
     assert second_delete.status_code == 404
 
 
-def test_uploading_identical_content_twice_is_a_duplicate_not_a_new_document():
-    # uuid-salted, not a fixed literal - this hits the real, persistent
-    # SQLite DB (no per-test reset), so a fixed literal would start
-    # matching leftover rows from a previous test *run*, not just within
-    # this one, and break the "first upload is fresh" assumption below.
+def test_uploading_identical_content_twice_creates_two_separate_documents():
+    # No content-hash dedup anymore - every upload always creates a new
+    # document, even if the exact same bytes were uploaded before.
     same_content = f"%PDF-1.4 identical bytes both times {uuid.uuid4().hex}".encode()
 
     first = client.post("/v1/rag-ingestion/documents", files=_pdf_file(content=same_content))
     second = client.post("/v1/rag-ingestion/documents", files=_pdf_file(content=same_content))
 
     assert first.json()["results"][0]["status"] == "uploaded"
-    first_document_id = first.json()["results"][0]["document_id"]
-
     second_body = second.json()
-    assert second_body["uploaded_count"] == 0
-    assert second_body["duplicate_count"] == 1
-    assert second_body["rejected_count"] == 0
-
-    duplicate_result = second_body["results"][0]
-    assert duplicate_result["status"] == "duplicate"
-    # Points back at the FIRST upload's document - no second document was created.
-    assert duplicate_result["document_id"] == first_document_id
-    assert duplicate_result["message"] is not None
-    assert first_document_id in duplicate_result["message"]
-
-
-def test_identical_content_under_a_different_filename_is_still_a_duplicate():
-    same_content = f"%PDF-1.4 same bytes, different name {uuid.uuid4().hex}".encode()
-
-    first = client.post("/v1/rag-ingestion/documents", files=_pdf_file(filename="v1.pdf", content=same_content))
-    second = client.post(
-        "/v1/rag-ingestion/documents", files=_pdf_file(filename="renamed-copy.pdf", content=same_content)
-    )
+    assert second_body["uploaded_count"] == 1
+    assert second_body["duplicate_count"] == 0
 
     first_document_id = first.json()["results"][0]["document_id"]
-    second_result = second.json()["results"][0]
-    assert second_result["status"] == "duplicate"
-    assert second_result["document_id"] == first_document_id
+    second_document_id = second_body["results"][0]["document_id"]
+    assert second_body["results"][0]["status"] == "uploaded"
+    assert second_document_id != first_document_id
 
 
 def test_same_filename_with_different_content_is_not_a_duplicate():

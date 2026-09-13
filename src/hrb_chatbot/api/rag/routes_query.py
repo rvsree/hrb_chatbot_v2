@@ -1,12 +1,10 @@
 """Ask the knowledge-base a question - spends real money on a well-formed
 request (one embedding call, one chat completion, per query)."""
 
-from fastapi import APIRouter, Depends, Header
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends
 
 from src.hrb_chatbot.api.dependencies import json_error
 from src.hrb_chatbot.common import error_codes
-from src.hrb_chatbot.common.idempotency.idempotency_store import get_idempotency_store
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rate_limiting.rate_limiter import enforce_rate_limit
 from src.hrb_chatbot.models.rag import RagQueryRequest, RagQueryResponse
@@ -18,20 +16,8 @@ router = APIRouter(tags=["query"])
 
 
 @router.post("/query", response_model=RagQueryResponse, dependencies=[Depends(enforce_rate_limit)])
-async def query(
-    payload: RagQueryRequest,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-):
+async def query(payload: RagQueryRequest):
     # Ask a question and get back a grounded answer with its sources.
-    # Same cache-check-then-cache-result idempotency pattern as
-    # routes_documents.py's upload_documents() - see that function's comment.
-    store = get_idempotency_store()
-    if idempotency_key:
-        cached = store.get(idempotency_key)
-        if cached is not None:
-            status_code, body = cached
-            return JSONResponse(status_code=status_code, content=body)
-
     try:
         result = await rag_service.answer_query(
             payload.query,
@@ -49,9 +35,4 @@ async def query(
             500, "The query could not be answered. Please try again.", code=error_codes.QUERY_FAILED
         )
 
-    response = RagQueryResponse(**result)
-
-    if idempotency_key:
-        store.set(idempotency_key, 200, response.model_dump())
-
-    return response
+    return RagQueryResponse(**result)
