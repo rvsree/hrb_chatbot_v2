@@ -59,7 +59,7 @@ class EphemeralChromaVectorStore(BaseVectorDBClient):
     def update_metadata(self, collection_name: str, ids: list[str], metadatas: list[dict]) -> None:
         self.get_collection(collection_name).update(ids=ids, metadatas=metadatas)
 
-    def health_check(self, deep: bool = False) -> dict:
+    def health_check(self) -> dict:
         return {"provider": self.PROVIDER_NAME, "status": "healthy"}
 
     def chunk_ids_present(self, collection_name: str) -> set[str]:

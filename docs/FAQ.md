@@ -518,17 +518,24 @@ for drift.
 
 ### "You mentioned checking backend health before spending money - how, and why not just let the real call fail?"
 
-`index_document()` (`routes_documents.py`) now checks - shallow, free,
-`deep=False` - that the LLM provider and the target vector store are at
-least *configured* before attempting the real chunk/embed/index operation.
-If not, it returns a clean `503` immediately instead of letting a missing
-API key surface as a raw exception three function calls deep inside the
-pipeline. **The reasoning worth explaining, not just the fact of doing
-it**: a *deep* health check here would cost the same as the real call it's
-supposedly protecting - pointless. A *shallow* check only catches the
-cheap, common mistake (nothing configured at all), not "is the provider
-actually reachable right now" - the real call still finds that out, this
-just fails faster and cleaner for the mistake it can actually catch.
+`index_document()` (`routes_documents.py`) checks that the LLM provider and
+the target vector store are actually reachable - `check_llm()` and
+`check_vector_database()`, the same functions `GET /health` uses - before
+attempting the real chunk/embed/index operation. If either isn't, it
+returns a clean `503` immediately with the reason, instead of letting a
+missing API key or an unreachable vector store surface as a raw exception
+three function calls deep inside the pipeline, after PDF text has already
+been extracted and chunked for nothing.
+
+**This used to be a *shallow*, config-only check** (`deep=False`: "is a key
+present", not "does it actually work") specifically to keep it free. That
+distinction was removed: `health_check()` always makes one real call now
+(`GET /models`, `list_collections()`, ...) and those calls were always free
+in isolation - a chat completion or an embedding call was never what made
+this expensive, so there was nothing to save by skipping straight to the
+real chunk/embed/index attempt. What preflight still buys over "just let it
+fail": a `503` with `"LLM provider is not configured: unhealthy"` *before*
+spending the latency on parsing and chunking the PDF, rather than after.
 
 **The equally important negative case, worth naming unprompted**: this
 same pattern is *not* applied to the query endpoint yet, even though it

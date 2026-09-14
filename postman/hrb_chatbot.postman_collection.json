@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "HRB Chatbot API",
-    "description": "There are only 7 real endpoints. Each top-level folder below is one endpoint (folder 3 covers two - list/get and delete share the same resource path); the requests inside it are that endpoint's happy path plus its edge cases, in that order.\n\n1. GET /health — is the service and its backends up\n2. POST /v1/rag-ingestion/documents — upload a PDF (identical content re-uploaded is detected and not duplicated - see folder note)\n3. GET /v1/rag-ingestion/documents[/{id}] — list or fetch documents; DELETE /v1/rag-ingestion/documents/{id} — full delete (vectors + metadata + file)\n4. POST /v1/rag-ingestion/documents/{id}/index — chunk, embed, and index one (same endpoint handles both first-time insert and re-index update)\n5. POST /v1/rag-retrieval/query — ask a question against indexed content; real retrieval + grounded generation (MVP), not a stub\n\nSetup: set `base_url` (local: http://127.0.0.1:8093, or the deployed App Runner URL). Run folder 2's first request once, then copy `results[0].document_id` from the response into the `document_id` variable — folders 3 and 4 need it.\n\nFile uploads (folder 2): the `kb_docs_dir` variable holds the absolute path to resources/kb_docs/ on disk - Postman can't use a relative path there the way curl can, because it has no concept of \"run from the repo root\". Update that one variable if this repo lives somewhere else on your machine. If a file field still shows empty/red after that, click it and re-browse to the PDF by hand - that's a normal Postman re-attach, not a bug.",
+    "description": "There are only 8 real endpoints. Each top-level folder below is one endpoint (folder 3 covers two - list/get and delete share the same resource path); the requests inside it are that endpoint's happy path plus its edge cases, in that order.\n\n0. GET /ping — is the process up (no provider calls; what an automated probe should use)\n1. GET /health — is the service and its backends up (real provider calls; a by-hand diagnostic)\n2. POST /v1/rag-ingestion/documents — upload a PDF (identical content re-uploaded is detected and not duplicated - see folder note)\n3. GET /v1/rag-ingestion/documents[/{id}] — list or fetch documents; DELETE /v1/rag-ingestion/documents/{id} — full delete (vectors + metadata + file)\n4. POST /v1/rag-ingestion/documents/{id}/index — chunk, embed, and index one (same endpoint handles both first-time insert and re-index update)\n5. POST /v1/rag-retrieval/query — ask a question against indexed content; real retrieval + grounded generation (MVP), not a stub\n\nSetup: set `base_url` (local: http://127.0.0.1:8093, or the deployed App Runner URL). Run folder 2's first request once, then copy `results[0].document_id` from the response into the `document_id` variable — folders 3 and 4 need it.\n\nFile uploads (folder 2): the `kb_docs_dir` variable holds the absolute path to resources/kb_docs/ on disk - Postman can't use a relative path there the way curl can, because it has no concept of \"run from the repo root\". Update that one variable if this repo lives somewhere else on your machine. If a file field still shows empty/red after that, click it and re-browse to the PDF by hand - that's a normal Postman re-attach, not a bug.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -20,10 +20,26 @@
   ],
   "item": [
     {
+      "name": "0. Ping — GET /ping",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/ping",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "ping"
+          ]
+        },
+        "description": "Confirms the process is up - no provider is called. This is what an automated probe should use; GET /health is the real, by-hand diagnostic."
+      }
+    },
+    {
       "name": "1. Health — GET /health",
       "item": [
         {
-          "name": "Shallow (instant, no cost)",
+          "name": "All backends (default providers)",
           "request": {
             "method": "GET",
             "url": {
@@ -34,15 +50,16 @@
               "path": [
                 "health"
               ]
-            }
+            },
+            "description": "Real, free check of the LLM, vector store, and metadata store this app is configured to use by default."
           }
         },
         {
-          "name": "Deep, all backends at once",
+          "name": "All backends (explicit providers)",
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{base_url}}/health?deep=true&provider=anthropic&vector_provider=pinecone&metadata_provider=postgres",
+              "raw": "{{base_url}}/health?provider=anthropic&vector_provider=pinecone&metadata_provider=postgres",
               "host": [
                 "{{base_url}}"
               ],
@@ -50,10 +67,6 @@
                 "health"
               ],
               "query": [
-                {
-                  "key": "deep",
-                  "value": "true"
-                },
                 {
                   "key": "provider",
                   "value": "anthropic"
@@ -72,14 +85,14 @@
           }
         },
         {
-          "name": "By LLM provider (deep)",
+          "name": "By LLM provider",
           "item": [
             {
               "name": "openai (default)",
               "request": {
                 "method": "GET",
                 "url": {
-                  "raw": "{{base_url}}/health?deep=true&provider=openai",
+                  "raw": "{{base_url}}/health?provider=openai",
                   "host": [
                     "{{base_url}}"
                   ],
@@ -87,10 +100,6 @@
                     "health"
                   ],
                   "query": [
-                    {
-                      "key": "deep",
-                      "value": "true"
-                    },
                     {
                       "key": "provider",
                       "value": "openai"
@@ -104,7 +113,7 @@
               "request": {
                 "method": "GET",
                 "url": {
-                  "raw": "{{base_url}}/health?deep=true&provider=anthropic",
+                  "raw": "{{base_url}}/health?provider=anthropic",
                   "host": [
                     "{{base_url}}"
                   ],
@@ -112,10 +121,6 @@
                     "health"
                   ],
                   "query": [
-                    {
-                      "key": "deep",
-                      "value": "true"
-                    },
                     {
                       "key": "provider",
                       "value": "anthropic"
@@ -129,7 +134,7 @@
               "request": {
                 "method": "GET",
                 "url": {
-                  "raw": "{{base_url}}/health?deep=true&provider=openrouter",
+                  "raw": "{{base_url}}/health?provider=openrouter",
                   "host": [
                     "{{base_url}}"
                   ],
@@ -137,10 +142,6 @@
                     "health"
                   ],
                   "query": [
-                    {
-                      "key": "deep",
-                      "value": "true"
-                    },
                     {
                       "key": "provider",
                       "value": "openrouter"
@@ -154,7 +155,7 @@
               "request": {
                 "method": "GET",
                 "url": {
-                  "raw": "{{base_url}}/health?deep=true&provider=bedrock",
+                  "raw": "{{base_url}}/health?provider=bedrock",
                   "host": [
                     "{{base_url}}"
                   ],
@@ -162,10 +163,6 @@
                     "health"
                   ],
                   "query": [
-                    {
-                      "key": "deep",
-                      "value": "true"
-                    },
                     {
                       "key": "provider",
                       "value": "bedrock"
@@ -177,14 +174,14 @@
           ]
         },
         {
-          "name": "By vector store (deep)",
+          "name": "By vector store",
           "item": [
             {
               "name": "chromadb (default)",
               "request": {
                 "method": "GET",
                 "url": {
-                  "raw": "{{base_url}}/health?deep=true&vector_provider=chromadb",
+                  "raw": "{{base_url}}/health?vector_provider=chromadb",
                   "host": [
                     "{{base_url}}"
                   ],
@@ -192,10 +189,6 @@
                     "health"
                   ],
                   "query": [
-                    {
-                      "key": "deep",
-                      "value": "true"
-                    },
                     {
                       "key": "vector_provider",
                       "value": "chromadb"
@@ -209,7 +202,7 @@
               "request": {
                 "method": "GET",
                 "url": {
-                  "raw": "{{base_url}}/health?deep=true&vector_provider=pinecone",
+                  "raw": "{{base_url}}/health?vector_provider=pinecone",
                   "host": [
                     "{{base_url}}"
                   ],
@@ -217,10 +210,6 @@
                     "health"
                   ],
                   "query": [
-                    {
-                      "key": "deep",
-                      "value": "true"
-                    },
                     {
                       "key": "vector_provider",
                       "value": "pinecone"
@@ -232,14 +221,14 @@
           ]
         },
         {
-          "name": "By metadata store (deep)",
+          "name": "By metadata store",
           "item": [
             {
               "name": "sqlite (default)",
               "request": {
                 "method": "GET",
                 "url": {
-                  "raw": "{{base_url}}/health?deep=true&metadata_provider=sqlite",
+                  "raw": "{{base_url}}/health?metadata_provider=sqlite",
                   "host": [
                     "{{base_url}}"
                   ],
@@ -247,10 +236,6 @@
                     "health"
                   ],
                   "query": [
-                    {
-                      "key": "deep",
-                      "value": "true"
-                    },
                     {
                       "key": "metadata_provider",
                       "value": "sqlite"
@@ -264,7 +249,7 @@
               "request": {
                 "method": "GET",
                 "url": {
-                  "raw": "{{base_url}}/health?deep=true&metadata_provider=postgres",
+                  "raw": "{{base_url}}/health?metadata_provider=postgres",
                   "host": [
                     "{{base_url}}"
                   ],
@@ -272,10 +257,6 @@
                     "health"
                   ],
                   "query": [
-                    {
-                      "key": "deep",
-                      "value": "true"
-                    },
                     {
                       "key": "metadata_provider",
                       "value": "postgres"
@@ -306,7 +287,7 @@
                 }
               ]
             },
-            "description": "Falls back to the default silently (not a 400) - same for vector_provider/metadata_provider."
+            "description": "Rejected with 422 - not a silent fallback to the default. Same for vector_provider/metadata_provider."
           }
         }
       ]
@@ -791,7 +772,7 @@
           }
         },
         {
-          "name": "Edge — unknown vector store name (500)",
+          "name": "Edge — unknown vector store name (422)",
           "request": {
             "method": "POST",
             "url": {
@@ -817,7 +798,7 @@
               "mode": "raw",
               "raw": "{\n  \"vector_db\": \"made_up_store\"\n}"
             },
-            "description": "Client sees a generic \"Indexing failed. Please try again.\" (the real ValueError naming valid options is logged server-side only, never returned raw to the client - see docs/CODING-STANDARDS.md's error-handling convention)."
+            "description": "vector_db is a closed set ('chromadb' or 'pinecone') on the request model, so an unrecognized value is rejected right here with a 422 naming the valid options - it never reaches the indexing pipeline, unlike the generic 500 this used to produce before vector_db became an enum."
           }
         },
         {
@@ -1069,7 +1050,7 @@
           }
         },
         {
-          "name": "Edge — vector_db name over 50 characters (422)",
+          "name": "Edge — unknown vector_db value (422)",
           "request": {
             "method": "POST",
             "url": {
@@ -1091,8 +1072,9 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"query\": \"test\",\n  \"vector_db\": \"this-is-a-deliberately-long-fake-vector-store-name-well-past-fifty-characters\"\n}"
-            }
+              "raw": "{\n  \"query\": \"test\",\n  \"vector_db\": \"made_up_store\"\n}"
+            },
+            "description": "vector_db is a closed set ('chromadb' or 'pinecone'), not a free-text field with a length cap - any value outside that set is rejected the same way, short or long."
           }
         }
       ]

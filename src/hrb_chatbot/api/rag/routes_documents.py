@@ -6,6 +6,7 @@ from src.hrb_chatbot.api.admin.health_checks import check_llm, check_vector_data
 from src.hrb_chatbot.api.dependencies import json_error
 from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
+from src.hrb_chatbot.common.enums import VectorDB
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rate_limiting.rate_limiter import enforce_rate_limit
 from src.hrb_chatbot.models.documents import (
@@ -96,23 +97,24 @@ async def delete_document(document_id: str):
     return DocumentDeleteResponse(**result)
 
 
-def _preflight_backends_ready(vector_db: str | None) -> str | None:
-    # Check embedding LLM and vector store health before initiating the process.
-    llm_status = check_llm(deep=False)
+def _preflight_backends_ready(vector_db: VectorDB | None) -> str | None:
+    # Check the embedding LLM and the vector store are actually reachable before
+    # spending time parsing and chunking the PDF - see check_llm/check_vector_database,
+    # the same real (never raises, one free call) checks GET /health itself uses.
+    llm_status = check_llm()
     if not is_working(llm_status):
-        return f"LLM provider is not configured: {llm_status.get('status')}"
+        return f"LLM provider is not available: {llm_status.get('message', llm_status.get('status'))}"
 
-    vector_status = check_vector_database(provider=vector_db or "chromadb", deep=False)
+    vector_status = check_vector_database(provider=vector_db or VectorDB.CHROMADB)
     if not is_working(vector_status):
-        return f"Vector store is not configured: {vector_status.get('status')}"
+        return f"Vector store is not available: {vector_status.get('message', vector_status.get('status'))}"
 
     return None
 
 
 async def _index_document(document_id: str, payload: IndexRequest):
-    # Chunk, embed, and index one already-uploaded document. Shared by both
-    # the dynamic endpoint (chunking_strategy from the request body, or
-    # auto-selected if omitted) and the per-strategy endpoints below
+    # Chunk, embed, and index one already-uploaded document. Shared by both the dynamic endpoint
+    # (chunking_strategy from the request body, or auto-selected if omitted) and the per-strategy endpoints below
     # (chunking_strategy fixed from the URL path).
     document = await documents_service.get_document(document_id)
     if document is None:
@@ -120,16 +122,11 @@ async def _index_document(document_id: str, payload: IndexRequest):
 
     preflight_failure_reason = _preflight_backends_ready(payload.vector_db)
     if preflight_failure_reason:
-        logger.error(
-            "Document indexing failed %s - preflight health check failed with Vector database: %s",
-            document_id,
-            preflight_failure_reason,
-        )
-        return json_error(
-            503,
-            "The indexing pipeline is not available to process the requests right now.",
-            code=error_codes.BACKEND_UNAVAILABLE,
-        )
+        logger.error("Document indexing failed %s - preflight check failed: %s", document_id, preflight_failure_reason)
+        # preflight_failure_reason comes from health_check(), which never raises and
+        # never includes a raw exception/stack trace (see CODING-STANDARDS.md) - safe
+        # to hand back to the caller as-is, unlike the generic except Exception below.
+        return json_error(503, preflight_failure_reason, code=error_codes.BACKEND_UNAVAILABLE)
 
     try:
         result = await pipeline.index_document(

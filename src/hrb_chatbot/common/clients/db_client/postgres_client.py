@@ -383,19 +383,15 @@ class PostgresClient(BaseMetadataClient):
 
         return make_row
 
-    def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable. deep=False only reports the
-        configured connection settings; deep=True connects, creates the table if missing, and counts rows."""
+    def health_check(self) -> dict:
+        """Report whether this client is usable: connects, creates the table if
+        missing, and counts rows."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 
         if not self.host:
             result["status"] = "unhealthy"
             result["message"] = "POSTGRES_DB_HOST not configured"
-            return result
-
-        if not deep:
-            result["status"] = "configured"
             return result
 
         try:

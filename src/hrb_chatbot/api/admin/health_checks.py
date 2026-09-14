@@ -3,76 +3,73 @@
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
 from src.hrb_chatbot.common.clients.llm_client.client_gateway import get_client_gateway
 from src.hrb_chatbot.common.config.settings import SETTINGS_TAKEN_FROM_ENV_FILE
-
-WORKING_STATUSES = ["configured", "healthy"]
+from src.hrb_chatbot.common.enums import LlmProvider, MetadataStore, VectorDB
 
 # TODO(next feature - tools): add a "tools" check here once a tool/schema
 
-def check_vector_database(provider: str = "chromadb", deep: bool = False) -> dict:
+def check_vector_database(provider: str = VectorDB.CHROMADB) -> dict:
     # Check the vector store the RAG pipeline reads and writes chunks in.
     gateway = get_db_gateway()
 
     try:
-        if provider == "pinecone":
+        if provider == VectorDB.PINECONE:
             client = gateway.pinecone()
-            return client.health_check(deep=deep)
+        else:
+            client = gateway.chroma()
 
-        client = gateway.chroma()
-        return client.health_check(deep=True)
+        return client.health_check()
     except Exception as error:
         return {"status": "unhealthy", "provider": provider, "message": str(error)}
 
 
-def check_metadata_database(provider: str = "sqlite") -> dict:
+def check_metadata_database(provider: str = MetadataStore.SQLITE) -> dict:
     # Check the store holding one row per uploaded document.
     gateway = get_db_gateway()
 
     try:
-        if provider == "postgres":
+        if provider == MetadataStore.POSTGRES:
             client = gateway.postgres()
         else:
             client = gateway.sqlite()
 
-        return client.health_check(deep=True)
+        return client.health_check()
     except Exception as error:
         return {"status": "unhealthy", "provider": provider, "message": str(error)}
 
 
-def check_llm(provider: str = "openai", deep: bool = False) -> dict:
-    """Check the chat client the agent will use.
-    deep=False only checks that a key is configured but deep=True makes real call."""
+def check_llm(provider: str = LlmProvider.OPENAI) -> dict:
+    """Check the chat client the agent will use - makes one real, free call."""
     gateway = get_client_gateway()
 
     try:
-        if provider == "anthropic":
+        if provider == LlmProvider.ANTHROPIC:
             client = gateway.anthropic_chat()
-        elif provider == "openrouter":
+        elif provider == LlmProvider.OPENROUTER:
             client = gateway.openrouter_chat()
-        elif provider == "bedrock":
+        elif provider == LlmProvider.BEDROCK:
             client = gateway.bedrock_chat()
         else:
             client = gateway.openai_chat()
 
-        return client.health_check(deep=deep)
+        return client.health_check()
     except Exception as error:
         return {"status": "unhealthy", "provider": provider, "message": str(error)}
 
 
 def is_working(check_result: dict) -> bool:
     """Return True if one check result means that part is usable."""
-    return check_result.get("status") in WORKING_STATUSES
+    return check_result.get("status") == "healthy"
 
 
 def check_all_backend_services(
-    provider: str = "openai",
-    deep: bool = False,
-    metadata_provider: str = "sqlite",
-    vector_provider: str = "chromadb",
+    provider: str = LlmProvider.OPENAI,
+    metadata_provider: str = MetadataStore.SQLITE,
+    vector_provider: str = VectorDB.CHROMADB,
 ) -> dict:
 
     checks = {
-        "llm": check_llm(provider=provider, deep=deep),
-        "vector_database": check_vector_database(provider=vector_provider, deep=deep),
+        "llm": check_llm(provider=provider),
+        "vector_database": check_vector_database(provider=vector_provider),
         "metadata_database": check_metadata_database(provider=metadata_provider),
         # TODO(next feature - tools): "tools": check_tools()
     }
@@ -91,7 +88,6 @@ def check_all_backend_services(
     return {
         "status": overall_status,
         "app": "HRB Chatbot",
-        "deep": deep,
         "settings_taken_from_env_file": SETTINGS_TAKEN_FROM_ENV_FILE,
         "checks": checks,
     }

@@ -41,13 +41,25 @@ regardless of provider; `upsert`/`query`/`delete` for vector stores always
 take the same arguments regardless of backend. Calling code never has a
 provider-specific branch outside the client itself.
 
-## Health checks: shallow is free, deep is one real call
+## Health checks: two endpoints, not one endpoint with a toggle
 
-`deep=False` never touches the network - it reports whether settings are
-present. `deep=True` makes exactly one call, and it's the cheapest one that
-proves the connection actually works (`GET /models`, `list_collections()`,
-never a chat completion or a paid query). A container `HEALTHCHECK` or load
-balancer probe always points at the shallow check - see the `Dockerfile`.
+`GET /ping` and `GET /health` are two separate endpoints with two separate
+jobs, not one endpoint switched between a cheap and an expensive mode by a
+`deep` query param (that toggle existed once and was removed - see
+`docs/RAG-ROADMAP.md`/`docs/BACKLOG.md` for the history if it matters).
+
+`GET /ping` never touches the network - it only confirms the process is up.
+A container `HEALTHCHECK` or load balancer probe always points at `/ping` -
+see the `Dockerfile` - because a probe firing every 30 seconds forever must
+never be able to cost money or fail because some external backend is down.
+
+`GET /health` always makes one real call per backend, and it's the cheapest
+one that proves the connection actually works (`GET /models`,
+`list_collections()`, never a chat completion or a paid query). If a
+backend isn't configured or isn't reachable, `health_check()` reports that
+as `{"status": "unhealthy", "message": "..."}` - it never raises (see
+"Errors: where they live" above) - so a missing key surfaces as a clear
+message in the response body, not a crash.
 
 ## API contracts: Pydantic models for business endpoints, dicts for health
 

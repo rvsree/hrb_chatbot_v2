@@ -117,7 +117,7 @@ class BaseMetadataClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def health_check(self, deep: bool = False) -> dict:
+    def health_check(self) -> dict:
         """Report whether this store is usable - never raises, same contract
         as every other client's health_check in this project."""
         raise NotImplementedError

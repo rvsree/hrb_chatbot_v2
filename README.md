@@ -80,15 +80,15 @@ an attached debugger.
 ### Health - every backend service currently wired up
 
 ```powershell
-# shallow - instant, no network, no cost
+# just confirms the process is up - no network call, no cost
+curl http://127.0.0.1:8093/ping
+
+# the real diagnostic - one real but free call per service (no chat completion, no tokens spent)
 curl http://127.0.0.1:8093/health
 
-# deep - one real but free call per service (no chat completion, no tokens spent)
-curl "http://127.0.0.1:8093/health?deep=true"
-
 # check a specific LLM provider
-curl "http://127.0.0.1:8093/health?deep=true&provider=anthropic"
-curl "http://127.0.0.1:8093/health?deep=true&provider=openrouter"
+curl "http://127.0.0.1:8093/health?provider=anthropic"
+curl "http://127.0.0.1:8093/health?provider=openrouter"
 ```
 
 `/health` reports three checks - `llm` (whichever provider you asked for,

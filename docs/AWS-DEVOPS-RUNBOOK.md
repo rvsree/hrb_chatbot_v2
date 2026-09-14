@@ -346,8 +346,8 @@ there's no image, container, or function to push to Bedrock itself.
 # From inside the running container's identity, or locally with equivalent creds:
 aws bedrock list-foundation-models --region us-east-1 --query 'modelSummaries[*].modelId' | head -5
 ```
-The app's own `GET /health?deep=true&provider=bedrock` does the equivalent
-check over HTTP and is the easier way to validate it end-to-end.
+The app's own `GET /health?provider=bedrock` does the equivalent check over
+HTTP and is the easier way to validate it end-to-end.
 
 ### Postgres (Neon) - once provisioned
 
@@ -360,7 +360,7 @@ Not live yet. Once a Neon (or any reachable Postgres) instance exists:
 2. `aws apprunner update-service` (or re-run the create script with these
    added to `RuntimeEnvironmentSecrets`, plus `RAG_METADATA_STORE=postgres`
    in `RuntimeEnvironmentVariables`) - config-only, no image rebuild.
-3. Validate: `GET /health?deep=true&metadata_provider=postgres` against the
+3. Validate: `GET /health?metadata_provider=postgres` against the
    deployed URL should report `"status": "healthy"`.
 
 ### S3 and Lambda
@@ -409,7 +409,7 @@ Both belong to `hrb-chatbot-github-actions-deploy` (see
 still pending** - confirm it's done before expecting `deploy.yml` to
 succeed on a real push to `master`. Once triggered, the workflow now also
 waits for the new App Runner deployment to reach `RUNNING` and runs a real
-`curl /health` against the live URL before calling itself done - added
+`curl /ping` against the live URL before calling itself done - added
 2026-09-08, see the branching-strategy doc's "Deployment testing" section.
 
 To validate CI/CD wiring without waiting for a real merge to `main`:

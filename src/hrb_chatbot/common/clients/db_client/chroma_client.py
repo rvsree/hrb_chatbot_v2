@@ -3,7 +3,8 @@
 Two modes via CHROMA_DB_MODE: "persistent" (embedded, local folder, default)
 or "http" (a separately-running Chroma server). The real client is built
 lazily in get_client(), not __init__, because constructing an HttpClient can
-handshake over the network - health_check(deep=False) must stay instant.
+handshake over the network - importing/constructing this class must stay
+instant even though health_check() itself always makes a real call.
 """
 
 import re
@@ -136,15 +137,11 @@ class ChromaDBClient(BaseVectorDBClient):
         ):
             collection.update(ids=ids, metadatas=metadatas)
 
-    def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable. deep=False only reports the
-        settings in use - no client is built; deep=True builds it and calls list_collections()."""
+    def health_check(self) -> dict:
+        """Report whether this client is usable: builds the real client and calls
+        list_collections()."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
-
-        if not deep:
-            result["status"] = "configured"
-            return result
 
         try:
             collections = self.get_client().list_collections()

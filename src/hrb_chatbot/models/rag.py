@@ -2,6 +2,8 @@
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.hrb_chatbot.common.enums import VectorDB
+
 
 class RagQueryRequest(BaseModel):
 
@@ -20,9 +22,7 @@ class RagQueryRequest(BaseModel):
         ),
     )
     top_k: int = Field(5, ge=1, le=20, description="How many chunks to retrieve and consider.")
-    vector_db: str | None = Field(
-        None, max_length=50, description="Override RAG_VECTOR_DB for this call: 'chromadb' or 'pinecone'."
-    )
+    vector_db: VectorDB | None = Field(None, description="Override RAG_VECTOR_DB for this call.")
     search_strategy: str | None = Field(
         None,
         max_length=20,

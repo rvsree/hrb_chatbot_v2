@@ -3,7 +3,8 @@
 Uses aiosqlite, not stdlib sqlite3, because FastAPI's route handlers here are
 async and a synchronous sqlite3 call would block the whole event loop. The
 documents table is created lazily on first real use, not in __init__, so
-health_check(deep=False) stays instant and touches nothing.
+importing/constructing this class stays instant and touches nothing - only
+an actual call (e.g. health_check()) opens the file.
 """
 
 import json
@@ -303,14 +304,10 @@ class SQLiteClient(BaseMetadataClient):
                 await db.execute("DELETE FROM documents WHERE id = ?", (document_id,))
                 await db.commit()
 
-    def health_check(self, deep: bool = False) -> dict:
-        """Report whether this store is usable. deep=False only reports the
-        configured path; deep=True opens the file, creates the table if missing, and queries it."""
+    def health_check(self) -> dict:
+        """Report whether this store is usable: opens the file, creates the
+        table if missing, and queries it."""
         result = {"provider": self.PROVIDER_NAME, "db_path": self.db_path}
-
-        if not deep:
-            result["status"] = "configured"
-            return result
 
         try:
             connection = sqlite3.connect(self.db_path)

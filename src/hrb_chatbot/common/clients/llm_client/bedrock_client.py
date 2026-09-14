@@ -239,15 +239,12 @@ class BedrockChatClient(BaseLLMClient):
             },
         }
 
-    def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable. deep=False only echoes config since
-        AWS creds may come from an IAM role; deep=True calls ListFoundationModels to confirm."""
+    def health_check(self) -> dict:
+        """Report whether this client is usable: calls ListFoundationModels to
+        confirm. AWS creds may come from an IAM role rather than .env, so there's
+        no cheap "is a key present" check to do first - this is the only way to know."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
-
-        if not deep:
-            result["status"] = "configured"
-            return result
 
         try:
             control_client = boto3.client("bedrock", **self._client_kwargs)

@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 
 from src.hrb_chatbot.api.admin import routes_health
@@ -21,7 +22,13 @@ app.include_router(routes_query.router, prefix="/v1/rag-retrieval")
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    return json_error(422, "Request validation failed.", code=error_codes.VALIDATION_ERROR, details=exc.errors())
+    # exc.errors() can contain a raw ValueError object (in "ctx") when a Pydantic
+    # @model_validator raises one - e.g. IndexRequest's chunk_overlap/chunk_size
+    # check - and json.dumps() crashes on that. jsonable_encoder() converts it to
+    # something JSON-safe; the human-readable text is already in "msg" either way.
+    return json_error(
+        422, "Request validation failed.", code=error_codes.VALIDATION_ERROR, details=jsonable_encoder(exc.errors())
+    )
 
 
 @app.exception_handler(HTTPException)

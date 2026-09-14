@@ -41,7 +41,8 @@ class BaseLLMClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable. deep=False only checks that the
-        API key is present; deep=True makes one real, free call to confirm it works."""
+    def health_check(self) -> dict:
+        """Report whether this client is usable: makes one real, free call to the
+        provider and reports the outcome - never raises, see BaseLLMClient's own
+        module docstring and CODING-STANDARDS.md's "Errors: where they live" section."""
         raise NotImplementedError

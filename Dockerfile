@@ -82,11 +82,12 @@ USER hrbchat
 
 EXPOSE 8093
 
-# Shallow health check on purpose - GET /health with no ?deep=true reads
-# settings only: no network call, no tokens spent. A probe running every
-# 30 seconds forever must never be able to cost money.
+# GET /ping only confirms the process is up - no provider is called, no
+# tokens spent. A probe running every 30 seconds forever must never be able
+# to cost money or fail because a backend (not this container) is down -
+# that's what GET /health is for, checked deliberately by hand, not by this probe.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl --fail --silent http://127.0.0.1:8093/health || exit 1
+    CMD curl --fail --silent http://127.0.0.1:8093/ping || exit 1
 
 # No --reload here - reload runs the app in a child process, which breaks
 # both container signal handling and any attached debugger.

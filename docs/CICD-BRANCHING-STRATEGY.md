@@ -248,14 +248,14 @@ container is actually serving traffic. Two steps were added after it:
    than `OPERATION_IN_PROGRESS` while waiting or times out - both real
    outcomes seen during Phase 10's three `CREATE_FAILED` attempts, not
    hypothetical.
-2. **Smoke test** - one `curl --fail` against the live URL's `/health`
-   (shallow, no `?deep=true` - this job has no reason to spend a provider
-   call just to confirm the container booted). A non-200 fails the job.
+2. **Smoke test** - one `curl --fail` against the live URL's `/ping` (not
+   `/health` - this job has no reason to spend a provider call just to
+   confirm the container booted). A non-200 fails the job.
 
 This means a deploy that "succeeds" by AWS's own accounting but produces a
 container that never actually comes up now fails the GitHub Actions run
 too, instead of leaving a broken container quietly live until someone
-happens to check `curl /health` by hand.
+happens to check `curl /ping` by hand.
 
 ## Quick reference - thresholds at a glance
 
@@ -267,4 +267,4 @@ happens to check `curl /health` by hand.
 | pip-audit | report-only today; triage plan above before flipping to blocking | `ci.yml`, `continue-on-error: true` |
 | A/B practical-significance bar (once Phase 8 exists) | ≥ 5 point average improvement, no single-case regression > 10 points | Not wired up yet - guidance only |
 | A/B formal significance (once dataset ≥ ~50/variant) | paired test, α = 0.05 | Not wired up yet - guidance only |
-| Deployment health check | new container reaches `RUNNING` + `/health` returns 200 | `deploy.yml`, post-deploy steps |
+| Deployment health check | new container reaches `RUNNING` + `/ping` returns 200 | `deploy.yml`, post-deploy steps |

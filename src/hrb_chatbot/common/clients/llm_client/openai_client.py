@@ -108,19 +108,15 @@ class OpenAIChatClient(BaseLLMClient):
             )
         return response.model_dump()
 
-    def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable. deep=False only checks the API key
-        is present; deep=True calls GET /models - free, but proves the URL and key both work."""
+    def health_check(self) -> dict:
+        """Report whether this client is usable: calls GET /models - free, but
+        proves the API key, base URL and network path all actually work."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 
         if not self.api_key:
             result["status"] = "unhealthy"
             result["message"] = "API key not configured"
-            return result
-
-        if not deep:
-            result["status"] = "configured"
             return result
 
         try:
@@ -210,19 +206,15 @@ class OpenAIEmbeddingClient:
             embeddings.append(item.embedding)
         return embeddings
 
-    def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable. deep=True also checks that the
-        configured embedding model is one this key is actually allowed to see."""
+    def health_check(self) -> dict:
+        """Report whether this client is usable: also checks that the configured
+        embedding model is one this key is actually allowed to see."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 
         if not self.api_key:
             result["status"] = "unhealthy"
             result["message"] = "API key not configured"
-            return result
-
-        if not deep:
-            result["status"] = "configured"
             return result
 
         try:

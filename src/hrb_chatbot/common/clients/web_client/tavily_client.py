@@ -143,19 +143,15 @@ class TavilyClient:
             "error": error_message,
         }
 
-    def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable. deep=False only checks the API key
-        is present; deep=True calls GET /usage - free, and shows remaining credits."""
+    def health_check(self) -> dict:
+        """Report whether this client is usable: calls GET /usage - free, and
+        shows remaining credits."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 
         if not self.api_key:
             result["status"] = "unhealthy"
             result["message"] = "API key not configured"
-            return result
-
-        if not deep:
-            result["status"] = "configured"
             return result
 
         try:

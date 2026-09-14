@@ -3,21 +3,19 @@
 from fastapi import Query
 from fastapi.responses import JSONResponse
 
-DEEP_QUERY = Query(
-    default=False,
-    description=(
-        "Also send one real but free request to the provider, to prove the API key "
-        "and base URL work. Leave it off to only check that the settings are present."
-    ),
-)
+from src.hrb_chatbot.common.enums import LlmProvider, MetadataStore, VectorDB
 
+# Query()'s enum default (e.g. LlmProvider.OPENAI) is what makes /docs render these
+# as a dropdown of the allowed values instead of a free-text box - and what makes
+# FastAPI reject a typo with a 422 before check_all_backend_services() ever runs,
+# instead of the typo silently falling through to a default deep inside it.
 PROVIDER_QUERY = Query(
-    default="openai",
-    description="Which LLM provider to check: 'openai', 'anthropic', 'openrouter' or 'bedrock'.",
+    default=LlmProvider.OPENAI,
+    description="Which LLM provider to check.",
 )
 
 METADATA_PROVIDER_QUERY = Query(
-    default="sqlite",
+    default=MetadataStore.SQLITE,
     description=(
         "Which document-metadata store to check: 'sqlite' (the active store) "
         "or 'postgres' (a fully working alternative, not yet the active one)."
@@ -25,11 +23,11 @@ METADATA_PROVIDER_QUERY = Query(
 )
 
 VECTOR_PROVIDER_QUERY = Query(
-    default="chromadb",
+    default=VectorDB.CHROMADB,
     description=(
         "Which vector store to check: 'chromadb' (the active store) or "
         "'pinecone' (a fully working alternative, not yet the active one - "
-        "deep=true will create the configured index on first call if it "
+        "checking it will create the configured index on first call if it "
         "doesn't exist yet)."
     ),
 )

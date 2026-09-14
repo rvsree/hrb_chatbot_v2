@@ -16,6 +16,7 @@ from src.hrb_chatbot.ai.doc_processing.metadata_extraction.document_metadata_ext
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
 from src.hrb_chatbot.common.clients.llm_client.openai_client import OpenAIEmbeddingClient
 from src.hrb_chatbot.common.config.settings import read_setting
+from src.hrb_chatbot.common.enums import VectorDB
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("doc_processing.pipeline")
@@ -80,7 +81,7 @@ async def index_document(
             f"Unknown chunking_strategy {chunking_strategy!r} - choose one of {list(CHUNKING_STRATEGIES)}"
         )
 
-    resolved_vector_db = vector_db or read_setting(None, "RAG_VECTOR_DB", "chromadb")
+    resolved_vector_db = vector_db or read_setting(None, "RAG_VECTOR_DB", VectorDB.CHROMADB)
     resolved_embedding_model = embedding_model or read_setting(
         None, "OPENAI_EMBED_MODEL", OpenAIEmbeddingClient.DEFAULT_MODEL
     )

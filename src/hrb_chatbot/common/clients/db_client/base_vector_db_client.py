@@ -57,7 +57,7 @@ class BaseVectorDBClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable. deep=False only checks that
-        connection settings are present; deep=True makes one cheap real call (listing collections/indexes)."""
+    def health_check(self) -> dict:
+        """Report whether this client is usable: makes one cheap real call
+        (listing collections/indexes) and reports the outcome - never raises."""
         raise NotImplementedError

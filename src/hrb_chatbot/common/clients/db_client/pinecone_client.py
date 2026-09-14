@@ -233,19 +233,18 @@ class PineconeClient(BaseVectorDBClient):
             for id_, metadata in zip(ids, metadatas, strict=True):
                 index.update(id=id_, set_metadata=metadata, namespace=collection_name)
 
-    def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable. deep=False only reports configured
-        settings; deep=True lists indexes and confirms/creates the configured one."""
+    def health_check(self) -> dict:
+        """Report whether this client is usable: lists indexes, then calls
+        _ensure_index(), which CREATES the configured index if it doesn't exist
+        yet (a one-time, billable side effect - see _ensure_index's own docstring;
+        it's a no-op on every call after the first, so repeat health checks don't
+        repeat it)."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 
         if not self.api_key:
             result["status"] = "unhealthy"
             result["message"] = "API key not configured"
-            return result
-
-        if not deep:
-            result["status"] = "configured"
             return result
 
         try:

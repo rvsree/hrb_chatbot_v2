@@ -102,9 +102,8 @@ jobs:
       - name: Deployment smoke test - the new container actually answers
         # Confirms the thing that matters, not just that AWS says the
         # deployment succeeded: a real HTTP call to the live URL returns a
-        # real 200. Shallow health check only (no ?deep=true) - this job
-        # has no reason to spend a provider call just to confirm the
-        # container booted, matching the same shallow/deep convention
-        # documented in docs/AWS-DEVOPS-RUNBOOK.md.
+        # real 200. Hits /ping, not /health - this job has no reason to spend
+        # a provider call just to confirm the container booted; see
+        # docs/AWS-DEVOPS-RUNBOOK.md for the deliberate, by-hand /health check.
         run: |
-          curl --fail --silent --show-error "${{ env.APP_RUNNER_URL }}/health"
+          curl --fail --silent --show-error "${{ env.APP_RUNNER_URL }}/ping"

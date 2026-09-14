@@ -7,6 +7,7 @@ from src.hrb_chatbot.common.clients.db_client.pinecone_client import PineconeCli
 from src.hrb_chatbot.common.clients.db_client.postgres_client import PostgresClient
 from src.hrb_chatbot.common.clients.db_client.sqlite_client import SQLiteClient
 from src.hrb_chatbot.common.config.settings import read_setting
+from src.hrb_chatbot.common.enums import MetadataStore, VectorDB
 
 
 class DBGateway:
@@ -32,14 +33,14 @@ class DBGateway:
 
     def vector_store(self, provider: str | None = None) -> BaseVectorDBClient:
         """Return whichever vector store is selected."""
-        provider = provider or read_setting(None, "RAG_VECTOR_DB", "chromadb")
+        provider = provider or read_setting(None, "RAG_VECTOR_DB", VectorDB.CHROMADB)
 
-        if provider == "chromadb":
+        if provider == VectorDB.CHROMADB:
             return self.chroma()
-        if provider == "pinecone":
+        if provider == VectorDB.PINECONE:
             return self.pinecone()
 
-        raise ValueError(f"Unknown vector store {provider!r} - use 'chromadb' or 'pinecone'")
+        raise ValueError(f"Unknown vector store {provider!r} - use one of {[member.value for member in VectorDB]}")
 
     def sqlite(self) -> SQLiteClient:
         """Return the shared SQLite client, building it on first use."""
@@ -55,14 +56,16 @@ class DBGateway:
 
     def metadata_store(self, provider: str | None = None) -> BaseMetadataClient:
         # Return whichever document-metadata store is selected.
-        provider = provider or read_setting(None, "RAG_METADATA_STORE", "sqlite")
+        provider = provider or read_setting(None, "RAG_METADATA_STORE", MetadataStore.SQLITE)
 
-        if provider == "sqlite":
+        if provider == MetadataStore.SQLITE:
             return self.sqlite()
-        if provider == "postgres":
+        if provider == MetadataStore.POSTGRES:
             return self.postgres()
 
-        raise ValueError(f"Unknown metadata store {provider!r} - use 'sqlite' or 'postgres'")
+        raise ValueError(
+            f"Unknown metadata store {provider!r} - use one of {[member.value for member in MetadataStore]}"
+        )
 
 
 # The single gateway shared by the whole program - same convention as client_gateway.py's _shared_gateway.

@@ -2,7 +2,7 @@
 API shape (this reuses the openai library, just with a different base URL).
 
 Model names need the vendor prefix (e.g. "anthropic/claude-haiku-4-5"); there's
-no per-request workspace header, so the deep health check calls GET /key instead.
+no per-request workspace header, so the health check calls GET /key instead.
 """
 
 import requests
@@ -117,19 +117,15 @@ class OpenRouterChatClient(BaseLLMClient):
             )
         return response.model_dump()
 
-    def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable. deep=False only checks the key is
-        present; deep=True calls GET /key, since /models is public and would 200 for a made-up key."""
+    def health_check(self) -> dict:
+        """Report whether this client is usable: calls GET /key rather than
+        /models, since /models is public and would 200 even for a made-up key."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 
         if not self.api_key:
             result["status"] = "unhealthy"
             result["message"] = "API key not configured"
-            return result
-
-        if not deep:
-            result["status"] = "configured"
             return result
 
         try:

@@ -213,19 +213,15 @@ class AnthropicChatClient(BaseLLMClient):
             },
         }
 
-    def health_check(self, deep: bool = False) -> dict:
-        """Report whether this client is usable. deep=False only checks that the
-        key is present; deep=True calls GET /v1/models, confirming URL, key, and workspace header at once."""
+    def health_check(self) -> dict:
+        """Report whether this client is usable: calls GET /v1/models, confirming
+        the API key, base URL and workspace header all work together at once."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 
         if not self.api_key:
             result["status"] = "unhealthy"
             result["message"] = "API key not configured"
-            return result
-
-        if not deep:
-            result["status"] = "configured"
             return result
 
         try:

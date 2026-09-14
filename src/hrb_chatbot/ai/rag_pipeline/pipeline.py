@@ -10,6 +10,7 @@ for why that's not the same as implementing Phase 5.1.
 from src.hrb_chatbot.ai.rag_pipeline.query_retrieval.retriever import retrieve_chunks as _retrieve_chunks
 from src.hrb_chatbot.ai.rag_pipeline.response_generation.generator import generate_answer as _generate_answer
 from src.hrb_chatbot.common.config.settings import read_setting
+from src.hrb_chatbot.common.enums import VectorDB
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("rag_pipeline.pipeline")
@@ -68,7 +69,7 @@ async def answer_query(
 
     Exceptions are deliberately not caught here - the router turns them into a clear error response.
     """
-    resolved_vector_db = vector_db or read_setting(None, "RAG_VECTOR_DB", "chromadb")
+    resolved_vector_db = vector_db or read_setting(None, "RAG_VECTOR_DB", VectorDB.CHROMADB)
     resolved_search_strategy = search_strategy or "similarity"
 
     logger.info(

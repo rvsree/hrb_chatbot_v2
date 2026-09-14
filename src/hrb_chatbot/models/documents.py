@@ -6,6 +6,8 @@ batch shouldn't fail the good ones - each gets its own status and reason.
 
 from pydantic import BaseModel, Field, model_validator
 
+from src.hrb_chatbot.common.enums import VectorDB
+
 # A benefits PDF is a handful of pages, not a data dump - 20MB is generous
 # headroom over anything in resources/kb_docs/ today, not an arbitrary number.
 MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024
@@ -166,9 +168,7 @@ class DocumentDeleteResponse(BaseModel):
 class IndexRequest(BaseModel):
     # Optional per-call overrides for POST /rag/documents/{id}/index.
 
-    vector_db: str | None = Field(
-        None, max_length=50, description="Override RAG_VECTOR_DB for this call: 'chromadb' or 'pinecone'."
-    )
+    vector_db: VectorDB | None = Field(None, description="Override RAG_VECTOR_DB for this call.")
     chunking_strategy: str | None = Field(
         None,
         max_length=20,

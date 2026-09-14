@@ -137,7 +137,7 @@ class FakeVectorStore(BaseVectorDBClient):
             if chunk_id in collection:
                 collection[chunk_id]["metadata"] = metadata
 
-    def health_check(self, deep=False):
+    def health_check(self):
         return {"provider": self.PROVIDER_NAME, "status": "healthy"}
 
 
@@ -248,7 +248,7 @@ class FakeMetadataStore(BaseMetadataClient):
     async def list_documents(self):
         return list(self.documents.values())
 
-    def health_check(self, deep=False):
+    def health_check(self):
         return {"provider": self.PROVIDER_NAME, "status": "healthy"}
 
 
