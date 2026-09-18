@@ -25,6 +25,10 @@ class AnthropicChatClient(BaseLLMClient):
     # Real workspace ids always start with this. Used to spot a pasted name.
     WORKSPACE_ID_PREFIX = "wrkspc_"
 
+    # ask()/ask_with_tools() fallback when the caller doesn't pass max_tokens -
+    # Anthropic's API requires it, unlike OpenAI/Bedrock.
+    DEFAULT_MAX_TOKENS = int(read_setting(None, "ANTHROPIC_DEFAULT_MAX_TOKENS", 1024))
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -89,7 +93,7 @@ class AnthropicChatClient(BaseLLMClient):
             "workspace_id_set": bool(self.workspace_id),
         }
 
-    def ask(self, question, context=None, temperature=0.0, max_tokens=None):
+    def ask(self, question, context=None, system_prompt=None, temperature=0.0, max_tokens=None):
         """Ask one question and return the answer text. `temperature` is accepted
         but ignored - Anthropic has deprecated it, see module docstring."""
         if context:
@@ -97,12 +101,18 @@ class AnthropicChatClient(BaseLLMClient):
         else:
             message_text = question
 
+        # Claude takes the system prompt as its own argument, not as a message.
+        extra_arguments = {}
+        if system_prompt:
+            extra_arguments["system"] = system_prompt
+
         # temperature deliberately not passed - the anthropic library rejects it now.
         with log_backend_call(logger, "anthropic", "messages.ask", model=self.model):
             response = self.get_client().messages.create(
                 model=self.model,
-                max_tokens=max_tokens or 1024,
+                max_tokens=max_tokens or self.DEFAULT_MAX_TOKENS,
                 messages=[{"role": "user", "content": message_text}],
+                **extra_arguments,
             )
 
         # Claude replies with a list of "blocks". Join the text ones together.
@@ -129,7 +139,7 @@ class AnthropicChatClient(BaseLLMClient):
         ):
             response = self.get_client().messages.create(
                 model=self.model,
-                max_tokens=max_tokens or 1024,
+                max_tokens=max_tokens or self.DEFAULT_MAX_TOKENS,
                 messages=chat_messages,
                 tools=claude_tools,
                 **extra_arguments,

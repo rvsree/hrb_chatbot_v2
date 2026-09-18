@@ -47,6 +47,9 @@ ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_type TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS purpose TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_classification TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS effective_date TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS audience TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS confidentiality_level TEXT",
 ]
 
 # Speeds up find_by_content_hash() - one lookup per upload, worth an index.
@@ -294,12 +297,26 @@ class PostgresClient(BaseMetadataClient):
         doc_type: str | None,
         purpose: str | None,
         doc_classification: str | None,
+        effective_date: str | None,
+        audience: str | None,
+        confidentiality_level: str | None,
     ) -> None:
         with self._connect() as conn:
             conn.execute(
                 "UPDATE documents SET owner = %s, department = %s, doc_type = %s, purpose = %s, "
-                "doc_classification = %s, updated_at = now() WHERE id = %s",
-                (owner, department, doc_type, purpose, doc_classification, document_id),
+                "doc_classification = %s, effective_date = %s, audience = %s, "
+                "confidentiality_level = %s, updated_at = now() WHERE id = %s",
+                (
+                    owner,
+                    department,
+                    doc_type,
+                    purpose,
+                    doc_classification,
+                    effective_date,
+                    audience,
+                    confidentiality_level,
+                    document_id,
+                ),
             )
             conn.commit()
 
@@ -311,6 +328,9 @@ class PostgresClient(BaseMetadataClient):
         doc_type: str | None,
         purpose: str | None,
         doc_classification: str | None,
+        effective_date: str | None = None,
+        audience: str | None = None,
+        confidentiality_level: str | None = None,
     ) -> None:
         await self._ensure_table()
         with log_backend_call(logger, "postgres", "metadata.record_document_metadata", document_id=document_id):
@@ -322,6 +342,9 @@ class PostgresClient(BaseMetadataClient):
                 doc_type,
                 purpose,
                 doc_classification,
+                effective_date,
+                audience,
+                confidentiality_level,
             )
 
     async def record_successful_index(

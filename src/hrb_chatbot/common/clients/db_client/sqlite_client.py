@@ -49,6 +49,9 @@ ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN doc_type TEXT",
     "ALTER TABLE documents ADD COLUMN purpose TEXT",
     "ALTER TABLE documents ADD COLUMN doc_classification TEXT",
+    "ALTER TABLE documents ADD COLUMN effective_date TEXT",
+    "ALTER TABLE documents ADD COLUMN audience TEXT",
+    "ALTER TABLE documents ADD COLUMN confidentiality_level TEXT",
 ]
 
 # Speeds up find_by_content_hash() - one lookup per upload, worth an index.
@@ -255,6 +258,9 @@ class SQLiteClient(BaseMetadataClient):
         doc_type: str | None,
         purpose: str | None,
         doc_classification: str | None,
+        effective_date: str | None = None,
+        audience: str | None = None,
+        confidentiality_level: str | None = None,
     ) -> None:
         await self._ensure_table()
         now = datetime.now(UTC).isoformat()
@@ -263,8 +269,20 @@ class SQLiteClient(BaseMetadataClient):
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute(
                     "UPDATE documents SET owner = ?, department = ?, doc_type = ?, purpose = ?, "
-                    "doc_classification = ?, updated_at = ? WHERE id = ?",
-                    (owner, department, doc_type, purpose, doc_classification, now, document_id),
+                    "doc_classification = ?, effective_date = ?, audience = ?, confidentiality_level = ?, "
+                    "updated_at = ? WHERE id = ?",
+                    (
+                        owner,
+                        department,
+                        doc_type,
+                        purpose,
+                        doc_classification,
+                        effective_date,
+                        audience,
+                        confidentiality_level,
+                        now,
+                        document_id,
+                    ),
                 )
                 await db.commit()
 

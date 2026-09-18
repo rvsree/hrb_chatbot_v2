@@ -26,9 +26,9 @@ class TavilyClient:
 
     DEFAULT_TIMEOUT_SECONDS = 30
     # How many seconds to wait for the free GET /usage health check.
-    HEALTH_CHECK_TIMEOUT_SECONDS = 10
+    HEALTH_CHECK_TIMEOUT_SECONDS = int(read_setting(None, "TAVILY_HEALTH_CHECK_TIMEOUT_SECONDS", 10))
     # Never wait longer than this between retries, however many have failed.
-    MAX_SECONDS_BETWEEN_RETRIES = 10
+    MAX_SECONDS_BETWEEN_RETRIES = int(read_setting(None, "TAVILY_MAX_RETRY_BACKOFF_SECONDS", 10))
 
     def __init__(
         self,

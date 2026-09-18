@@ -6,9 +6,12 @@ batch shouldn't fail the good ones - each gets its own status and reason.
 
 from pydantic import BaseModel, Field
 
+from src.hrb_chatbot.common.config.settings import read_setting
+
 # A benefits PDF is a handful of pages, not a data dump - 20MB is generous
 # headroom over anything in resources/kb_docs/ today, not an arbitrary number.
-MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024
+# Server-side policy, not payload-overridable - see .env's comment on this var.
+MAX_FILE_SIZE_BYTES = int(read_setting(None, "MAX_UPLOAD_FILE_SIZE_BYTES", 20 * 1024 * 1024))
 ALLOWED_CONTENT_TYPE = "application/pdf"
 
 
@@ -155,6 +158,17 @@ class DocumentRecord(BaseModel):
             "'health benefits', 'leave policy') - the extraction step's best guess, not a controlled "
             "vocabulary, same shape as doc_type."
         ),
+    )
+    effective_date: str | None = Field(
+        None,
+        description="When the document states it takes effect, in its own words - not a parsed/"
+        "validated date, same best-effort-string contract as the other extraction fields.",
+    )
+    audience: str | None = Field(
+        None, description="Which employee group this document applies to, if determinable."
+    )
+    confidentiality_level: str | None = Field(
+        None, description="The document's own stated sensitivity (e.g. 'Internal', 'Confidential'), if it states one."
     )
 
 

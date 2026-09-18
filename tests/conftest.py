@@ -57,9 +57,22 @@ class FakeChatClient:
         self._answer = answer
         self.calls: list[dict] = []
 
-    def ask(self, question: str, context: str | None = None, temperature: float = 0.0, max_tokens=None) -> str:
+    def ask(
+        self,
+        question: str,
+        context: str | None = None,
+        system_prompt: str | None = None,
+        temperature: float = 0.0,
+        max_tokens=None,
+    ) -> str:
         self.calls.append(
-            {"question": question, "context": context, "temperature": temperature, "max_tokens": max_tokens}
+            {
+                "question": question,
+                "context": context,
+                "system_prompt": system_prompt,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
         )
         return self._answer
 
@@ -257,7 +270,18 @@ class FakeMetadataStore(BaseMetadataClient):
         document["superseded_by"] = superseded_by
         return json.loads(document["chunk_ids"]) if document.get("chunk_ids") else []
 
-    async def record_document_metadata(self, document_id, owner, department, doc_type, purpose, doc_classification):
+    async def record_document_metadata(
+        self,
+        document_id,
+        owner,
+        department,
+        doc_type,
+        purpose,
+        doc_classification,
+        effective_date=None,
+        audience=None,
+        confidentiality_level=None,
+    ):
         document = self.documents.get(document_id)
         if document is not None:
             document["owner"] = owner
@@ -265,6 +289,9 @@ class FakeMetadataStore(BaseMetadataClient):
             document["doc_type"] = doc_type
             document["purpose"] = purpose
             document["doc_classification"] = doc_classification
+            document["effective_date"] = effective_date
+            document["audience"] = audience
+            document["confidentiality_level"] = confidentiality_level
 
     async def get_document(self, document_id):
         return self.documents.get(document_id)

@@ -22,7 +22,7 @@ class OpenRouterChatClient(BaseLLMClient):
     DEFAULT_MODEL = "openai/gpt-4.1-mini"
 
     # How many seconds to wait for the free GET /key health check.
-    HEALTH_CHECK_TIMEOUT_SECONDS = 10
+    HEALTH_CHECK_TIMEOUT_SECONDS = int(read_setting(None, "OPENROUTER_HEALTH_CHECK_TIMEOUT_SECONDS", 10))
 
     def __init__(
         self,
@@ -76,17 +76,22 @@ class OpenRouterChatClient(BaseLLMClient):
             "site_name": self.site_name,
         }
 
-    def ask(self, question, context=None, temperature=0.0, max_tokens=None):
+    def ask(self, question, context=None, system_prompt=None, temperature=0.0, max_tokens=None):
         """Ask one question and return the answer text."""
         if context:
             message_text = f"Context:\n{context}\n\nQuestion:\n{question}"
         else:
             message_text = question
 
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": message_text})
+
         with log_backend_call(logger, "openrouter", "chat.ask", model=self.model, temperature=temperature):
             response = self.get_client().chat.completions.create(
                 model=self.model,
-                messages=[{"role": "user", "content": message_text}],
+                messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 extra_headers=self.extra_headers or None,

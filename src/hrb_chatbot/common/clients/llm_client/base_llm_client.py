@@ -16,10 +16,12 @@ class BaseLLMClient(ABC):
         self,
         question: str,
         context: str | None = None,
+        system_prompt: str | None = None,
         temperature: float = 0.0,
         max_tokens: int | None = None,
     ) -> str:
-        """Ask one question and return the answer as plain text."""
+        """Ask one question and return the answer as plain text.
+        system_prompt is sent via each provider's own native mechanism, not folded into the question."""
         raise NotImplementedError
 
     @abstractmethod

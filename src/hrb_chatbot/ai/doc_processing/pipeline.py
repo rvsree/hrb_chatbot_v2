@@ -3,8 +3,8 @@
 from src.hrb_chatbot.ai.doc_processing.chunking.text_chunker import (
     CHUNKING_STRATEGIES,
     DEFAULT_CHUNK_OVERLAP,
-    DEFAULT_CHUNK_SIZE,
     chunk_text,
+    decide_chunk_size,
     decide_chunking_strategy,
     extract_text_from_pdf,
 )
@@ -26,8 +26,8 @@ def chunk_document(
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
 ) -> list[str]:
-    """Split already-extracted text into chunks, using chunking_strategy if
-    given, or auto-selecting one if not - see text_chunker.chunk_text()."""
+    """Split already-extracted text into chunks, using chunking_strategy/
+    chunk_size if given, or auto-selecting both if not - see text_chunker.chunk_text()."""
     if chunk_overlap is None:
         resolved_overlap = DEFAULT_CHUNK_OVERLAP
     else:
@@ -36,7 +36,7 @@ def chunk_document(
     return chunk_text(
         text,
         chunking_strategy=chunking_strategy,
-        chunk_size=chunk_size or DEFAULT_CHUNK_SIZE,
+        chunk_size=chunk_size,
         chunk_overlap=resolved_overlap,
     )
 
@@ -59,7 +59,6 @@ async def index_document(
     resolved_embedding_model = embedding_model or read_setting(
         None, "OPENAI_EMBED_MODEL", OpenAIEmbeddingClient.DEFAULT_MODEL
     )
-    resolved_chunk_size = chunk_size or DEFAULT_CHUNK_SIZE
 
     if chunk_overlap is None:
         resolved_chunk_overlap = DEFAULT_CHUNK_OVERLAP
@@ -74,14 +73,15 @@ async def index_document(
         resolved_vector_db,
         chunking_strategy or "auto",
         resolved_embedding_model,
-        resolved_chunk_size,
+        chunk_size or "auto",
         resolved_chunk_overlap,
     )
 
     text = extract_text_from_pdf(file_path)
-    # Computed here (possibly again) only so the response can report which
-    # strategy ran - decide_chunking_strategy() is pure, so this always agrees.
+    # Computed here (possibly again) only so the response can report what
+    # actually ran - decide_chunking_strategy()/decide_chunk_size() are pure, so this always agrees.
     resolved_chunking_strategy = chunking_strategy or decide_chunking_strategy(text)
+    resolved_chunk_size = chunk_size or decide_chunk_size(text)
     chunks = chunk_document(
         text,
         chunking_strategy=chunking_strategy,

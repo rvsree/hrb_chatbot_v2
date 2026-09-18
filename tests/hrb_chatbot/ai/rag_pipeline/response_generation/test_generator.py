@@ -46,16 +46,16 @@ def test_context_cites_filename_and_chunk_index(monkeypatch):
     assert "Leave is 16 weeks." in context
 
 
-def test_question_carries_the_grounding_instruction(monkeypatch):
+def test_system_prompt_carries_the_grounding_instruction(monkeypatch):
     fake_chat = FakeChatClient()
     monkeypatch.setattr(response_generator, "get_client_gateway", lambda: FakeClientGateway(chat_client=fake_chat))
 
     response_generator.generate_answer("How much leave?", SAMPLE_CHUNKS)
 
-    question = fake_chat.calls[0]["question"]
-    assert "ONLY the context" in question
-    assert "say you don't know" in question
-    assert "How much leave?" in question
+    call = fake_chat.calls[0]
+    assert "ONLY the context" in call["system_prompt"]
+    assert "say you don't know" in call["system_prompt"]
+    assert call["question"] == "How much leave?"
 
 
 def test_model_name_override_builds_a_fresh_client_not_the_shared_one(monkeypatch):

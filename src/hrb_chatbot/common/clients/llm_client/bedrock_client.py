@@ -60,7 +60,7 @@ class BedrockChatClient(BaseLLMClient):
             "credentials_source": credentials_source,
         }
 
-    def ask(self, question, context=None, temperature=0.0, max_tokens=None):
+    def ask(self, question, context=None, system_prompt=None, temperature=0.0, max_tokens=None):
         """Ask one question and return the answer text."""
         if context:
             message_text = f"Context:\n{context}\n\nQuestion:\n{question}"
@@ -71,12 +71,16 @@ class BedrockChatClient(BaseLLMClient):
         if max_tokens:
             inference_config["maxTokens"] = max_tokens
 
+        request = {
+            "modelId": self.model,
+            "messages": [{"role": "user", "content": [{"text": message_text}]}],
+            "inferenceConfig": inference_config,
+        }
+        if system_prompt:
+            request["system"] = [{"text": system_prompt}]
+
         with log_backend_call(logger, "bedrock", "converse.ask", model=self.model, temperature=temperature):
-            response = self.client.converse(
-                modelId=self.model,
-                messages=[{"role": "user", "content": [{"text": message_text}]}],
-                inferenceConfig=inference_config,
-            )
+            response = self.client.converse(**request)
 
         # Converse can return several content blocks (e.g. text plus a citation
         # block); join their text into one string, matching every other provider's ask().

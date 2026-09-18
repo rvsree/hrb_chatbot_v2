@@ -1,19 +1,29 @@
-"""LLM-based extraction of document-level metadata (owner/department/
-doc_type/purpose/doc_classification) - best-effort, a wrong or missing
-guess must never block indexing (see extract_document_metadata()'s try/except)."""
+"""LLM-based extraction of document-level metadata (see EMPTY_RESULT for the
+full field list) - best-effort, a wrong or missing guess must never block
+indexing (see extract_document_metadata()'s try/except)."""
 
 import json
 
 from src.hrb_chatbot.common.clients.llm_client.client_gateway import get_client_gateway
+from src.hrb_chatbot.common.config.settings import read_setting
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("doc_processing.metadata_extraction")
 
 # Owner/department/type/purpose is almost always on a document's first
 # page/header - no need to send the whole doc and pay for tokens a title page answers.
-MAX_CHARACTERS_SENT = 3000
+MAX_CHARACTERS_SENT = int(read_setting(None, "METADATA_EXTRACTION_MAX_CHARACTERS", 3000))
 
-EMPTY_RESULT = {"owner": None, "department": None, "doc_type": None, "purpose": None, "doc_classification": None}
+EMPTY_RESULT = {
+    "owner": None,
+    "department": None,
+    "doc_type": None,
+    "purpose": None,
+    "doc_classification": None,
+    "effective_date": None,
+    "audience": None,
+    "confidentiality_level": None,
+}
 
 EXTRACTION_QUESTION = (
     "Read the document text above and answer with ONLY a JSON object, no other "
@@ -24,13 +34,18 @@ EXTRACTION_QUESTION = (
     '"purpose": "<one sentence describing the document\'s scope/purpose, or null>", '
     '"doc_classification": "<the specific topic this document covers, in the '
     "document's own terms, e.g. '401k', 'health benefits', 'leave policy' - "
-    'not a fixed list, or null>"}\n'
+    'not a fixed list, or null>", '
+    '"effective_date": "<when the document says it takes effect, in its own '
+    'words, or null>", '
+    '"audience": "<which employee group this document applies to, or null>", '
+    '"confidentiality_level": "<the document\'s own stated sensitivity, e.g. '
+    '\'Internal\'/\'Confidential\', or null>"}\n'
     "Use null (not a guess) for any field the text doesn't actually support."
 )
 
 
 def extract_document_metadata(text: str) -> dict:
-    """Return {"owner", "department", "doc_type", "purpose"} - any value may
+    """Return EMPTY_RESULT's 8 keys, filled in where possible - any value may
     be None if the model couldn't determine it, or if extraction failed
     outright. Never raises."""
     if not text.strip():

@@ -21,7 +21,9 @@ class RagQueryRequest(BaseModel):
             "completion call, not to constrain a genuine question."
         ),
     )
-    top_k: int = Field(5, ge=1, le=20, description="How many chunks to retrieve and consider.")
+    top_k: int | None = Field(
+        None, ge=1, le=20, description="How many chunks to retrieve and consider - defaults to RAG_DEFAULT_TOP_K."
+    )
     vector_db: VectorDB | None = Field(None, description="Override ACTIVE_VECTOR_DB for this call.")
     search_strategy: SearchStrategy | None = Field(
         None,
@@ -39,15 +41,15 @@ class RagQueryRequest(BaseModel):
             "(OPENAI_CHAT_MODEL by default) when left out."
         ),
     )
-    temperature: float = Field(
-        0.0,
+    temperature: float | None = Field(
+        None,
         ge=0.0,
         le=2.0,
         description=(
-            "How much randomness the model uses when generating the answer. 0.0 (the default) "
-            "is deterministic and repeatable - the right choice for grounded HR-policy answers, "
-            "where the same question should get the same answer every time. Higher values trade "
-            "that repeatability for more varied wording."
+            "How much randomness the model uses when generating the answer - defaults to "
+            "RAG_DEFAULT_TEMPERATURE (0.0, deterministic and repeatable, is the right choice for "
+            "grounded HR-policy answers where the same question should get the same answer every "
+            "time). Higher values trade that repeatability for more varied wording."
         ),
     )
     max_tokens: int | None = Field(

@@ -108,6 +108,10 @@ reviewed before that phase's code starts.
 | 32 — Pilot: one `RagQueryParams` dataclass replaces the 10-field parameter list repeated across routes_query.py/rag_service.py/pipeline.answer_query() | Claude Code | ✅ Done, 2026-09-16 | ✅ Spec'd, reviewed, and implemented - see detail below |
 | 33 — Remove dead pass-through wrapper functions in both pipeline.py files | Claude Code | ✅ Done, 2026-09-16 | ✅ Spec'd, reviewed, and implemented - see detail below |
 | 34 — Simplify retrieve_chunks() to a single query; remove decompose_query() | Claude Code | ✅ Done, 2026-09-16 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 35 — Add a real system prompt (role definition) for answer generation | Claude Code | ✅ Done, 2026-09-18 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 36 — Three new document-metadata attributes: effective_date, audience, confidentiality_level | Claude Code | ✅ Done, 2026-09-18 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 37 — decide_chunk_size(): table-aware and large-document-aware auto chunk sizing | Claude Code | ✅ Done, 2026-09-18 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 38 — .env audit: move hardcoded tuning/limit constants to .env; re-expose chunk_size/chunking_strategy on POST /documents | Claude Code | ✅ Done, 2026-09-18 | ✅ Spec'd, reviewed, and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -2457,6 +2461,249 @@ Explicitly deferred to a later, separate wave - not part of the above:
   still said "decompose, retrieve, generate" after the module-level
   docstring was already updated - reworded to "retrieve, generate." Full
   suite green (114/114).
+
+- [x] **Phase 35 (2026-09-18) — Add a real system prompt (role
+  definition) for answer generation.**
+
+  - **Spec:** User-reported: this project's `ask()` never sent a `system`
+    message - the grounding/anti-hallucination instruction was folded
+    into the user message instead (documented, deliberate, but not what
+    a production RAG system typically does). `BaseLLMClient.ask()` is an
+    ABC method every provider client implements identically (per
+    `docs/CODING-STANDARDS.md`'s "every client follows the same shape"),
+    so this touches all four, not just OpenAI (the only one actually
+    called for final-answer generation today, per `docs/FAQ.md` - the
+    other three stay dormant until Phase 5.1/agent work uses them, but
+    must keep the same shape regardless).
+    - `base_llm_client.py`: `ask()` gains `system_prompt: str | None = None`.
+    - `openai_client.py`/`open_router_client.py`: prepend
+      `{"role": "system", "content": system_prompt}` to `messages` when set.
+    - `anthropic_client.py`: pass `system=system_prompt` as
+      `messages.create()`'s own top-level argument (Claude's API takes it
+      separately, not as a message - same as `ask_with_tools()` already does).
+    - `bedrock_client.py`: pass `system=[{"text": system_prompt}]` on the
+      Converse API request when set (same shape `ask_with_tools()` already uses).
+    - `ai/rag_pipeline/response_generation/response_generator.py`: new
+      `SYSTEM_PROMPT` constant - the role + the grounding/anti-hallucination
+      policy that used to live in `GROUNDED_QUESTION_TEMPLATE`.
+      `generate_answer()` passes it via `system_prompt=SYSTEM_PROMPT` and
+      the per-call question becomes the raw `query` (the template is
+      deleted - the instruction now lives once, in the system prompt, not
+      duplicated in both places). Module docstring updated.
+    - Out of scope: `document_metadata_extractor.py`'s `ask()` call stays
+      unchanged (no system prompt) - a different call, not what was asked.
+    - Tests: `tests/conftest.py`'s `FakeChatClient.ask()` gains
+      `system_prompt` and records it in `calls`; `test_generator.py`'s
+      `test_question_carries_the_grounding_instruction` rewritten to
+      check `system_prompt`, not `question`, for the grounding language.
+  **Verified:** `code-reviewer` subagent run against the diff - scope
+  matched the spec exactly (no creep), bandit clean, all four provider
+  clients' `system_prompt` wiring matched their existing per-provider
+  patterns (`ask_with_tools()`'s system-handling for Anthropic/Bedrock),
+  `document_metadata_extractor.py`/`langchain_chat_model.py` confirmed
+  unaffected (backward-compatible optional param). One finding fixed:
+  `ask()` ABC's docstring was 3 lines, over CODING-STANDARDS' 2-line
+  limit - trimmed. One flagged, not fixed: none of the four LLM client
+  files have dedicated unit tests (pre-existing gap, not introduced by
+  this phase - `system_prompt` is only exercised indirectly via
+  `FakeChatClient` in `test_generator.py`, not the real per-provider
+  request-building code). Full suite green (114/114).
+
+- [x] **Phase 36 (2026-09-18) — Three new document-metadata
+  attributes: effective_date, audience, confidentiality_level.**
+
+  - **Spec:** User-requested, following up on the earlier metadata-schema
+    discussion (Interview Kickstart ticket-schema comparison). Three
+    document-level attributes added, same best-effort LLM-extraction
+    contract as the existing 5 (`owner`/`department`/`doc_type`/`purpose`/
+    `doc_classification`) - free-text strings, null when the model can't
+    determine them, extraction failure never blocks indexing:
+    - `effective_date` - when the policy states it takes effect, in the
+      document's own words (not parsed/validated as a real date - same
+      best-effort-string contract as the other fields, to avoid a parse
+      failure blocking extraction).
+    - `audience` - which employee group the document applies to (e.g.
+      "Full-time employees", "All US employees").
+    - `confidentiality_level` - the document's own stated sensitivity
+      (e.g. "Internal", "Confidential"), if it states one.
+    **Deliberately deferred, not in this phase:** chunk-level `section`/
+    `page_number`. `ai/doc_processing/chunking/text_chunker.py`'s
+    `extract_text_from_pdf()` currently joins every page into one text
+    blob before chunking (`"\n\n".join(pages_text)`) - page boundaries
+    are discarded before chunking ever runs, so page/section tracking
+    needs real extraction-pipeline changes, not a metadata column add.
+    Flagged as a separate, bigger future phase if wanted.
+    - `ai/doc_processing/metadata_extraction/document_metadata_extractor.py`:
+      `EMPTY_RESULT` and `EXTRACTION_QUESTION` gain the 3 keys.
+    - `common/clients/db_client/base_metadata_client.py`:
+      `record_document_metadata()` ABC gains the 3 params.
+    - `common/clients/db_client/sqlite_client.py` /
+      `postgres_client.py`: 3 new nullable columns (`ADD_COLUMNS`/`ADD
+      COLUMN IF NOT EXISTS`, matching each file's existing pattern), 3
+      new params threaded through the UPDATE.
+    - `models/documents.py`: `DocumentRecord` gains the 3 fields
+      (optional, default None) so the API actually returns them.
+    - Tests: `tests/conftest.py`'s `FakeMetadataStore.record_document_metadata()`
+      gains the 3 params; `test_document_metadata_extractor.py`'s clean-
+      JSON test extended to cover the 3 new fields.
+  **Verified:** `code-reviewer` subagent run against the diff - the 7
+  declared files matched exactly, bandit clean, SQL fully parametrized
+  in both sqlite/postgres clients, generic-loop extraction pattern meant
+  `ai/doc_processing/pipeline.py`/`routes_documents.py` needed no changes
+  (both already dict-unpack). One finding fixed: both of
+  `document_metadata_extractor.py`'s docstrings still listed only the
+  old 4-5 fields - updated to point at `EMPTY_RESULT` instead of
+  hardcoding the list twice. One finding was a false positive (the
+  reviewer's diff included Phase 35's already-committed-pending files
+  too, since neither phase had been git-committed yet - not actual
+  scope creep in this phase's own edits). Full suite green (114/114).
+
+- [x] **Phase 37 (2026-09-18) — decide_chunk_size(): table-aware
+  and large-document-aware auto chunk sizing.**
+
+  - **Spec:** User-requested extension of the existing
+    `decide_chunking_strategy()` auto-selection (same "content decides,
+    not a hardcoded guess" pattern), scoped to exactly what was agreed:
+    table-awareness and document-length-awareness. No image/complexity
+    detection (no such extraction capability exists in this pipeline -
+    flagged, not built).
+    - `ai/doc_processing/chunking/text_chunker.py`: new
+      `decide_chunk_size(text) -> int`. Two signals, take the max (never
+      shrinks below `DEFAULT_CHUNK_SIZE`):
+      1. **Table-aware:** if the largest `[TABLE]...[/TABLE]` block (from
+         `table_extractor.py`'s output) is longer than the current
+         candidate chunk size, grow the chunk size to
+         `largest_table_length + DEFAULT_CHUNK_OVERLAP` - big enough that
+         `RecursiveCharacterTextSplitter` never needs to recurse into
+         finer separators inside that block, so a table row is never cut
+         across two chunks.
+      2. **Large-document-aware:** if the stripped text is longer than a
+         new `LARGE_DOCUMENT_MIN_LENGTH` (10,000 chars), use a new
+         `LARGE_DOCUMENT_CHUNK_SIZE` (1500) instead of the 1000-char
+         default - fewer, larger chunks so a long policy document
+         doesn't fragment into 50+ pieces each losing surrounding context.
+      Only applies when the resolved strategy is "fixed"/"recursive" -
+      other strategies (markdown/html/none/semantic) don't take a
+      chunk_size argument at all, unchanged.
+    - `chunk_text()`'s `chunk_size` param becomes `int | None = None`
+      (was always concretely defaulted) - auto-sizes via
+      `decide_chunk_size()` when not given, mirroring exactly how
+      `chunking_strategy` already works in the same function.
+    - `ai/doc_processing/pipeline.py`: `chunk_document()` stops
+      pre-resolving `chunk_size or DEFAULT_CHUNK_SIZE` before calling
+      `chunk_text()` - passes `chunk_size` through unchanged so `None`
+      reaches the new auto-sizing (single source of truth, not
+      duplicated resolution logic). `index_document()`'s
+      `resolved_chunk_size` computation moves to after
+      `extract_text_from_pdf()` (it needs the extracted text now,
+      the same ordering `resolved_chunking_strategy` already uses,
+      "computed here so the response can report what actually ran,
+      decide_chunk_size() is pure so this always agrees") - the
+      pre-extraction log line reports `chunk_size or "auto"` instead of
+      a not-yet-known resolved value, matching how `chunking_strategy`
+      is already logged there.
+    - Tests: new cases in `test_text_chunker.py` for `decide_chunk_size()`
+      (default case, table-block growth, large-document growth, max-of-
+      both) and that `chunk_text()` auto-sizes when `chunk_size` is
+      omitted. No existing test passes an explicit `chunk_size` to
+      `chunk_text()` expecting the old always-1000 default, and no
+      dedicated test file exists for `ai/doc_processing/pipeline.py`
+      itself (covered indirectly via `documents_service.py`'s tests,
+      which fake `pipeline.index_document` entirely - unaffected).
+  **Verified:** `code-reviewer` subagent run against the diff - scope
+  matched the spec's 3 declared files exactly, bandit clean, `max()`-of-
+  two-signals logic hand-verified for the both-signals-apply edge case,
+  `chunk_size` auto-sizing confirmed limited to fixed/recursive
+  strategies only. `test_ab_testing_demo.py` (an existing caller passing
+  an explicit `chunk_size` to `chunk_text()`) re-checked for regression
+  from the now-Optional signature - none. One finding fixed: a 3-line
+  comment exceeded CODING-STANDARDS' 2-line limit, restating what the
+  docstring already said - trimmed. Full suite green (120/120).
+
+- [x] **Phase 38 (2026-09-18) — .env audit: move hardcoded
+  tuning/limit constants to .env; re-expose chunk_size/chunking_strategy
+  on POST /documents.**
+
+  - **Spec:** User-requested full-codebase scan for hardcoded numeric/
+    limit constants with no `.env` path, following the existing
+    `read_setting(passed_in, ENV_VAR, default)` pattern everywhere
+    (Phase 31's `get_active_vector_db()`/`get_active_llm_provider()` is
+    the precedent). Two categories, confirmed with the user:
+    - **Internal tuning** (`.env`-configurable only, no payload field -
+      not something a caller should control per-request):
+      `retriever.py`'s `MAX_CHROMA_DISTANCE`/`MIN_PINECONE_SCORE`
+      (`RAG_MAX_CHROMA_DISTANCE`/`RAG_MIN_PINECONE_SCORE`);
+      `text_chunker.py`'s `DEFAULT_CHUNK_SIZE`/`DEFAULT_CHUNK_OVERLAP`/
+      `LARGE_DOCUMENT_MIN_LENGTH`/`LARGE_DOCUMENT_CHUNK_SIZE`
+      (`CHUNK_DEFAULT_SIZE`/`CHUNK_DEFAULT_OVERLAP`/
+      `CHUNK_LARGE_DOCUMENT_MIN_LENGTH`/`CHUNK_LARGE_DOCUMENT_CHUNK_SIZE`);
+      `document_metadata_extractor.py`'s `MAX_CHARACTERS_SENT`
+      (`METADATA_EXTRACTION_MAX_CHARACTERS`); `pinecone_client.py`'s
+      `INDEX_READY_TIMEOUT_SECONDS`/`INDEX_READY_POLL_SECONDS`
+      (`PINECONE_INDEX_READY_TIMEOUT_SECONDS`/
+      `PINECONE_INDEX_READY_POLL_SECONDS`); `tavily_client.py`'s
+      `HEALTH_CHECK_TIMEOUT_SECONDS`/`MAX_SECONDS_BETWEEN_RETRIES`
+      (`TAVILY_HEALTH_CHECK_TIMEOUT_SECONDS`/
+      `TAVILY_MAX_RETRY_BACKOFF_SECONDS`); `open_router_client.py`'s
+      `HEALTH_CHECK_TIMEOUT_SECONDS` (`OPENROUTER_HEALTH_CHECK_TIMEOUT_SECONDS`);
+      `models/documents.py`'s `MAX_FILE_SIZE_BYTES`
+      (`MAX_UPLOAD_FILE_SIZE_BYTES` - deliberately **not** payload-
+      overridable, a caller raising its own upload limit is a security
+      concern, not a feature); `anthropic_client.py`'s hardcoded
+      `max_tokens or 1024` fallback (new `DEFAULT_MAX_TOKENS` class attr,
+      `ANTHROPIC_DEFAULT_MAX_TOKENS`). Each becomes
+      `read_setting(None, "ENV_VAR", existing_literal)` at the same
+      module/class scope the constant already lived at - the literal
+      stays as the coded fallback, same role `DEFAULT_MODEL` already
+      plays elsewhere.
+    - **Request-tunable, baked into a payload's schema instead of
+      `None`+resolved-with-`.env`-override** (the same inconsistency
+      Phase 32 partly addressed, found going further this pass):
+      `RagQueryRequest.top_k`/`temperature` currently
+      `Field(5, ...)`/`Field(0.0, ...)` - become `Field(None, ...)`,
+      matching how `vector_db`/`search_strategy`/`llm_provider` already
+      work. `RagQueryParams` gets the matching `int | None`/`float | None`
+      fields. `pipeline.answer_query()` resolves
+      `params.top_k or int(read_setting(None, "RAG_DEFAULT_TOP_K", 5))`
+      and the equivalent for temperature - also caught
+      `resolved_search_strategy = params.search_strategy or "similarity"`
+      already having this exact bug (hardcoded fallback, no `.env` path)
+      while fixing the other two; adds `RAG_DEFAULT_SEARCH_STRATEGY`.
+    - **`chunk_size`/`chunking_strategy`/`chunk_overlap` re-exposed on
+      `POST /documents`** (as `Form(...)` fields, matching
+      `supersedes_document_id`'s existing shape) - user confirmed this
+      supersedes Phase 26's removal of per-call chunking overrides;
+      `chunking_strategy` typed as `ChunkingStrategy | None` (the
+      existing enum) for the same request-boundary-validation reason
+      every other provider-choice field uses one. Threaded through
+      `documents_service.save_uploads()`/`save_upload()`/`_index_now()`
+      (plain optional kwargs, not a new dataclass - only 3 fields, not
+      the 10-field case that justified `RagQueryParams`) down to
+      `pipeline.index_document()`, which already accepts all three and
+      needed no change.
+    - **Explicitly out of scope, flagged not fixed:** `vector_indexer.py`'s
+      `RECORD_MANAGER_DB_URL` and `documents_service.py`'s
+      `UPLOAD_DIRECTORY` - storage paths, not limit/size tuning values,
+      a different category than what was asked about.
+    - Tests: existing tests pass `.env`-unset, so every `read_setting()`
+      call resolves to its unchanged literal default - no test should
+      observe a behavior change from the internal-tuning half. New Form
+      fields are optional/default-None, so existing upload tests
+      (`test_routes_documents.py`, whose `_fake_index_document` already
+      accepts `**kwargs`) need no changes.
+  **Verified:** `code-reviewer` subagent run against the diff - confirmed
+  `temperature`'s `is None` handling is correct everywhere (the falsy-
+  zero bug was specifically avoided), no internal-only `.env` value
+  (`MAX_FILE_SIZE_BYTES` etc.) got an accidental payload field, every new
+  `read_setting()` call site has the import present, all `.env` values
+  match their coded fallback literals, chunking Form fields correctly
+  typed/threaded, bandit clean on all 13 in-scope files, 126/126 tests
+  green. Two findings were both the same false positive (files from
+  already-completed Phases 35-37 misread as unspec'd scope creep,
+  since nothing had been git-committed since Phase 34 - not an issue
+  with Phase 38's own edits); one finding was real and correctly
+  flagged as pre-existing/out of scope (a SHA1/bandit-B324 finding in
+  `vector_indexer.py`, not a file this phase touched).
 
 ## Verification checklist (Phases 1-3)
 

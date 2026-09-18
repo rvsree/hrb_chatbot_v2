@@ -16,8 +16,8 @@ logger = get_logger("pinecone_client")
 
 # How long to wait, total, for a freshly created index to report ready before
 # giving up - serverless indexes are typically ready in a few seconds.
-INDEX_READY_TIMEOUT_SECONDS = 60
-INDEX_READY_POLL_SECONDS = 2
+INDEX_READY_TIMEOUT_SECONDS = int(read_setting(None, "PINECONE_INDEX_READY_TIMEOUT_SECONDS", 60))
+INDEX_READY_POLL_SECONDS = int(read_setting(None, "PINECONE_INDEX_READY_POLL_SECONDS", 2))
 
 
 def _text_from_llama_index_node_content(metadata: dict) -> str:

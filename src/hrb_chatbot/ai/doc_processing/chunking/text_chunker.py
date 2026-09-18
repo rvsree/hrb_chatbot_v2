@@ -1,6 +1,8 @@
 """Extracts PDF text and splits it into chunks via LangChain's own splitters
 (workshop Module 2) - six plain functions, one per technique, no classes."""
 
+import re
+
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import (
@@ -19,12 +21,21 @@ logger = get_logger("doc_processing.chunking")
 
 # 1000 chars keeps a chunk topically focused; 150 char overlap is roughly a
 # sentence, enough that a boundary-split sentence still appears whole somewhere.
-DEFAULT_CHUNK_SIZE = 1000
-DEFAULT_CHUNK_OVERLAP = 150
+DEFAULT_CHUNK_SIZE = int(read_setting(None, "CHUNK_DEFAULT_SIZE", 1000))
+DEFAULT_CHUNK_OVERLAP = int(read_setting(None, "CHUNK_DEFAULT_OVERLAP", 150))
 
 # Below this length, a document fits in one chunk anyway - matches the "not
 # critical for short tickets/documents" takeaway from workshop Module 1.
 WHOLE_DOCUMENT_MAX_LENGTH = DEFAULT_CHUNK_SIZE
+
+# table_extractor.py appends tables as [TABLE]...[/TABLE] blocks - matched
+# here so decide_chunk_size() can keep one whole in one chunk.
+TABLE_BLOCK_PATTERN = re.compile(r"\[TABLE\](.*?)\[/TABLE\]", re.DOTALL)
+
+# Above this length, a document would fragment into 10+ tiny chunks at the
+# default size, each losing surrounding context - use a larger chunk size instead.
+LARGE_DOCUMENT_MIN_LENGTH = int(read_setting(None, "CHUNK_LARGE_DOCUMENT_MIN_LENGTH", 10_000))
+LARGE_DOCUMENT_CHUNK_SIZE = int(read_setting(None, "CHUNK_LARGE_DOCUMENT_CHUNK_SIZE", 1500))
 
 
 def extract_text_from_pdf(file_path: str) -> str:
@@ -154,14 +165,44 @@ def decide_chunking_strategy(text: str) -> str:
     return "recursive"
 
 
+def decide_chunk_size(text: str) -> int:
+    """Auto-pick a chunk size when none was given - same "content decides,
+    not a hardcoded guess" idea as decide_chunking_strategy(). Only grows
+    past the default, never shrinks it - takes the max of both signals."""
+    stripped = text.strip()
+
+    table_lengths = [len(block) for block in TABLE_BLOCK_PATTERN.findall(stripped)]
+    largest_table_length = max(table_lengths, default=0)
+
+    candidates = [DEFAULT_CHUNK_SIZE]
+    if len(stripped) > LARGE_DOCUMENT_MIN_LENGTH:
+        candidates.append(LARGE_DOCUMENT_CHUNK_SIZE)
+    if largest_table_length > DEFAULT_CHUNK_SIZE:
+        # Big enough that the splitter never recurses into this block.
+        candidates.append(largest_table_length + DEFAULT_CHUNK_OVERLAP)
+
+    chunk_size = max(candidates)
+    if chunk_size != DEFAULT_CHUNK_SIZE:
+        logger.info(
+            "chunk_size: auto-select rationale - %d character(s), largest [TABLE] block=%d "
+            "character(s) -> %d (default is %d)",
+            len(stripped),
+            largest_table_length,
+            chunk_size,
+            DEFAULT_CHUNK_SIZE,
+        )
+    return chunk_size
+
+
 def chunk_text(
     text: str,
     chunking_strategy: str | None = None,
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_size: int | None = None,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
 ) -> list[str]:
-    """Split text into chunks ready to embed, using the given strategy - or,
-    if none was given, auto-selecting one (see decide_chunking_strategy)."""
+    """Split text into chunks ready to embed, using the given strategy/
+    chunk_size - or, if not given, auto-selecting both (see
+    decide_chunking_strategy/decide_chunk_size)."""
     if chunking_strategy:
         strategy = chunking_strategy
         logger.info("chunking: explicit strategy=%s", strategy)
@@ -174,7 +215,8 @@ def chunk_text(
 
     chunk_function = CHUNKING_STRATEGIES[strategy]
     if strategy in ("fixed", "recursive"):
-        chunks = chunk_function(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        resolved_chunk_size = chunk_size if chunk_size is not None else decide_chunk_size(text)
+        chunks = chunk_function(text, chunk_size=resolved_chunk_size, chunk_overlap=chunk_overlap)
     else:
         chunks = chunk_function(text)
 

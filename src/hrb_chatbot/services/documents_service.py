@@ -45,7 +45,13 @@ def validate_file(upload: UploadFile, size: int) -> tuple[str, str] | None:
     return None
 
 
-async def save_upload(upload: UploadFile, supersedes_document_id: str | None = None) -> DocumentUploadResult:
+async def save_upload(
+    upload: UploadFile,
+    supersedes_document_id: str | None = None,
+    chunking_strategy: str | None = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+) -> DocumentUploadResult:
     """Validate, store, and record one uploaded file. Never raises.
     `supersedes_document_id` only records intent - the flip happens later,
     once this new upload successfully indexes."""
@@ -140,7 +146,10 @@ async def save_upload(upload: UploadFile, supersedes_document_id: str | None = N
 
     # Phase 26: index immediately - chunk, embed, write to the vector
     # store - as part of the same upload call, not a separate step.
-    index_outcome = await _index_now(document_id, file_path)
+    index_outcome = await _index_now(
+        document_id, file_path,
+        chunking_strategy=chunking_strategy, chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+    )
 
     return DocumentUploadResult(
         filename=upload.filename,
@@ -158,12 +167,25 @@ async def save_upload(upload: UploadFile, supersedes_document_id: str | None = N
     )
 
 
-async def _index_now(document_id: str, file_path) -> dict:
-    """Chunk/embed/index a just-uploaded file with default settings. Never
+async def _index_now(
+    document_id: str,
+    file_path,
+    chunking_strategy: str | None = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+) -> dict:
+    """Chunk/embed/index a just-uploaded file - chunking_strategy/chunk_size/
+    chunk_overlap default to .env's CHUNK_DEFAULT_* when not given. Never
     raises - a failure here still leaves the file uploaded, just not
     indexed (status becomes 'failed' on the document row)."""
     try:
-        return await pipeline.index_document(document_id, str(file_path))
+        return await pipeline.index_document(
+            document_id,
+            str(file_path),
+            chunking_strategy=chunking_strategy,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
     except Exception as error:
         logger.error("Indexing failed for document %s: %s: %s", document_id, type(error).__name__, error)
         await get_db_gateway().metadata_store().update_status(document_id, "failed", str(error))
@@ -171,15 +193,26 @@ async def _index_now(document_id: str, file_path) -> dict:
 
 
 async def save_uploads(
-    uploads: list[UploadFile], supersedes_document_id: str | None = None
+    uploads: list[UploadFile],
+    supersedes_document_id: str | None = None,
+    chunking_strategy: str | None = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
 ) -> list[DocumentUploadResult]:
     """Validate, store, and record every uploaded file - one result per file.
-    `supersedes_document_id` only applies to a single-file upload (422 on a batch)."""
+    `supersedes_document_id` only applies to a single-file upload (422 on a batch);
+    chunking_strategy/chunk_size/chunk_overlap apply to every file in the batch."""
     # One at a time, not in parallel (asyncio.gather would do that) - simpler
     # to follow, and file uploads aren't the bottleneck here.
     results = []
     for upload in uploads:
-        result = await save_upload(upload, supersedes_document_id=supersedes_document_id)
+        result = await save_upload(
+            upload,
+            supersedes_document_id=supersedes_document_id,
+            chunking_strategy=chunking_strategy,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
         results.append(result)
     return results
 

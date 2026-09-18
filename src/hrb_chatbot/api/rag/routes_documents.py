@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile
 
 from src.hrb_chatbot.api.dependencies import json_error
 from src.hrb_chatbot.common import error_codes
+from src.hrb_chatbot.common.enums import ChunkingStrategy
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rate_limiting.rate_limiter import enforce_rate_limit
 from src.hrb_chatbot.models.documents import (
@@ -27,6 +28,13 @@ async def upload_documents(
         "with exactly one file - the old document is flipped to is_current=false once this one "
         "successfully indexes, not immediately on upload.",
     ),
+    chunking_strategy: ChunkingStrategy | None = Form(
+        default=None, description="Override auto-selected chunking - applies to every file in this batch."
+    ),
+    chunk_size: int | None = Form(default=None, ge=1, description="Override CHUNK_DEFAULT_SIZE for this batch."),
+    chunk_overlap: int | None = Form(
+        default=None, ge=0, description="Override CHUNK_DEFAULT_OVERLAP for this batch."
+    ),
 ):
     # Upload, chunk, embed, and index one or more PDFs in one call (Phase
     # 26) - a single file is just a list of one.
@@ -38,7 +46,13 @@ async def upload_documents(
             code=error_codes.VALIDATION_ERROR,
         )
 
-    results = await documents_service.save_uploads(files, supersedes_document_id=supersedes_document_id)
+    results = await documents_service.save_uploads(
+        files,
+        supersedes_document_id=supersedes_document_id,
+        chunking_strategy=chunking_strategy,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
 
     uploaded_count = 0
     duplicate_count = 0

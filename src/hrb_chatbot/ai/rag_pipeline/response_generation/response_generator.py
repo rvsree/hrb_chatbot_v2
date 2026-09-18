@@ -1,5 +1,6 @@
-"""Generates a grounded answer from retrieved chunks - the anti-hallucination
-instruction is folded into the question text (ask() has no system role)."""
+"""Generates a grounded answer from retrieved chunks - the role and the
+anti-hallucination instruction live in SYSTEM_PROMPT, sent as each
+provider's own native system message/parameter."""
 
 from src.hrb_chatbot.common.clients.llm_client.client_gateway import get_client_gateway
 from src.hrb_chatbot.common.clients.llm_client.openai_client import OpenAIChatClient
@@ -9,10 +10,11 @@ logger = get_logger("rag_pipeline.response_generator")
 
 NO_CONTEXT_ANSWER = "I don't have any information about that in the knowledge base."
 
-GROUNDED_QUESTION_TEMPLATE = (
-    "Answer the question using ONLY the context above. If the answer isn't "
-    "contained in the context, say you don't know rather than guessing - "
-    "never invent information not present in the context.\n\nQuestion: {query}"
+SYSTEM_PROMPT = (
+    "You are the HR benefits assistant for JPMC employees. Answer using ONLY "
+    "the context provided with each question - if the answer isn't contained "
+    "in that context, say you don't know rather than guessing. Never invent "
+    "information not present in the context."
 )
 
 
@@ -46,8 +48,9 @@ def generate_answer(
         chat_client = get_client_gateway().openai_chat()
 
     context = _build_context(chunks)
-    question = GROUNDED_QUESTION_TEMPLATE.format(query=query)
 
-    answer = chat_client.ask(question, context=context, temperature=temperature, max_tokens=max_tokens)
+    answer = chat_client.ask(
+        query, context=context, system_prompt=SYSTEM_PROMPT, temperature=temperature, max_tokens=max_tokens
+    )
     logger.info("Generated a %d-character answer from %d chunk(s)", len(answer), len(chunks))
     return {"answer": answer, "model_used": chat_client.model}

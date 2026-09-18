@@ -69,6 +69,39 @@ def test_single_valid_pdf_is_uploaded_and_indexed():
     assert result["chunks_indexed"] == 1
 
 
+def test_chunking_strategy_size_and_overlap_form_fields_reach_the_pipeline(monkeypatch):
+    captured = {}
+
+    async def _capturing_fake_index_document(document_id, file_path, **kwargs):
+        captured.update(kwargs)
+        return {
+            "document_id": document_id,
+            "action": "insert",
+            "chunks_indexed": 1,
+            "chunks_removed": 0,
+            "vector_db": "chromadb",
+            "chunking_strategy": "recursive",
+            "embedding_model": "text-embedding-3-small",
+            "embedding_dimension": 1536,
+            "chunk_size": 500,
+            "chunk_overlap": 50,
+            "document_version": 1,
+        }
+
+    monkeypatch.setattr(documents_service.pipeline, "index_document", _capturing_fake_index_document)
+
+    response = client.post(
+        "/v1/rag-ingestion/documents",
+        files=_pdf_file(),
+        data={"chunking_strategy": "recursive", "chunk_size": "500", "chunk_overlap": "50"},
+    )
+
+    assert response.status_code == 200
+    assert captured["chunking_strategy"] == "recursive"
+    assert captured["chunk_size"] == 500
+    assert captured["chunk_overlap"] == 50
+
+
 def test_batch_of_two_valid_pdfs_are_both_uploaded():
     files = [
         ("files", ("policy-a.pdf", io.BytesIO(f"%PDF-1.4 fake a {uuid.uuid4().hex}".encode()), "application/pdf")),

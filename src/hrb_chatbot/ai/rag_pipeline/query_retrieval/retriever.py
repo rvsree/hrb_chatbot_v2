@@ -12,7 +12,7 @@ from langchain_core.documents import Document
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
 from src.hrb_chatbot.common.clients.db_client.langchain_vector_store import COLLECTION_NAME, get_vector_store
 from src.hrb_chatbot.common.clients.llm_client.langchain_chat_model import GatewayChatModel
-from src.hrb_chatbot.common.config.settings import get_active_llm_provider
+from src.hrb_chatbot.common.config.settings import get_active_llm_provider, read_setting
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("rag_pipeline.retriever")
@@ -51,8 +51,8 @@ _STRUCTURED_QUERY_TRANSLATORS = {"chromadb": ChromaTranslator, "pinecone": Pinec
 
 # top_k always returns that many results even if irrelevant - vector search
 # has no "good enough" concept. Calibrated in Phase 4.5 (see docs/RAG-ROADMAP.md).
-MAX_CHROMA_DISTANCE = 1.1
-MIN_PINECONE_SCORE = 0.5
+MAX_CHROMA_DISTANCE = float(read_setting(None, "RAG_MAX_CHROMA_DISTANCE", 1.1))
+MIN_PINECONE_SCORE = float(read_setting(None, "RAG_MIN_PINECONE_SCORE", 0.5))
 
 
 def _meets_relevance_bar(score: float, provider_name: str) -> bool:

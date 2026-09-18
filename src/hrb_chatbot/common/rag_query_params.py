@@ -8,11 +8,11 @@ from dataclasses import dataclass
 @dataclass
 class RagQueryParams:
     query: str
-    top_k: int = 5
+    top_k: int | None = None
     vector_db: str | None = None
     search_strategy: str | None = None
     model_name: str | None = None
-    temperature: float = 0.0
+    temperature: float | None = None
     max_tokens: int | None = None
     use_multi_query: bool = False
     use_self_query: bool = False

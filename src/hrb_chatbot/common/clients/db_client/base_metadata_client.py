@@ -76,6 +76,9 @@ class BaseMetadataClient(ABC):
         doc_type: str | None,
         purpose: str | None,
         doc_classification: str | None,
+        effective_date: str | None = None,
+        audience: str | None = None,
+        confidentiality_level: str | None = None,
     ) -> None:
         """Record LLM-extracted document metadata (best-effort - any field may
         be None if extraction couldn't determine it). Never raises; a failure

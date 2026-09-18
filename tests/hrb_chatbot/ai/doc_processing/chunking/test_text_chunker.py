@@ -8,12 +8,17 @@ splitters. "semantic" needs a real embedding call, so it's not covered here
 real API cost inside pytest."""
 
 from src.hrb_chatbot.ai.doc_processing.chunking.text_chunker import (
+    DEFAULT_CHUNK_OVERLAP,
+    DEFAULT_CHUNK_SIZE,
+    LARGE_DOCUMENT_CHUNK_SIZE,
+    LARGE_DOCUMENT_MIN_LENGTH,
     chunk_fixed,
     chunk_html,
     chunk_markdown,
     chunk_none,
     chunk_recursive,
     chunk_text,
+    decide_chunk_size,
     decide_chunking_strategy,
 )
 
@@ -144,3 +149,47 @@ def test_chunk_text_rejects_an_unknown_strategy():
         assert False, "expected a ValueError"
     except ValueError as error:
         assert "not-a-real-strategy" in str(error)
+
+
+def test_decide_chunk_size_defaults_when_no_signal_applies():
+    text = "This is one sentence about JPMorgan Chase benefits policy. " * 40
+    assert decide_chunk_size(text) == DEFAULT_CHUNK_SIZE
+
+
+def test_decide_chunk_size_grows_to_fit_a_large_table_block():
+    table_content = "a" * 1500
+    # No newlines inside the tags - TABLE_BLOCK_PATTERN captures exactly
+    # what's between [TABLE] and [/TABLE], so this keeps the expected math simple.
+    text = f"Some intro text.\n\n[TABLE]{table_content}[/TABLE]"
+
+    assert decide_chunk_size(text) == len(table_content) + DEFAULT_CHUNK_OVERLAP
+
+
+def test_decide_chunk_size_ignores_a_table_smaller_than_the_default():
+    text = "Some intro text.\n\n[TABLE]\nsmall table\n[/TABLE]"
+    assert decide_chunk_size(text) == DEFAULT_CHUNK_SIZE
+
+
+def test_decide_chunk_size_grows_for_a_long_document():
+    text = "word " * (LARGE_DOCUMENT_MIN_LENGTH // 4)  # comfortably over the threshold
+    assert decide_chunk_size(text) == LARGE_DOCUMENT_CHUNK_SIZE
+
+
+def test_decide_chunk_size_takes_the_max_when_both_signals_apply():
+    table_content = "b" * (LARGE_DOCUMENT_CHUNK_SIZE + 500)  # bigger than either default candidate
+    padding = "word " * (LARGE_DOCUMENT_MIN_LENGTH // 4)
+    text = f"{padding}\n\n[TABLE]{table_content}[/TABLE]"
+
+    assert decide_chunk_size(text) == len(table_content) + DEFAULT_CHUNK_OVERLAP
+
+
+def test_chunk_text_auto_sizes_when_no_chunk_size_given():
+    table_content = "c" * 1500
+    text = f"Some intro text.\n\n[TABLE]\n{table_content}\n[/TABLE]"
+
+    # Forced onto "recursive" so chunk_size is actually used (the table
+    # block alone is short text, so auto-strategy would otherwise pick "none").
+    chunks = chunk_text(text, chunking_strategy="recursive")
+
+    assert len(chunks) == 1
+    assert table_content in chunks[0]
