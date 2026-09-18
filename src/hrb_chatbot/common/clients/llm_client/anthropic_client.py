@@ -1,10 +1,6 @@
-"""Anthropic client: chat and tool calling with Claude models.
-
-Base URL is host-only (https://api.anthropic.com, no "/v1" - the library adds
-the full path itself). Temperature is deprecated by Anthropic (newer models
-reject any value but 1.0), so this client accepts `temperature` for interface
-parity with OpenAI but never sends it - see `output_config.effort` instead.
-"""
+"""Anthropic client (chat + tools) - base URL is host-only, no "/v1".
+temperature is accepted for interface parity but never sent - Anthropic
+deprecated it; newer models reject anything but 1.0."""
 
 import anthropic
 

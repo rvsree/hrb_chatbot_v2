@@ -549,3 +549,56 @@ reasoning through what CI actually has available, not after a broken
 pipeline run, is itself worth mentioning - it's the same "measure/reason
 before acting" discipline as the performance question earlier in this
 document.
+
+## 7. Why indexing moved off LlamaIndex onto LangChain's own `index()`
+
+### "Phase 14.2 deliberately split libraries one-per-pipeline-stage - LlamaIndex specifically for indexing. What changed?"
+
+Phase 17 (2026-09-14) replaced that write path with LangChain's own
+documented indexing API (`langchain.indexes.index()` + `SQLRecordManager`).
+The reason wasn't "LlamaIndex was wrong" - it's that this project's
+retrieval side was already 100% LangChain (Phase 14.2's own search
+sub-phase), and LangChain's `index()` gives two real, previously-missing
+capabilities for free: **skip-if-unchanged** (re-indexing a document whose
+content hasn't actually changed no longer re-embeds or re-writes it) and
+**real stale-chunk cleanup** via `cleanup="incremental"`, instead of this
+project hand-rolling both.
+
+**Worth being honest about, not glossed over**: the common real-world
+pattern is actually the *opposite* split - LlamaIndex for ingestion/
+indexing (its documented strength), LangChain for orchestration. This
+change trades that division-of-labor argument for "one fewer library in
+the pipeline, plus real dedup." It's revisited as an open action item, not
+settled permanently - see `docs/BACKLOG.md`'s "LangChain vs. LlamaIndex"
+entry.
+
+**One real mechanical consequence worth naming**: LangChain's `index()`
+computes each chunk's id itself (by default, a hash of content), and
+doesn't let a caller supply an arbitrary id directly - only a custom
+`key_encoder` callable. This project uses that callable to keep chunk ids
+in almost their old shape (`document_id:chunk_index`), with a short
+content hash appended (`vector_indexer.py::build_chunk_id()`) - close
+enough to the original scheme that this project's own delete/supersede
+logic barely changed, while still giving `index()` a real, changing signal
+to detect "this chunk's content is different now" by.
+
+## 8. Why does Pinecone reads go through `_TextBackfillPineconeIndex`?
+
+### "`common/clients/db_client/langchain_vector_store.py` wraps the raw Pinecone index in something before handing it to LangChain - why?"
+
+LangChain's `PineconeVectorStore` expects chunk text under a plain `"text"`
+metadata key, and its MMR search path does an unguarded
+`metadata.pop("text")` - confirmed live, a `KeyError`, not the graceful
+skip its similarity-search path uses. That key is only there for chunks
+written by LangChain's own `add_documents()` (Phase 17 onward). Older
+vectors in the same namespace used two different conventions: the
+hand-written indexer stored text under `"document"`
+(`pinecone_client.py`), and the LlamaIndex-based one (before Phase 17)
+stored it inside a `"_node_content"` JSON blob.
+
+`_TextBackfillPineconeIndex` wraps the real `pinecone.Index` and backfills
+a `"text"` key from whichever of those two older shapes is present (empty
+string as the last resort) on every query result, so LangChain's unguarded
+pop never raises regardless of which era wrote a given chunk. It's a
+read-compatibility shim for old data only - new writes already carry a
+real `"text"` key and need no backfill.

@@ -1,11 +1,6 @@
-"""ChromaDB client - the vector store this project indexes into.
-
-Two modes via CHROMA_DB_MODE: "persistent" (embedded, local folder, default)
-or "http" (a separately-running Chroma server). The real client is built
-lazily in get_client(), not __init__, because constructing an HttpClient can
-handshake over the network - importing/constructing this class must stay
-instant even though health_check() itself always makes a real call.
-"""
+"""ChromaDB client. Two modes via CHROMA_DB_MODE ("persistent"/"http"); the
+real client is built lazily in get_client(), not __init__, since HttpClient
+can handshake over the network - constructing this class must stay instant."""
 
 import re
 

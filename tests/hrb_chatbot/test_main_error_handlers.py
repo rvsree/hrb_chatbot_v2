@@ -35,11 +35,31 @@ async def test_retry_after_becomes_a_real_header_not_a_body_field():
     assert "Retry-After" not in body
 
 
-async def test_a_non_429_http_exception_gets_a_generic_code():
+async def test_a_401_is_reshaped_with_the_unauthenticated_code():
+    exc = HTTPException(status_code=401, detail="Missing required identity header(s): X-Role.")
+
+    response = await http_exception_handler(request=None, exc=exc)
+
+    assert response.status_code == 401
+    body = json.loads(response.body)
+    assert body["code"] == "UNAUTHENTICATED"
+
+
+async def test_a_403_is_reshaped_with_the_forbidden_code():
     exc = HTTPException(status_code=403, detail="Forbidden.")
 
     response = await http_exception_handler(request=None, exc=exc)
 
     assert response.status_code == 403
+    body = json.loads(response.body)
+    assert body["code"] == "FORBIDDEN"
+
+
+async def test_an_http_exception_with_no_specific_mapping_gets_a_generic_code():
+    exc = HTTPException(status_code=418, detail="I'm a teapot.")
+
+    response = await http_exception_handler(request=None, exc=exc)
+
+    assert response.status_code == 418
     body = json.loads(response.body)
     assert body["code"] == "INTERNAL_ERROR"

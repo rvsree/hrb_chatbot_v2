@@ -1,9 +1,5 @@
-"""OpenRouter client: one key reaching models from many vendors, via OpenAI's
-API shape (this reuses the openai library, just with a different base URL).
-
-Model names need the vendor prefix (e.g. "anthropic/claude-haiku-4-5"); there's
-no per-request workspace header, so the health check calls GET /key instead.
-"""
+"""OpenRouter client - one key, many vendors, via OpenAI's own API shape
+(different base_url). Model names need a vendor prefix, e.g. "anthropic/claude-haiku-4-5"."""
 
 import requests
 from openai import OpenAI

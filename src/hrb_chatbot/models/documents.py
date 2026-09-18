@@ -4,9 +4,7 @@ Per-file results, not one status for the whole batch: one bad file in a
 batch shouldn't fail the good ones - each gets its own status and reason.
 """
 
-from pydantic import BaseModel, Field, model_validator
-
-from src.hrb_chatbot.common.enums import VectorDB
+from pydantic import BaseModel, Field
 
 # A benefits PDF is a handful of pages, not a data dump - 20MB is generous
 # headroom over anything in resources/kb_docs/ today, not an arbitrary number.
@@ -49,10 +47,16 @@ class DocumentUploadResult(BaseModel):
         "for 'rejected'."
     )
     document_version: int | None = Field(
-        None, description="1 on a fresh upload, or the existing document's current version on a "
-        "'duplicate' match - null if rejected. Increments on each successful (re-)index, see "
-        "DocumentRecord.document_version."
+        None, description="1 after a fresh upload's first successful index (0 if indexing failed), "
+        "or the existing document's current version on a 'duplicate' match - null if rejected. "
+        "Increments on each subsequent successful re-index, see DocumentRecord.document_version."
     )
+    action: str | None = Field(
+        None, description="'insert' or 'update' - Phase 26: upload now indexes immediately, "
+        "so this reports the indexing outcome too. Null for 'duplicate'/'rejected'."
+    )
+    chunks_indexed: int | None = Field(None, description="How many chunks were written. Null if not indexed.")
+    chunks_removed: int | None = Field(None, description="Stale chunks removed by this index. Null if not indexed.")
 
 
 class DocumentUploadResponse(BaseModel):
@@ -85,7 +89,8 @@ class DocumentRecord(BaseModel):
         ),
     )
     document_version: int = Field(
-        1, description="Starts at 1 on upload, increments by 1 on each successful (re-)index."
+        0, description="0 until the first successful index, then 1 - increments by 1 on each "
+        "subsequent successful re-index."
     )
     file_size_bytes: int = Field(0, description="The uploaded file's size in bytes.")
     chunk_count: int = Field(
@@ -143,6 +148,14 @@ class DocumentRecord(BaseModel):
         "not a controlled vocabulary."
     )
     purpose: str | None = Field(None, description="A short statement of the document's scope/purpose, if determinable.")
+    doc_classification: str | None = Field(
+        None,
+        description=(
+            "The specific topic this document covers, in the document's own terms (e.g. '401k', "
+            "'health benefits', 'leave policy') - the extraction step's best guess, not a controlled "
+            "vocabulary, same shape as doc_type."
+        ),
+    )
 
 
 class DocumentListResponse(BaseModel):
@@ -165,83 +178,11 @@ class DocumentDeleteResponse(BaseModel):
     )
 
 
-class IndexRequest(BaseModel):
-    # Optional per-call overrides for POST /rag/documents/{id}/index.
+class DocumentDeleteAllResponse(BaseModel):
+    """What DELETE /rag/documents (no id, Phase 27) returns - deletes every
+    document, same full-delete semantics as DocumentDeleteResponse."""
 
-    vector_db: VectorDB | None = Field(None, description="Override RAG_VECTOR_DB for this call.")
-    chunking_strategy: str | None = Field(
-        None,
-        max_length=20,
-        description=(
-            "Which chunking technique to use: 'fixed', 'recursive' (the default when auto-selected), "
-            "'semantic', 'markdown', 'html', or 'none' (whole document, no splitting). If omitted, "
-            "one is auto-selected based on the document's content - see "
-            "ai/doc_processing/chunking/text_chunker.py's decide_chunking_strategy()."
-        ),
-    )
-    chunk_size: int | None = Field(
-        None, ge=100, le=8000, description="Override the default chunk size, in characters."
-    )
-    chunk_overlap: int | None = Field(
-        None,
-        ge=0,
-        le=8000,
-        description=(
-            "Override the default chunk overlap, in characters. The upper bound matches "
-            "chunk_size's own maximum - an overlap larger than any allowed chunk_size can never "
-            "be valid, so it's rejected here directly rather than only by the "
-            "chunk_overlap-must-be-smaller-than-chunk_size check below, which only runs when "
-            "both fields are given together."
-        ),
-    )
-    embedding_model: str | None = Field(
-        None,
-        max_length=100,
-        description=(
-            "Override OPENAI_EMBED_MODEL for this call, e.g. 'text-embedding-3-large'. "
-            "Must produce the same dimension the target vector store's index was "
-            "created with, or the upsert fails - this is not cross-checked."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def _chunk_overlap_must_be_smaller_than_chunk_size(self) -> "IndexRequest":
-        if self.chunk_size is not None and self.chunk_overlap is not None:
-            if self.chunk_overlap >= self.chunk_size:
-                raise ValueError(
-                    f"chunk_overlap ({self.chunk_overlap}) must be smaller than "
-                    f"chunk_size ({self.chunk_size})"
-                )
-        return self
+    documents_deleted: int = Field(..., description="How many documents were deleted.")
+    chunks_removed: int = Field(..., description="Total vectors deleted across all documents.")
 
 
-class IndexResponse(BaseModel):
-    """What POST /rag/documents/{id}/index returns."""
-
-    document_id: str
-    action: str = Field(
-        ..., description="'insert' if this document had never been indexed, 'update' if it had."
-    )
-    chunks_indexed: int = Field(..., description="How many chunks were written this time.")
-    chunks_removed: int = Field(
-        ...,
-        description=(
-            "Stale chunks from a previous index that no longer exist in the new "
-            "set, and were deleted rather than left orphaned. Always 0 on 'insert'."
-        ),
-    )
-    vector_db: str = Field(..., description="Which vector store this call actually wrote to.")
-    chunking_strategy: str = Field(
-        ..., description="Which chunking technique actually ran - explicit, or auto-selected."
-    )
-    embedding_model: str = Field(..., description="Which embedding model this call actually used.")
-    embedding_dimension: int = Field(
-        ..., description="The real length of the embeddings this call produced - see "
-        "DocumentRecord.embedding_dimension for why this is measured, not looked up."
-    )
-    chunk_size: int = Field(..., description="The chunk size actually used for this call.")
-    chunk_overlap: int = Field(..., description="The chunk overlap actually used for this call.")
-    document_version: int = Field(
-        ..., description="This document's version after this call - increments by 1 on every "
-        "successful index, starting from 1 on upload."
-    )

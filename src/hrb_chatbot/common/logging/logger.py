@@ -1,9 +1,5 @@
-"""Sets up logging so every file in the project prints messages the same way.
-
-get_logger(name) factory used throughout the project. Distinct from
-log_helper.py, which formats a tag onto an existing logger's message rather
-than creating one.
-"""
+"""Sets up logging so every file prints messages the same way - get_logger(name)
+factory, distinct from log_helper.py's message-tagging."""
 
 import logging
 import sys

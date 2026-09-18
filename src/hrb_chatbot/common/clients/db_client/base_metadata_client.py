@@ -1,11 +1,5 @@
-"""The shared interface every document-metadata store implements.
-
-Holds one row per uploaded document (filename, path, status) - separate from
-the vector store, which only knows about chunks. chunk_ids is tracked here,
-not in the vector store, so re-indexing can delete a document's stale chunks
-before writing new ones; the vector store has no concept of "all chunks
-belonging to one document" to ask for later.
-"""
+"""Shared interface every document-metadata store implements - one row per
+document; chunk_ids tracked here so re-indexing can find stale chunks to delete."""
 
 from abc import ABC, abstractmethod
 
@@ -26,20 +20,15 @@ class BaseMetadataClient(ABC):
         content_hash: str,
         supersedes: str | None = None,
     ) -> None:
-        """Insert one row for a newly-uploaded document: status 'uploaded',
-        document_version 1, is_current true. `supersedes` records - at upload
-        time, before this document is even indexed - that it's intended to
-        replace an existing document once it successfully indexes; the actual
-        supersede (flipping the old document to is_current=false) happens in
-        record_successful_index(), not here, so there's never a window where
-        neither version's content is live."""
+        """Insert one row for a newly-uploaded document (status 'uploaded',
+        version 1, is_current true). `supersedes` only records intent here -
+        the actual flip happens later, in record_successful_index()."""
         raise NotImplementedError
 
     @abstractmethod
     async def find_by_content_hash(self, content_hash: str) -> dict | None:
-        """Return the most recent document with this exact content hash, or None if
-        no upload has ever had this content before. The dedup check - same bytes,
-        any filename, means "this is the same document," not a fresh one."""
+        """Return the most recent document with this exact content hash, or
+        None - same bytes/any filename means "same document," not a fresh one."""
         raise NotImplementedError
 
     @abstractmethod
@@ -66,23 +55,16 @@ class BaseMetadataClient(ABC):
         chunk_size: int,
         chunk_overlap: int,
     ) -> int:
-        """One update for everything a successful index run changes: chunk_ids,
-        chunk_count, which embedding model/vector store/chunk settings produced
-        them, status -> 'indexed', error_message cleared, and document_version
-        incremented by one. Also replaces this document's rows in the `chunks`
-        table (delete-then-insert, matching the vector store's own stale-chunk
-        cleanup). Returns the new document_version."""
+        """One update for everything a successful index changes: chunk_ids,
+        counts, model/store/chunk settings, status -> 'indexed', version += 1
+        - plus the `chunks` table (delete-then-insert). Returns the new version."""
         raise NotImplementedError
 
     @abstractmethod
     async def mark_superseded(self, document_id: str, superseded_by: str) -> list[str]:
-        """Flip an existing document to is_current=false (both its own row and
-        its rows in `chunks`), recording which new document replaced it.
-        Returns its chunk_ids (if any) so the caller can also flip the
-        matching vectors' is_current metadata in the vector store - this
-        method only ever touches SQL, never the vector store directly.
-        Called once the *new* document has successfully indexed, never at
-        upload time - see create_document()'s `supersedes` param for why."""
+        """Flip an existing document to is_current=false (its row + `chunks`
+        rows), recording its replacement. Returns chunk_ids so the caller can
+        also flip the vector store - this method only ever touches SQL."""
         raise NotImplementedError
 
     @abstractmethod
@@ -93,6 +75,7 @@ class BaseMetadataClient(ABC):
         department: str | None,
         doc_type: str | None,
         purpose: str | None,
+        doc_classification: str | None,
     ) -> None:
         """Record LLM-extracted document metadata (best-effort - any field may
         be None if extraction couldn't determine it). Never raises; a failure
@@ -106,9 +89,8 @@ class BaseMetadataClient(ABC):
 
     @abstractmethod
     async def delete_document(self, document_id: str) -> None:
-        """Remove one document's row. A no-op, not an error, if the id doesn't
-        exist - the caller (documents_service.delete_document()) is responsible
-        for the 404 check before this is ever called."""
+        """Remove one document's row - a no-op if the id doesn't exist (the
+        404 check is documents_service.delete_document()'s job, not this one's)."""
         raise NotImplementedError
 
     @abstractmethod

@@ -1,9 +1,5 @@
-"""A simple in-memory rate limiter - fixed window, one window per client.
-
-Single-process only: resets on restart and stops being correct once this
-app runs as more than one instance - a real distributed store (Redis) is
-the fix then, not a bigger dict.
-"""
+"""In-memory rate limiter - fixed window, one per client. Single-process
+only; a real distributed store (Redis) is the fix once this runs as more than one instance."""
 
 import time
 

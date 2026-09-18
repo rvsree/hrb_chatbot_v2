@@ -1,10 +1,6 @@
-"""OpenAI clients: one for chat (and tool calling), one for embeddings.
-
-Base URL must include "/v1" (https://api.openai.com/v1) - unlike Anthropic,
-the OpenAI library only adds the last path segment, so omitting "/v1" 404s.
-Organization/Project (both optional) tag request cost when one key is shared
-by several apps - OpenAI's rough equivalent of a "workspace".
-"""
+"""OpenAI clients: chat (+ tools) and embeddings. Base URL must include "/v1"
+- unlike Anthropic, omitting it 404s. Organization/Project (optional) tag
+request cost when one key is shared across apps."""
 
 from openai import OpenAI
 

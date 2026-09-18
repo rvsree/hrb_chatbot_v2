@@ -273,7 +273,7 @@ Full list including IAM role ARNs and Secrets Manager entries:
 
 - The user is a Java-background developer explicitly learning Python and
   RAG concepts - code was refactored this session away from dense
-  Python idioms (generator expressions in `sum()`/`all()`, terse
+  Python idioms (response_generator expressions in `sum()`/`all()`, terse
   ternaries) toward explicit loops/if-else, with comments explaining the
   Java-equivalent concept where one exists. Keep matching that density
   and that audience in new code, not reverting to terser idioms.

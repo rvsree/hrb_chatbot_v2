@@ -1,46 +1,49 @@
 """Tests for retrieve_chunks() (ai/rag_pipeline/query_retrieval/retriever.py).
 
-retriever.py now builds a real LangChain Chroma/PineconeVectorStore around
-this project's vector store client (Phase 4, LangChain) - it can no longer
-be tested against conftest.py's plain-dict FakeVectorStore the way the old
-raw-client version could (same reasoning test_vector_indexer.py's real
-EphemeralChromaVectorStore was needed in Phase 3). Uses a real, ephemeral
-(in-memory, zero network) chromadb collection, plus a FakeEmbeddings that
+retriever.py builds a real LangChain Chroma/PineconeVectorStore around this
+project's vector store client (Phase 4, LangChain; the shared builder moved
+to common/clients/db_client/langchain_vector_store.py in Phase 17) - it
+can no longer be tested against conftest.py's plain-dict FakeVectorStore the
+way the old raw-client version could. Uses a real, ephemeral (in-memory,
+zero network) chromadb collection, plus conftest.py's FakeEmbeddings, which
 returns hand-registered vectors instead of calling OpenAI - real vector
-similarity math runs, but nothing here spends real API cost or needs a key,
-same reasoning this project already applies elsewhere.
+similarity math runs, but nothing here spends real API cost or needs a key.
 
-Each test gets its own uuid-suffixed collection name (monkeypatched onto
-retriever.COLLECTION_NAME) - ephemeral chromadb clients turned out to still
-share collection storage by literal name within one test process (found the
-hard way in Phase 3's test_vector_indexer.py), so a fresh client alone
-isn't enough isolation.
+Each test gets its own uuid-suffixed collection name, and patches
+retriever.get_vector_store directly to return a Chroma object built from
+that collection + FakeEmbeddings - simpler than patching the pieces
+get_vector_store would otherwise use to build one itself, and correct
+regardless of which module actually owns that construction.
 """
 
 import uuid
 
 import chromadb
-from langchain_core.embeddings import Embeddings
+from langchain_chroma import Chroma
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages.ai import AIMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 
 from src.hrb_chatbot.ai.rag_pipeline.query_retrieval import retriever
-from tests.conftest import FakeDBGateway, FakeMetadataStore
+from tests.conftest import FakeDBGateway, FakeEmbeddings, FakeMetadataStore
 
 
-class FakeEmbeddings(Embeddings):
-    """Returns whichever vector was registered for exact text via
-    register() - a small default otherwise. No network call."""
+class _FakeLLM(BaseChatModel):
+    """Stands in for GatewayChatModel in these tests - returns one fixed
+    response regardless of input, so MultiQueryRetriever/SelfQueryRetriever
+    can be tested without a real LLM call. `provider` is accepted (matching
+    GatewayChatModel(provider=...)'s call shape) but ignored."""
 
-    def __init__(self):
-        self._vectors: dict[str, list[float]] = {}
+    response_text: str = ""
+    provider: str = "openai"
 
-    def register(self, text: str, vector: list[float]) -> None:
-        self._vectors[text] = vector
+    @property
+    def _llm_type(self) -> str:
+        return "fake"
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return [self._vectors.get(text, [0.0, 0.0]) for text in texts]
-
-    def embed_query(self, text: str) -> list[float]:
-        return self._vectors.get(text, [0.0, 0.0])
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        generation = ChatGeneration(message=AIMessage(content=self.response_text))
+        return ChatResult(generations=[generation])
 
 
 class FakeVectorStoreClient:
@@ -73,17 +76,25 @@ def _seed_collection(fake_vector_store_client, collection_name: str, chunks: lis
 def _setup(monkeypatch):
     """Common setup every test needs: a fresh, isolated collection name, a
     real ephemeral Chroma client, a fake metadata store, and a fake
-    embeddings object retriever.py will use instead of calling OpenAI."""
-    collection_name = f"test_{uuid.uuid4().hex}"
-    monkeypatch.setattr(retriever, "COLLECTION_NAME", collection_name)
+    embeddings object retriever.py will use instead of calling OpenAI.
 
+    retriever.get_vector_store is patched directly to a fixed (store,
+    "chromadb") pair, built the same way the real get_vector_store() would
+    for the chromadb branch - just with FakeEmbeddings instead of a real
+    OpenAI call."""
+    collection_name = f"test_{uuid.uuid4().hex}"
     vector_store_client = FakeVectorStoreClient()
     metadata_store = FakeMetadataStore()
     gateway = FakeDBGateway(vector_store=vector_store_client, metadata_store=metadata_store)
     monkeypatch.setattr(retriever, "get_db_gateway", lambda: gateway)
 
     embeddings = FakeEmbeddings()
-    monkeypatch.setattr(retriever, "_embeddings", lambda: embeddings)
+    langchain_store = Chroma(
+        client=vector_store_client.get_client(), collection_name=collection_name, embedding_function=embeddings
+    )
+    monkeypatch.setattr(
+        retriever, "get_vector_store", lambda vector_db, embedding_model=None: (langchain_store, "chromadb")
+    )
 
     return collection_name, vector_store_client, metadata_store, embeddings
 
@@ -105,7 +116,7 @@ async def test_retrieved_chunks_have_their_source_filename_attached(monkeypatch)
     )
     embeddings.register("How much parental leave?", [1.0, 0.0])
 
-    chunks = await retriever.retrieve_chunks(["How much parental leave?"], top_k=5)
+    chunks, applied_filter = await retriever.retrieve_chunks("How much parental leave?", top_k=5)
 
     assert len(chunks) == 1
     assert chunks[0]["filename"] == "policy.pdf"
@@ -113,24 +124,6 @@ async def test_retrieved_chunks_have_their_source_filename_attached(monkeypatch)
     assert chunks[0]["chunk_index"] == 0
     assert chunks[0]["text"] == "Parental leave is 16 weeks."
     assert chunks[0]["score"] is not None
-
-
-async def test_the_same_chunk_found_by_two_subqueries_is_not_duplicated(monkeypatch):
-    collection_name, vector_store_client, metadata_store, embeddings = _setup(monkeypatch)
-    await metadata_store.create_document("doc-1", "policy.pdf", "data/uploads/doc-1/policy.pdf")
-    _seed_collection(
-        vector_store_client,
-        collection_name,
-        [{"id": "doc-1:0", "text": "chunk text", "embedding": [1.0, 0.0], "metadata": {"document_id": "doc-1", "chunk_index": 0}}],
-    )
-    # Both sub-queries embed to the same vector, so both "find" the one seeded
-    # chunk - the dedup-by-(document_id, chunk_index) logic must collapse this to one.
-    embeddings.register("sub-question A", [1.0, 0.0])
-    embeddings.register("sub-question B", [1.0, 0.0])
-
-    chunks = await retriever.retrieve_chunks(["sub-question A", "sub-question B"], top_k=5)
-
-    assert len(chunks) == 1
 
 
 async def test_a_chunk_whose_document_metadata_is_missing_gets_a_placeholder_filename(monkeypatch):
@@ -144,7 +137,7 @@ async def test_a_chunk_whose_document_metadata_is_missing_gets_a_placeholder_fil
     )
     embeddings.register("any question", [1.0, 0.0])
 
-    chunks = await retriever.retrieve_chunks(["any question"], top_k=5)
+    chunks, applied_filter = await retriever.retrieve_chunks("any question", top_k=5)
 
     assert chunks[0]["filename"] == "unknown"
 
@@ -166,7 +159,7 @@ async def test_superseded_chunks_are_excluded_from_retrieval(monkeypatch):
     )
     embeddings.register("policy question", [1.0, 0.0])
 
-    chunks = await retriever.retrieve_chunks(["policy question"], top_k=5)
+    chunks, applied_filter = await retriever.retrieve_chunks("policy question", top_k=5)
 
     document_ids = [chunk["document_id"] for chunk in chunks]
     assert "doc-old" not in document_ids
@@ -187,7 +180,7 @@ async def test_chunks_with_no_is_current_field_at_all_are_still_retrieved(monkey
     )
     embeddings.register("any question", [1.0, 0.0])
 
-    chunks = await retriever.retrieve_chunks(["any question"], top_k=5)
+    chunks, applied_filter = await retriever.retrieve_chunks("any question", top_k=5)
 
     assert len(chunks) == 1
     assert chunks[0]["document_id"] == "doc-legacy"
@@ -216,7 +209,7 @@ async def test_a_chunk_worse_than_the_relevance_bar_is_excluded(monkeypatch):
     )
     embeddings.register("some question", [1.0, 0.0])
 
-    chunks = await retriever.retrieve_chunks(["some question"], top_k=5)
+    chunks, applied_filter = await retriever.retrieve_chunks("some question", top_k=5)
 
     document_ids = [chunk["document_id"] for chunk in chunks]
     assert "doc-relevant" in document_ids
@@ -225,7 +218,7 @@ async def test_a_chunk_worse_than_the_relevance_bar_is_excluded(monkeypatch):
 
 async def test_when_every_retrieved_chunk_fails_the_relevance_bar_result_is_empty(monkeypatch):
     """Confirms the empty-list path actually triggers - generate_answer()'s
-    own no-chunks short-circuit (response_generation/generator.py) then
+    own no-chunks short-circuit (response_generation/response_generator.py) then
     kicks in downstream, skipping the LLM call entirely rather than
     generating from irrelevant context."""
     collection_name, vector_store_client, metadata_store, embeddings = _setup(monkeypatch)
@@ -237,7 +230,7 @@ async def test_when_every_retrieved_chunk_fails_the_relevance_bar_result_is_empt
     )
     embeddings.register("some question nothing indexed answers", [1.0, 0.0])
 
-    chunks = await retriever.retrieve_chunks(["some question nothing indexed answers"], top_k=5)
+    chunks, applied_filter = await retriever.retrieve_chunks("some question nothing indexed answers", top_k=5)
 
     assert chunks == []
 
@@ -255,7 +248,7 @@ async def test_top_k_limits_how_many_chunks_come_back(monkeypatch):
     )
     embeddings.register("a question", [1.0, 0.0])
 
-    chunks = await retriever.retrieve_chunks(["a question"], top_k=2)
+    chunks, applied_filter = await retriever.retrieve_chunks("a question", top_k=2)
 
     assert len(chunks) == 2
 
@@ -273,7 +266,7 @@ async def test_mmr_search_strategy_returns_chunks_with_a_null_score(monkeypatch)
     )
     embeddings.register("a question", [1.0, 0.0])
 
-    chunks = await retriever.retrieve_chunks(["a question"], top_k=5, search_strategy="mmr")
+    chunks, applied_filter = await retriever.retrieve_chunks("a question", top_k=5, search_strategy="mmr")
 
     assert len(chunks) == 1
     assert chunks[0]["score"] is None
@@ -283,7 +276,115 @@ async def test_unknown_search_strategy_raises_value_error(monkeypatch):
     _setup(monkeypatch)
 
     try:
-        await retriever.retrieve_chunks(["a question"], top_k=5, search_strategy="not-a-real-strategy")
+        await retriever.retrieve_chunks("a question", top_k=5, search_strategy="not-a-real-strategy")
         assert False, "expected a ValueError"
     except ValueError as error:
         assert "not-a-real-strategy" in str(error)
+
+
+# --- Phase 20: MultiQueryRetriever + Self-Query Retriever -------------------
+
+# Self-Query's own filter-language: eq(field, value) - what its LLM is asked
+# to answer with, wrapped in the markdown-JSON shape its own output parser
+# expects (parse_and_check_json_markdown - confirmed by reading the real
+# parser, see StructuredQueryOutputParser.parse).
+_SELF_QUERY_FILTER_RESPONSE = (
+    '```json\n{\n  "query": "401k vesting schedule",\n  '
+    '"filter": "eq(\\"doc_classification\\", \\"401k\\")"\n}\n```'
+)
+_SELF_QUERY_NO_FILTER_RESPONSE = '```json\n{\n  "query": "how much PTO do I get",\n  "filter": "NO_FILTER"\n}\n```'
+
+
+def test_combine_with_current_only_returns_the_bare_filter_when_nothing_extra():
+    assert retriever._combine_with_current_only(None) == retriever.CURRENT_CHUNKS_ONLY
+
+
+def test_combine_with_current_only_ands_extra_filter_with_is_current():
+    """The spec's own hard rule: is_current must never be overridable by a
+    parsed filter - a plain dict merge could let a same-shaped key silently
+    replace CURRENT_CHUNKS_ONLY, so this must $and them instead."""
+    extra = {"doc_classification": {"$eq": "401k"}}
+    combined = retriever._combine_with_current_only(extra)
+    assert combined == {"$and": [retriever.CURRENT_CHUNKS_ONLY, extra]}
+
+
+async def test_search_multi_query_merges_and_dedupes_across_rewritten_queries(monkeypatch):
+    collection_name, vector_store_client, metadata_store, embeddings = _setup(monkeypatch)
+    await metadata_store.create_document("doc-1", "policy.pdf", "data/uploads/doc-1/policy.pdf")
+    _seed_collection(
+        vector_store_client,
+        collection_name,
+        [{"id": "doc-1:0", "text": "chunk text", "embedding": [1.0, 0.0], "metadata": {"document_id": "doc-1", "chunk_index": 0}}],
+    )
+    # MultiQueryRetriever asks the LLM to rewrite the question into several
+    # lines; each rewritten line is embedded and searched for separately.
+    embeddings.register("rewritten question A", [1.0, 0.0])
+    embeddings.register("rewritten question B", [1.0, 0.0])
+    monkeypatch.setattr(
+        retriever, "GatewayChatModel", lambda provider="openai": _FakeLLM(response_text="rewritten question A\nrewritten question B")
+    )
+
+    chunks = retriever.search_multi_query("original question", top_k=5)
+
+    # Both rewritten queries embed to the same vector as the one seeded
+    # chunk, so both "find" it - dedup must still collapse this to one.
+    assert len(chunks) == 1
+    assert chunks[0]["document_id"] == "doc-1"
+    assert chunks[0]["score"] is None  # MultiQueryRetriever never returns a score
+
+
+async def test_parse_self_query_filter_returns_the_models_own_parsed_filter(monkeypatch):
+    collection_name, vector_store_client, metadata_store, embeddings = _setup(monkeypatch)
+    monkeypatch.setattr(retriever, "GatewayChatModel", lambda provider="openai": _FakeLLM(response_text=_SELF_QUERY_FILTER_RESPONSE))
+    store, provider = retriever.get_vector_store(None)
+
+    applied_filter = retriever._parse_self_query_filter(store, provider, "what's my 401k vesting schedule", "openai")
+
+    assert applied_filter == {"doc_classification": {"$eq": "401k"}}
+
+
+async def test_parse_self_query_filter_returns_none_when_the_model_finds_nothing_to_filter_on(monkeypatch):
+    collection_name, vector_store_client, metadata_store, embeddings = _setup(monkeypatch)
+    monkeypatch.setattr(retriever, "GatewayChatModel", lambda provider="openai": _FakeLLM(response_text=_SELF_QUERY_NO_FILTER_RESPONSE))
+    store, provider = retriever.get_vector_store(None)
+
+    applied_filter = retriever._parse_self_query_filter(store, provider, "how much PTO do I get", "openai")
+
+    assert applied_filter is None
+
+
+async def test_retrieve_chunks_use_self_query_excludes_superseded_chunks_even_when_a_filter_is_parsed(monkeypatch):
+    """The core correctness case this phase's spec calls out explicitly:
+    is_current must stay under this project's own control - a superseded
+    chunk that also matches the parsed doc_classification filter must still
+    be excluded, not let through because it satisfies the parsed filter."""
+    collection_name, vector_store_client, metadata_store, embeddings = _setup(monkeypatch)
+    await metadata_store.create_document("doc-old", "401k-v1.pdf", "data/uploads/doc-old/401k-v1.pdf")
+    await metadata_store.create_document("doc-new", "401k-v2.pdf", "data/uploads/doc-new/401k-v2.pdf")
+    _seed_collection(
+        vector_store_client,
+        collection_name,
+        [
+            {
+                "id": "doc-old:0",
+                "text": "stale 401k text",
+                "embedding": [1.0, 0.0],
+                "metadata": {"document_id": "doc-old", "chunk_index": 0, "is_current": False, "doc_classification": "401k"},
+            },
+            {
+                "id": "doc-new:0",
+                "text": "current 401k text",
+                "embedding": [1.0, 0.0],
+                "metadata": {"document_id": "doc-new", "chunk_index": 0, "is_current": True, "doc_classification": "401k"},
+            },
+        ],
+    )
+    embeddings.register("what's my 401k vesting schedule", [1.0, 0.0])
+    monkeypatch.setattr(retriever, "GatewayChatModel", lambda provider="openai": _FakeLLM(response_text=_SELF_QUERY_FILTER_RESPONSE))
+
+    chunks, applied_filter = await retriever.retrieve_chunks("what's my 401k vesting schedule", top_k=5, use_self_query=True)
+
+    document_ids = [chunk["document_id"] for chunk in chunks]
+    assert "doc-new" in document_ids
+    assert "doc-old" not in document_ids
+    assert applied_filter == {"doc_classification": {"$eq": "401k"}}

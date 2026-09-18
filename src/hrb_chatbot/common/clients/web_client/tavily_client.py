@@ -1,9 +1,5 @@
-"""Tavily client: web search built for AI agents, called via plain HTTP with
-`requests` (no official library dependency).
-
-Base URL is host-only (https://api.tavily.com, no "/v1"); auth is a header
-(`Authorization: Bearer tvly-...`), not the older body-embedded-key style.
-"""
+"""Tavily client - web search via plain HTTP (requests, no official library).
+Base URL is host-only; auth via an Authorization: Bearer header."""
 
 import time
 

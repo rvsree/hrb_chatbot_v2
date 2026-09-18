@@ -1,9 +1,6 @@
-"""Pinecone client - an alternative vector store to ChromaDB, same BaseVectorDBClient contract.
-
-Key gotcha: Pinecone's query() returns similarity "score" (higher = closer),
-not Chroma's "distance" (lower = closer) - both are returned under the key
-"distances" for shape-compatibility, but the number means the opposite thing.
-"""
+"""Pinecone client - alternative to ChromaDB, same BaseVectorDBClient contract.
+Gotcha: query() returns "score" (higher=closer), not Chroma's "distance"
+(lower=closer) - both come back under "distances" for shape parity."""
 
 import json
 import time
@@ -24,21 +21,9 @@ INDEX_READY_POLL_SECONDS = 2
 
 
 def _text_from_llama_index_node_content(metadata: dict) -> str:
-    """Temporary compatibility shim, added alongside the vector_indexer.py
-    rewrite onto LlamaIndex's VectorStoreIndex (ai/doc_processing/indexing/):
-    LlamaIndex's PineconeVectorStore does not write chunk text under this
-    client's own "document" metadata key - the text lives inside a
-    "_node_content" JSON string LlamaIndex writes for its own use instead.
-    Without this, every chunk indexed the new way came back with text=""
-    here - confirmed live: a real query returned correct document_id/
-    filename/score for its top matches, but an empty context, and the LLM
-    correctly (but unhelpfully) answered "I don't know" for a question its
-    retrieved chunks actually did cover. Chroma has no equivalent gap - it
-    stores chunk text natively, separate from metadata, regardless of who
-    wrote it. Safe to remove once ai/rag_pipeline/query_retrieval/
-    retriever.py itself is rewritten on LangChain (planned next), since that
-    rewrite reads from wherever LlamaIndex actually put the text either way,
-    not through this client's "document" convention at all."""
+    """LlamaIndex (pre-Phase 17) stored chunk text inside a "_node_content"
+    JSON blob instead of this client's own "document" key - kept for
+    backward compat with any such vectors still in the index."""
     raw_node_content = metadata.get("_node_content")
     if not raw_node_content:
         return ""
@@ -162,12 +147,9 @@ class PineconeClient(BaseVectorDBClient):
             for _ in ids:
                 metadatas.append({})
 
-        # ids, embeddings, documents, and metadatas are four separate lists that
-        # line up by position (index 0 of each belongs together, index 1 of each
-        # belongs together...). zip() walks all four at once instead of writing
-        # `for i in range(len(ids)): ids[i], embeddings[i], ...` by hand - closest
-        # Java equivalent is iterating four arrays with one shared index variable.
-        # strict=True raises instead of silently truncating if their lengths differ.
+        # Four lists line up by position - zip() walks all at once (Java:
+        # iterating four arrays with one shared index). strict=True catches
+        # mismatched lengths instead of silently truncating.
         vectors = []
         for id_, embedding, document, metadata in zip(ids, embeddings, documents, metadatas, strict=True):
             # Pinecone has no native "document text" field - stash it in metadata
@@ -216,16 +198,9 @@ class PineconeClient(BaseVectorDBClient):
             self.get_index().delete(ids=ids, namespace=collection_name)
 
     def update_metadata(self, collection_name: str, ids: list[str], metadatas: list[dict]) -> None:
-        """Pinecone's update() takes one id at a time (no batch metadata-update
-        call), and merges set_metadata into the existing dict rather than
-        replacing it - harmless here since callers always pass the complete
-        desired metadata anyway (see BaseVectorDBClient's contract). One real
-        gap: Pinecone stores chunk text under metadata["document"] (no native
-        text field, unlike Chroma) - a caller that omits "document" from the
-        dict it passes will lose that chunk's text on Pinecone specifically.
-        Acceptable today because the only caller (flipping is_current=false on
-        a superseded document) only ever affects chunks retrieval already
-        excludes - not acceptable if this method gains other callers later."""
+        """Pinecone's update() is per-id and merges set_metadata rather than
+        replacing - harmless only because every caller here already passes
+        the full desired metadata. Gap: omitting "document" loses that chunk's text."""
         with log_backend_call(
             logger, "pinecone", "vector.update_metadata", namespace=collection_name, chunk_count=len(ids)
         ):
@@ -234,11 +209,8 @@ class PineconeClient(BaseVectorDBClient):
                 index.update(id=id_, set_metadata=metadata, namespace=collection_name)
 
     def health_check(self) -> dict:
-        """Report whether this client is usable: lists indexes, then calls
-        _ensure_index(), which CREATES the configured index if it doesn't exist
-        yet (a one-time, billable side effect - see _ensure_index's own docstring;
-        it's a no-op on every call after the first, so repeat health checks don't
-        repeat it)."""
+        """Lists indexes, then calls _ensure_index() - creates the index on
+        first call (billable), a no-op after."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 

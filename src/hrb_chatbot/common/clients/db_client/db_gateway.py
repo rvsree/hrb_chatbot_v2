@@ -6,7 +6,7 @@ from src.hrb_chatbot.common.clients.db_client.chroma_client import ChromaDBClien
 from src.hrb_chatbot.common.clients.db_client.pinecone_client import PineconeClient
 from src.hrb_chatbot.common.clients.db_client.postgres_client import PostgresClient
 from src.hrb_chatbot.common.clients.db_client.sqlite_client import SQLiteClient
-from src.hrb_chatbot.common.config.settings import read_setting
+from src.hrb_chatbot.common.config.settings import get_active_vector_db, read_setting
 from src.hrb_chatbot.common.enums import MetadataStore, VectorDB
 
 
@@ -33,7 +33,7 @@ class DBGateway:
 
     def vector_store(self, provider: str | None = None) -> BaseVectorDBClient:
         """Return whichever vector store is selected."""
-        provider = provider or read_setting(None, "RAG_VECTOR_DB", VectorDB.CHROMADB)
+        provider = get_active_vector_db(provider)
 
         if provider == VectorDB.CHROMADB:
             return self.chroma()

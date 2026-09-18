@@ -4,8 +4,30 @@ API key, so these fakes match the real clients' method signatures exactly.
 `monkeypatch` (pytest) swaps a function/attribute for one test, then
 restores it automatically - like Mockito, but on Python's module names."""
 
+from langchain_core.embeddings import Embeddings
+
 from src.hrb_chatbot.common.clients.db_client.base_metadata_client import BaseMetadataClient
 from src.hrb_chatbot.common.clients.db_client.base_vector_db_client import BaseVectorDBClient
+
+
+class FakeEmbeddings(Embeddings):
+    """LangChain's own Embeddings interface, satisfied without a network
+    call - returns whichever vector was registered for exact text via
+    register(), a small default otherwise. Used anywhere a test needs a
+    real LangChain VectorStore object (Chroma, etc.) but not a real
+    OpenAI call - retriever.py and vector_indexer.py both build one."""
+
+    def __init__(self):
+        self._vectors: dict[str, list[float]] = {}
+
+    def register(self, text: str, vector: list[float]) -> None:
+        self._vectors[text] = vector
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._vectors.get(text, [0.0, 0.0]) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._vectors.get(text, [0.0, 0.0])
 
 
 class FakeEmbeddingClient:
@@ -177,6 +199,7 @@ class FakeMetadataStore(BaseMetadataClient):
             "department": None,
             "doc_type": None,
             "purpose": None,
+            "doc_classification": None,
         }
 
     async def find_by_content_hash(self, content_hash):
@@ -234,13 +257,14 @@ class FakeMetadataStore(BaseMetadataClient):
         document["superseded_by"] = superseded_by
         return json.loads(document["chunk_ids"]) if document.get("chunk_ids") else []
 
-    async def record_document_metadata(self, document_id, owner, department, doc_type, purpose):
+    async def record_document_metadata(self, document_id, owner, department, doc_type, purpose, doc_classification):
         document = self.documents.get(document_id)
         if document is not None:
             document["owner"] = owner
             document["department"] = department
             document["doc_type"] = doc_type
             document["purpose"] = purpose
+            document["doc_classification"] = doc_classification
 
     async def get_document(self, document_id):
         return self.documents.get(document_id)

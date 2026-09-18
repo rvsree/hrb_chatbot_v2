@@ -1,33 +1,13 @@
-"""Runs a query through the RAG pipeline.
-
-Thin on purpose: the real decompose/retrieve/generate logic lives in
-ai/rag_pipeline/pipeline.py. This file exists only so the router doesn't
-import from ai/ directly.
-"""
+"""Runs a query through the RAG pipeline - thin wrapper so the router
+doesn't import from ai/ directly."""
 
 from src.hrb_chatbot.ai.rag_pipeline import pipeline
 from src.hrb_chatbot.common.logging.logger import get_logger
+from src.hrb_chatbot.common.rag_query_params import RagQueryParams
 
 logger = get_logger("rag_service")
 
 
-async def answer_query(
-    query: str,
-    top_k: int = 5,
-    vector_db: str | None = None,
-    search_strategy: str | None = None,
-    model_name: str | None = None,
-    temperature: float = 0.0,
-    max_tokens: int | None = None,
-) -> dict:
-    """Run the full RAG pipeline for one question. Raises NotImplementedError
-    until Phase 6 exists - the router turns that into a 501, not a crash."""
-    return await pipeline.answer_query(
-        query,
-        top_k=top_k,
-        vector_db=vector_db,
-        search_strategy=search_strategy,
-        model_name=model_name,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
+async def answer_query(params: RagQueryParams) -> dict:
+    """Run the full RAG pipeline for one question: decompose, retrieve, generate."""
+    return await pipeline.answer_query(params)

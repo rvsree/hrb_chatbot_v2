@@ -1,106 +1,58 @@
-"""Searches the vector store for chunks matching a query - workshop
-Module 4 (LangChain), against whichever store RAG_VECTOR_DB selects:
-ChromaDB or Pinecone. Two plain functions, one per technique - no
-classes/interfaces, matching how the workshop's own demo.py is written.
-"""
+"""Searches the vector store for chunks matching a query (workshop Module
+4) - two plain functions (similarity, MMR), no classes. Phase 20 layers
+MultiQueryRetriever/SelfQueryRetriever on top (LangChain's own classes)."""
 
-import json
-
-from langchain_chroma import Chroma
+from langchain.chains.query_constructor.schema import AttributeInfo
+from langchain.retrievers.multi_query import MultiQueryRetriever
+from langchain.retrievers.self_query.base import SelfQueryRetriever
+from langchain_community.query_constructors.chroma import ChromaTranslator
+from langchain_community.query_constructors.pinecone import PineconeTranslator
 from langchain_core.documents import Document
-from langchain_openai import OpenAIEmbeddings
-from langchain_pinecone import PineconeVectorStore
 
-from src.hrb_chatbot.ai.doc_processing.indexing.vector_indexer import COLLECTION_NAME
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
-from src.hrb_chatbot.common.config.settings import read_setting, read_url_setting
+from src.hrb_chatbot.common.clients.db_client.langchain_vector_store import COLLECTION_NAME, get_vector_store
+from src.hrb_chatbot.common.clients.llm_client.langchain_chat_model import GatewayChatModel
+from src.hrb_chatbot.common.config.settings import get_active_llm_provider
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("rag_pipeline.retriever")
 
-# Only chunks still "in play" are ever returned - $ne (not equal), not an
-# is_current=True equality match: chunks indexed before this field existed
-# have no is_current key at all, and an equality filter would silently
-# exclude those too. Only a chunk explicitly flipped to False (superseded)
-# should be excluded.
+# Only chunks still in play - $ne (not equal), not is_current=True equality:
+# older chunks have no is_current key at all and would be wrongly excluded by equality.
 CURRENT_CHUNKS_ONLY = {"is_current": {"$ne": False}}
 
-# top_k always returns exactly that many results, even when none are
-# actually relevant - vector search has no built-in "good enough" concept.
-# Empirically calibrated, not guessed: see docs/RAG-ROADMAP.md's Phase 4.5
-# entry for the real query that produced these two numbers. Only applied to
-# similarity search, which has a real per-chunk score to compare against -
-# LangChain's max_marginal_relevance_search() does not return scores at all.
+# Self-Query's LLM may only parse a filter on these three fields (Phase 19).
+# is_current is deliberately absent - it's this project's own bookkeeping,
+# never something a parsed filter can turn off (see _combine_with_current_only).
+METADATA_FIELD_INFO = [
+    AttributeInfo(
+        name="doc_type",
+        description="The kind of document: one of policy, regulatory, investment, benefits, other.",
+        type="string",
+    ),
+    AttributeInfo(name="department", description="Which company department this document belongs to.", type="string"),
+    AttributeInfo(
+        name="doc_classification",
+        description=(
+            "The specific topic this document covers, in the document's own terms, e.g. '401k', "
+            "'health benefits', 'leave policy'."
+        ),
+        type="string",
+    ),
+]
+DOCUMENT_CONTENTS_DESCRIPTION = (
+    "Sections of JPMC HR benefits policy documents - 401k, healthcare, paid/unpaid time off, "
+    "tuition assistance, and similar."
+)
+
+# One translator per vector-store backend - turns Self-Query's parsed filter
+# into that backend's own native `where`/`filter` dict shape.
+_STRUCTURED_QUERY_TRANSLATORS = {"chromadb": ChromaTranslator, "pinecone": PineconeTranslator}
+
+# top_k always returns that many results even if irrelevant - vector search
+# has no "good enough" concept. Calibrated in Phase 4.5 (see docs/RAG-ROADMAP.md).
 MAX_CHROMA_DISTANCE = 1.1
 MIN_PINECONE_SCORE = 0.5
-
-
-class _TextBackfillPineconeIndex:
-    """Wraps a real pinecone.Index so LangChain's PineconeVectorStore (which
-    expects chunk text under a plain "text" metadata key, and does a hard,
-    unguarded metadata.pop("text") in its MMR code path specifically -
-    confirmed live: a KeyError, not a graceful skip like its similarity-
-    search path uses) still works against data written two different older
-    ways: LlamaIndex (ai/doc_processing/indexing/vector_indexer.py, Phase 3)
-    stores text inside a "_node_content" JSON blob; the original hand-
-    written indexer (before this rewrite) stored it under "document"
-    (pinecone_client.py's own convention). Both kinds of vectors can be
-    live in the same namespace during this transition, so both are handled
-    here - "text" is always guaranteed present afterward, empty string as
-    the last resort, so LangChain's unguarded pop() never raises."""
-
-    def __init__(self, real_index):
-        self._real_index = real_index
-
-    def __getattr__(self, name):
-        return getattr(self._real_index, name)
-
-    def query(self, *args, **kwargs):
-        response = self._real_index.query(*args, **kwargs)
-        for match in response.matches:
-            if not match.metadata or "text" in match.metadata:
-                continue
-            match.metadata["text"] = self._extract_text(match.metadata)
-        return response
-
-    @staticmethod
-    def _extract_text(metadata: dict) -> str:
-        if "_node_content" in metadata:
-            try:
-                return json.loads(metadata["_node_content"]).get("text", "")
-            except (json.JSONDecodeError, AttributeError):
-                return ""
-        if "document" in metadata:
-            return metadata["document"]
-        return ""
-
-
-def _embeddings() -> OpenAIEmbeddings:
-    api_key = read_setting(None, "OPENAI_API_KEY")
-    base_url = read_url_setting(None, "OPENAI_BASE_URL", "https://api.openai.com/v1")
-    embedding_model = read_setting(None, "OPENAI_EMBED_MODEL", "text-embedding-3-small")
-    return OpenAIEmbeddings(api_key=api_key, base_url=base_url, model=embedding_model)
-
-
-def _vector_store(vector_db: str | None):
-    """Return (LangChain vector store, resolved provider name), wrapping
-    this project's already-connected ChromaDB/Pinecone client's raw
-    collection/index object - reads the exact same physical collection/
-    namespace ai/doc_processing/indexing/vector_indexer.py writes into."""
-    vector_store_client = get_db_gateway().vector_store(provider=vector_db)
-    embeddings = _embeddings()
-
-    if vector_store_client.PROVIDER_NAME == "pinecone":
-        wrapped_index = _TextBackfillPineconeIndex(vector_store_client.get_index())
-        store = PineconeVectorStore(index=wrapped_index, embedding=embeddings, namespace=COLLECTION_NAME)
-    else:
-        store = Chroma(
-            client=vector_store_client.get_client(),
-            collection_name=COLLECTION_NAME,
-            embedding_function=embeddings,
-        )
-
-    return store, vector_store_client.PROVIDER_NAME
 
 
 def _meets_relevance_bar(score: float, provider_name: str) -> bool:
@@ -121,12 +73,21 @@ def _document_to_chunk(document: Document, score: float | None) -> dict:
     }
 
 
-def search_similarity(query: str, top_k: int = 5, vector_db: str | None = None) -> list[dict]:
-    # Plain relevance-ranked search - the default, matching module 4's
-    # own "start here" recommendation. Chunks below the relevance bar
-    # (see MAX_CHROMA_DISTANCE/MIN_PINECONE_SCORE above) are dropped.
-    store, provider = _vector_store(vector_db)
-    results = store.similarity_search_with_score(query, k=top_k, filter=CURRENT_CHUNKS_ONLY)
+def _combine_with_current_only(extra_filter: dict | None) -> dict:
+    # is_current must always apply - never something a parsed filter can
+    # override. A plain merge could let a same-shaped key replace it, so AND instead.
+    if not extra_filter:
+        return CURRENT_CHUNKS_ONLY
+    return {"$and": [CURRENT_CHUNKS_ONLY, extra_filter]}
+
+
+def search_similarity(
+    query: str, top_k: int = 5, vector_db: str | None = None, extra_filter: dict | None = None
+) -> list[dict]:
+    # Plain relevance-ranked search - the default. Chunks below the
+    # relevance bar (MAX_CHROMA_DISTANCE/MIN_PINECONE_SCORE) are dropped.
+    store, provider = get_vector_store(vector_db)
+    results = store.similarity_search_with_score(query, k=top_k, filter=_combine_with_current_only(extra_filter))
 
     chunks = []
     for document, score in results:
@@ -135,20 +96,21 @@ def search_similarity(query: str, top_k: int = 5, vector_db: str | None = None) 
     return chunks
 
 
-def search_mmr(query: str, top_k: int = 5, vector_db: str | None = None, fetch_k: int | None = None) -> list[dict]:
-    # Max Marginal Relevance - balances relevance with diversity, so the
-    # results aren't all near-duplicates of each other (module 2's own
-    # "rule of thumb": use this when you want non-redundant context, often
-    # better for RAG prompts than plain similarity). fetch_k (how many
-    # candidates to consider before picking the diverse top_k) defaults to
-    # 3x top_k, the same ratio module 4's own notes recommend.
-    store, provider = _vector_store(vector_db)
+def search_mmr(
+    query: str,
+    top_k: int = 5,
+    vector_db: str | None = None,
+    fetch_k: int | None = None,
+    extra_filter: dict | None = None,
+) -> list[dict]:
+    # Max Marginal Relevance - trades relevance for diversity (non-redundant
+    # context). fetch_k defaults to 3x top_k, module 4's own recommended ratio.
+    store, provider = get_vector_store(vector_db)
     documents = store.max_marginal_relevance_search(
-        query, k=top_k, fetch_k=fetch_k or top_k * 3, filter=CURRENT_CHUNKS_ONLY
+        query, k=top_k, fetch_k=fetch_k or top_k * 3, filter=_combine_with_current_only(extra_filter)
     )
-    # LangChain's max_marginal_relevance_search() does not return a score at
-    # all (unlike similarity_search_with_score) - None here, not a made-up
-    # number, and no relevance-bar filtering for the same reason.
+    # No score at all (unlike similarity_search_with_score) - None here, not
+    # a made-up number; no relevance-bar filtering for the same reason.
     return [_document_to_chunk(document, None) for document in documents]
 
 
@@ -158,44 +120,117 @@ SEARCH_STRATEGIES = {
 }
 
 
-async def retrieve_chunks(
-    queries: list[str], top_k: int = 5, vector_db: str | None = None, search_strategy: str | None = None
+def search_multi_query(
+    query: str,
+    top_k: int = 5,
+    vector_db: str | None = None,
+    search_strategy: str | None = None,
+    llm_provider: str = "openai",
+    extra_filter: dict | None = None,
 ) -> list[dict]:
-    """Search for each query and return the merged chunks - deduplicated by
-    (document_id, chunk_index) so the same chunk found by two different
-    sub-queries is only returned once. Each result has document_id,
-    filename, chunk_index, text, score (models/rag.py's RetrievedChunk;
-    score is null for MMR results, which have no per-chunk score)."""
+    # Rewrites `query` into several phrasings, searches each via the base
+    # retriever, merges/dedupes - LangChain's own MultiQueryRetriever. No score, same as MMR.
+    store, _ = get_vector_store(vector_db)
     resolved_strategy = search_strategy or "similarity"
-    logger.info("search: strategy=%s (%s)", resolved_strategy, "explicit" if search_strategy else "default")
+    search_kwargs = {"k": top_k, "filter": _combine_with_current_only(extra_filter)}
+    if resolved_strategy == "mmr":
+        search_kwargs["fetch_k"] = top_k * 3
+    base_retriever = store.as_retriever(search_type=resolved_strategy, search_kwargs=search_kwargs)
+
+    multi_query_retriever = MultiQueryRetriever.from_llm(
+        retriever=base_retriever, llm=GatewayChatModel(provider=llm_provider)
+    )
+    documents = multi_query_retriever.invoke(query)
+    return [_document_to_chunk(document, None) for document in documents]
+
+
+def _parse_self_query_filter(
+    store, provider: str, query: str, llm_provider: str
+) -> dict | None:
+    """Parse `query` into a filter over METADATA_FIELD_INFO's three fields
+    (e.g. "what's my 401k vesting schedule" -> {"doc_classification":
+    {"$eq": "401k"}}), or None - NOT yet combined with is_current."""
+    translator = _STRUCTURED_QUERY_TRANSLATORS[provider]()
+    self_query_retriever = SelfQueryRetriever.from_llm(
+        GatewayChatModel(provider=llm_provider),
+        store,
+        DOCUMENT_CONTENTS_DESCRIPTION,
+        METADATA_FIELD_INFO,
+        structured_query_translator=translator,
+    )
+    # Calls query_constructor + _prepare_query directly (not .invoke(),
+    # which does the same internally) - one LLM call, and returns the filter itself.
+    structured_query = self_query_retriever.query_constructor.invoke({"query": query})
+    _, search_kwargs = self_query_retriever._prepare_query(query, structured_query)
+    return search_kwargs.get("filter")
+
+
+async def retrieve_chunks(
+    query: str,
+    top_k: int = 5,
+    vector_db: str | None = None,
+    search_strategy: str | None = None,
+    use_multi_query: bool = False,
+    use_self_query: bool = False,
+    llm_provider: str | None = None,
+) -> tuple[list[dict], dict | None]:
+    """Search for the query. Returns (chunks, applied_filter) - score is
+    null for MMR/MultiQuery results; applied_filter is what Self-Query
+    parsed, or None."""
+    resolved_strategy = search_strategy or "similarity"
+    resolved_llm_provider = get_active_llm_provider(llm_provider)
+    logger.info(
+        "search: strategy=%s (%s), multi_query=%s, self_query=%s, llm_provider=%s",
+        resolved_strategy,
+        "explicit" if search_strategy else "default",
+        use_multi_query,
+        use_self_query,
+        resolved_llm_provider,
+    )
     if resolved_strategy not in SEARCH_STRATEGIES:
         raise ValueError(f"Unknown search_strategy {resolved_strategy!r} - choose one of {list(SEARCH_STRATEGIES)}")
-    search_function = SEARCH_STRATEGIES[resolved_strategy]
 
     db_gateway = get_db_gateway()
-    chunks: list[dict] = []
-    seen_chunk_keys: set[tuple] = set()
+    store, provider = get_vector_store(vector_db)
 
-    for query in queries:
-        for chunk in search_function(query, top_k=top_k, vector_db=vector_db):
-            key = (chunk["document_id"], chunk["chunk_index"])
-            if key in seen_chunk_keys:
-                continue
-            seen_chunk_keys.add(key)
-            chunks.append(chunk)
+    applied_filter: dict | None = None
+    if use_self_query:
+        # Best-effort - same "never block the answer" approach as extraction.
+        try:
+            applied_filter = _parse_self_query_filter(store, provider, query, resolved_llm_provider)
+        except Exception as error:
+            logger.warning(
+                "Self-Query filter parsing failed for %r - falling back to an unfiltered search: %s: %s",
+                query,
+                type(error).__name__,
+                error,
+            )
+            applied_filter = None
+
+    if use_multi_query:
+        chunks = search_multi_query(
+            query,
+            top_k=top_k,
+            vector_db=vector_db,
+            search_strategy=resolved_strategy,
+            llm_provider=resolved_llm_provider,
+            extra_filter=applied_filter,
+        )
+    else:
+        search_function = SEARCH_STRATEGIES[resolved_strategy]
+        chunks = search_function(query, top_k=top_k, vector_db=vector_db, extra_filter=applied_filter)
 
     await _attach_filenames(chunks, db_gateway)
 
     logger.info(
-        "Retrieved %d chunk(s) via %s, for %d quer(y/ies)", len(chunks), resolved_strategy, len(queries)
+        "Retrieved %d chunk(s) via %s, applied_filter=%s", len(chunks), resolved_strategy, applied_filter
     )
-    return chunks
+    return chunks, applied_filter
 
 
 async def _attach_filenames(chunks: list[dict], db_gateway) -> None:
-    """Look up each chunk's source document filename, one metadata-store call
-    per distinct document_id (not per chunk) - a query typically retrieves
-    several chunks from the same document."""
+    """Look up each chunk's source filename, one metadata-store call per
+    distinct document_id - a query typically retrieves several chunks from one doc."""
     metadata_store = db_gateway.metadata_store()
     filenames_by_document_id: dict[str, str] = {}
 

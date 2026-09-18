@@ -1,9 +1,5 @@
-"""Turns chunk texts into embedding vectors.
-
-Thin on purpose: the real work is OpenAIEmbeddingClient.get_embeddings();
-this just names the one call so pipeline.py doesn't reach into the client
-gateway directly.
-"""
+"""Turns chunk texts into embedding vectors - thin wrapper naming one call
+so pipeline.py doesn't reach into the client gateway directly."""
 
 from src.hrb_chatbot.common.clients.llm_client.client_gateway import get_client_gateway
 from src.hrb_chatbot.common.logging.logger import get_logger
@@ -12,11 +8,8 @@ logger = get_logger("doc_processing.embedding")
 
 
 def generate_embeddings(chunks: list[str], embedding_model: str | None = None) -> list[list[float]]:
-    """Return one embedding vector per chunk, in the same order as chunks.
-
-    `embedding_model` overrides OPENAI_EMBED_MODEL for this call only - see
-    get_embeddings()'s docstring for the dimension-mismatch risk.
-    """
+    """Return one embedding vector per chunk, in order. `embedding_model`
+    overrides OPENAI_EMBED_MODEL - see get_embeddings() for the dimension-mismatch risk."""
     if not chunks:
         return []
 

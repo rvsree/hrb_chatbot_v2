@@ -112,7 +112,8 @@ curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/
 
 # index it (spends: one real embedding call per chunk) - auto-selects a
 # chunking strategy if you don't pick one; see README_TEST.md section 4.8-4.10
-# for every technique and how to pick one explicitly (e.g. .../index/recursive)
+# for every technique and how to pick one explicitly, e.g.:
+# curl ... -d "{\"chunking_strategy\": \"recursive\"}"
 curl -X POST http://127.0.0.1:8093/v1/rag-ingestion/documents/<document_id>/index
 
 # ask a question - real retrieval + grounded generation (spends: one real

@@ -8,15 +8,13 @@ from src.hrb_chatbot.ai.doc_processing.chunking.text_chunker import (
     decide_chunking_strategy,
     extract_text_from_pdf,
 )
-from src.hrb_chatbot.ai.doc_processing.embedding.embedding_generator import generate_embeddings
-from src.hrb_chatbot.ai.doc_processing.indexing.vector_indexer import write_chunks
+from src.hrb_chatbot.ai.doc_processing.indexing.vector_indexer import apply_extracted_chunk_metadata, write_chunks
 from src.hrb_chatbot.ai.doc_processing.metadata_extraction.document_metadata_extractor import (
     extract_document_metadata,
 )
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
 from src.hrb_chatbot.common.clients.llm_client.openai_client import OpenAIEmbeddingClient
-from src.hrb_chatbot.common.config.settings import read_setting
-from src.hrb_chatbot.common.enums import VectorDB
+from src.hrb_chatbot.common.config.settings import get_active_vector_db, read_setting
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("doc_processing.pipeline")
@@ -43,30 +41,6 @@ def chunk_document(
     )
 
 
-def embed_chunks(chunks: list[str], embedding_model: str | None = None) -> list[list[float]]:
-    return generate_embeddings(chunks, embedding_model=embedding_model)
-
-
-async def index_chunks(
-    document_id: str,
-    chunks: list[str],
-    embeddings: list[list[float]],
-    vector_db: str | None = None,
-    embedding_model: str | None = None,
-    chunk_size: int | None = None,
-    chunk_overlap: int | None = None,
-) -> dict:
-    return await write_chunks(
-        document_id,
-        chunks,
-        embeddings,
-        vector_db=vector_db,
-        embedding_model=embedding_model,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-    )
-
-
 async def index_document(
     document_id: str,
     file_path: str,
@@ -81,7 +55,7 @@ async def index_document(
             f"Unknown chunking_strategy {chunking_strategy!r} - choose one of {list(CHUNKING_STRATEGIES)}"
         )
 
-    resolved_vector_db = vector_db or read_setting(None, "RAG_VECTOR_DB", VectorDB.CHROMADB)
+    resolved_vector_db = get_active_vector_db(vector_db)
     resolved_embedding_model = embedding_model or read_setting(
         None, "OPENAI_EMBED_MODEL", OpenAIEmbeddingClient.DEFAULT_MODEL
     )
@@ -105,13 +79,8 @@ async def index_document(
     )
 
     text = extract_text_from_pdf(file_path)
-    # chunking_strategy (possibly None) is passed down as-is, so
-    # chunk_document/chunk_text's own "explicit vs auto-selected" log line
-    # stays accurate. resolved_chunking_strategy is only computed here so the
-    # response below can report which strategy actually ran either way -
-    # decide_chunking_strategy() is pure/deterministic, so computing it twice
-    # (once here, once inside chunk_text if chunking_strategy is None) always
-    # agrees, at the cost of one cheap extra call, not a real duplicate decision.
+    # Computed here (possibly again) only so the response can report which
+    # strategy ran - decide_chunking_strategy() is pure, so this always agrees.
     resolved_chunking_strategy = chunking_strategy or decide_chunking_strategy(text)
     chunks = chunk_document(
         text,
@@ -119,11 +88,10 @@ async def index_document(
         chunk_size=resolved_chunk_size,
         chunk_overlap=resolved_chunk_overlap,
     )
-    embeddings = embed_chunks(chunks, embedding_model=resolved_embedding_model)
-    result = await index_chunks(
+    # write_chunks() embeds each chunk itself (LangChain's index(), Phase 17).
+    result = await write_chunks(
         document_id,
         chunks,
-        embeddings,
         vector_db=resolved_vector_db,
         embedding_model=resolved_embedding_model,
         chunk_size=resolved_chunk_size,
@@ -138,15 +106,22 @@ async def index_document(
         result["chunks_removed"],
     )
 
-    # Document-level metadata (owner/department/doc_type/purpose) doesn't
-    # change between re-indexes of the same content, so it's only extracted
-    # once, on the document's first successful index - not repeated (and
-    # not re-billed) on every subsequent re-index. Best-effort: a failure
-    # here is logged and swallowed, never allowed to fail the index itself.
+    # Extracted once, on first index only - not repeated/re-billed on a
+    # re-index. Best-effort: a failure here is logged, never fails the index.
     if result["action"] == "insert":
         try:
             extracted_metadata = extract_document_metadata(text)
             await get_db_gateway().metadata_store().record_document_metadata(document_id, **extracted_metadata)
+            # Not known yet when write_chunks() wrote the chunks above -
+            # patch them now (a re-index already knows them by write time).
+            await apply_extracted_chunk_metadata(
+                document_id,
+                result["chunk_ids"],
+                resolved_vector_db,
+                doc_type=extracted_metadata["doc_type"],
+                department=extracted_metadata["department"],
+                doc_classification=extracted_metadata["doc_classification"],
+            )
         except Exception as error:
             logger.warning(
                 "Document metadata extraction/recording failed for %s: %s: %s",

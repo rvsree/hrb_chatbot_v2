@@ -9,11 +9,19 @@ record of the existing one so it holds for Phase 2 onward without drifting.
 
 A comment earns its place by naming something a reader would otherwise get
 wrong or be surprised by - a gotcha, a constraint, the reason a check exists.
-It does not restate what the code already says by being well-named. Keep
-them short - a line or two, not a paragraph - but don't strip the ones that
-carry real information (see `chroma_client.py`'s note on why the client is
+It does not restate what the code already says by being well-named.
+
+**Hard limit: two lines.** A third line is allowed only at a genuinely
+critical spot (a subtle invariant, a non-obvious workaround, a decision
+future-you would otherwise redo) - sparingly, not as the default. This
+applies to inline comments, docstrings, and module docstrings alike - a
+10-line module docstring explaining a design decision belongs in
+`docs/FAQ.md` or a spec's own write-up in `docs/RAG-ROADMAP.md`, with the
+docstring itself trimmed to what a reader needs before touching the file.
+Say the *what* in as few words as the reader needs, not the whole reasoning
+chain that led here (see `chroma_client.py`'s note on why the client is
 built lazily, or `settings.py`'s note on `.env` overriding the machine
-environment).
+environment, for the target length/shape to match).
 
 ## Errors: where they live depends on who reads them
 

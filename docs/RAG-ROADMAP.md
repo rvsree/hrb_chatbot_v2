@@ -54,34 +54,61 @@ section below it is the authoritative detail - if the two ever disagree,
 the detail below is correct and this table is stale, not the other way
 around.
 
-| Phase | Who | Status |
-|---|---|---|
-| 1 — ChromaDB client + gateway | Claude Code | ✅ Done |
-| 2 — Document upload API | Claude Code | ✅ Done |
-| 2.5 — Postgres metadata store | Claude Code | ✅ Done |
-| 2.6 — Pinecone vector store | Claude Code | ✅ Done |
-| 3 — Indexing trigger endpoint | Claude Code | ✅ Done |
-| 4 — Chunking/embedding/indexing | Claude Code (override) | ✅ Done |
-| 4.1 — Per-call config overrides | Claude Code (override) | ✅ Done |
-| 4.2 — Document metadata expansion + content-hash dedup | Claude Code (override) | ✅ Done, 2026-09-10 |
-| 4.3 — Delete endpoint | Claude Code (override) | ✅ Done, 2026-09-10 |
-| 4.4 — Document versioning (supersede + is_current retrieval filtering), table extraction, document-metadata extraction | Claude Code (override) | ✅ Done, 2026-09-11 |
-| 4.5 — Retrieval relevance threshold, standardized error codes | Claude Code | ✅ Done, 2026-09-11 |
-| 5 — Query endpoint, stubbed | Claude Code | ✅ Done |
-| 5.1 — Query decomposition | Hand-written | 📋 Planned |
-| 5.2 — Query variants | Hand-written | 📋 Planned |
-| 5.3 — Prompt chaining + versioning | Hand-written | 📋 Planned |
-| 6 — Retrieval + grounded generation | Claude Code (override, 2026-09-10) | 🚧 MVP done - real retrieval + generation, no COT/guardrails yet; see Phase 6 detail below |
-| 6.1 — Contracts/validation for query path | Claude Code | ✅ Done alongside the Phase 6 MVP - `model_used` added to `RagQueryResponse` |
-| 7 — Guardrails (input + output) | Hand-written | 📋 Planned |
-| 8 — Golden dataset + evaluations + A/B | Hand-written | 🚧 Golden dataset done (override, 2026-09-08); evaluations/A/B harness still 📋 planned |
-| 9 — Bedrock as an LLM provider | Claude Code | ✅ Done |
-| 10 — Docker + AWS deployment (App Runner) | Claude Code | ✅ Done - `RUNNING`, verified live (shallow + deep health, real Pinecone query); Postgres/Neon leg still pending the user's Neon signup (documented compromise, not a blocker) |
-| 11 — CI/CD + GitHub | Claude Code | ✅ CI verified passing on GitHub Actions (pytest included as of Phase 12); deploy workflow written but unexercised - needs `main` merge + 2 GitHub Secrets still pending from the user |
-| 12 — REST API contract-first hardening | Claude Code | ✅ Done - versioning, idempotency, rate limiting, validation bounds, error handling, pre-flight checks, all verified live and unit-tested |
-| 13 — Branch restructuring + CI/CD gates | Claude Code | ✅ Done - `main`/`developer`/`feature-kb-indexing-rag-pipeline` renamed to `master`/`develop`/`feature-langchain-rag-pipeline` on GitHub; `deploy.yml`/`ci.yml` triggers fixed to match; coverage floor, `bandit`, `pip-audit`, and a real post-deploy smoke test added to CI/CD; see `docs/CICD-BRANCHING-STRATEGY.md` |
-| 14 — LangChain/LlamaIndex pipeline rewrite (chunking, indexing, search), idempotency removed | Claude Code | ✅ Done, on `feature-langchain-rag-pipeline`. All of 14.1 (idempotency removal) and 14.2 (chunking, indexing, search/retrieval sub-phases) complete |
-| 15 — Evaluation (Module 5) against the rebuilt pipeline | Claude Code | 📋 Planned, added 2026-09-13 - not started |
+**`Spec` column, added 2026-09-14 when SDD was adopted** (see `CLAUDE.md`'s
+SDD section): `Retrofitted (pre-SDD)` means the phase shipped before specs
+were written first - its detail entry below is the historical record, not
+reconstructed after the fact. `📋 pending` means no spec exists yet; one
+must be written (`/spec-new`, or see `.claude/skills/spec-new/SKILL.md`) and
+reviewed before that phase's code starts.
+
+| Phase | Who | Status | Spec |
+|---|---|---|---|
+| 1 — ChromaDB client + gateway | Claude Code | ✅ Done | Retrofitted (pre-SDD) |
+| 2 — Document upload API | Claude Code | ✅ Done | Retrofitted (pre-SDD) |
+| 2.5 — Postgres metadata store | Claude Code | ✅ Done | Retrofitted (pre-SDD) |
+| 2.6 — Pinecone vector store | Claude Code | ✅ Done | Retrofitted (pre-SDD) |
+| 3 — Indexing trigger endpoint | Claude Code | ✅ Done | Retrofitted (pre-SDD) |
+| 4 — Chunking/embedding/indexing | Claude Code (override) | ✅ Done | Retrofitted (pre-SDD) |
+| 4.1 — Per-call config overrides | Claude Code (override) | ✅ Done | Retrofitted (pre-SDD) |
+| 4.2 — Document metadata expansion + content-hash dedup | Claude Code (override) | ✅ Done, 2026-09-10 | Retrofitted (pre-SDD) |
+| 4.3 — Delete endpoint | Claude Code (override) | ✅ Done, 2026-09-10 | Retrofitted (pre-SDD) |
+| 4.4 — Document versioning (supersede + is_current retrieval filtering), table extraction, document-metadata extraction | Claude Code (override) | ✅ Done, 2026-09-11 | Retrofitted (pre-SDD) |
+| 4.5 — Retrieval relevance threshold, standardized error codes | Claude Code | ✅ Done, 2026-09-11 | Retrofitted (pre-SDD) |
+| 5 — Query endpoint, stubbed | Claude Code | ✅ Done | Retrofitted (pre-SDD) |
+| 5.1 — Query decomposition | Hand-written | 📋 Planned | 📋 pending |
+| 5.2 — Query variants | Hand-written | 📋 Planned | 📋 pending |
+| 5.3 — Prompt chaining + versioning | Hand-written | 📋 Planned | 📋 pending |
+| 6 — Retrieval + grounded generation | Claude Code (override, 2026-09-10) | 🚧 MVP done - real retrieval + generation, no COT/guardrails yet; see Phase 6 detail below | Retrofitted (pre-SDD) for the MVP shipped; the COT/guardrails remainder needs its own spec |
+| 6.1 — Contracts/validation for query path | Claude Code | ✅ Done alongside the Phase 6 MVP - `model_used` added to `RagQueryResponse` | Retrofitted (pre-SDD) |
+| 7 — Guardrails (input + output) | Hand-written | 📋 Planned | 📋 pending |
+| 8 — Golden dataset + evaluations + A/B | Hand-written | 🚧 Golden dataset done (override, 2026-09-08); evaluations/A/B harness still 📋 planned | Retrofitted (pre-SDD) for the golden dataset; eval/A/B harness is 📋 pending |
+| 9 — Bedrock as an LLM provider | Claude Code | ✅ Done | Retrofitted (pre-SDD) |
+| 10 — Docker + AWS deployment (App Runner) | Claude Code | ✅ Done - `RUNNING`, verified live (shallow + deep health, real Pinecone query); Postgres/Neon leg still pending the user's Neon signup (documented compromise, not a blocker) | Retrofitted (pre-SDD) |
+| 11 — CI/CD + GitHub | Claude Code | ✅ CI verified passing on GitHub Actions (pytest included as of Phase 12); deploy workflow written but unexercised - needs `main` merge + 2 GitHub Secrets still pending from the user | Retrofitted (pre-SDD) |
+| 12 — REST API contract-first hardening | Claude Code | ✅ Done - versioning, idempotency, rate limiting, validation bounds, error handling, pre-flight checks, all verified live and unit-tested | Retrofitted (pre-SDD) |
+| 13 — Branch restructuring + CI/CD gates | Claude Code | ✅ Done - `main`/`developer`/`feature-kb-indexing-rag-pipeline` renamed to `master`/`develop`/`feature-langchain-rag-pipeline` on GitHub; `deploy.yml`/`ci.yml` triggers fixed to match; coverage floor, `bandit`, `pip-audit`, and a real post-deploy smoke test added to CI/CD; see `docs/CICD-BRANCHING-STRATEGY.md` | Retrofitted (pre-SDD) |
+| 14 — LangChain/LlamaIndex pipeline rewrite (chunking, indexing, search), idempotency removed | Claude Code | ✅ Done, on `feature-langchain-rag-pipeline`. All of 14.1 (idempotency removal) and 14.2 (chunking, indexing, search/retrieval sub-phases) complete | Retrofitted (pre-SDD) |
+| 15 — Evaluation (Module 5) against the rebuilt pipeline | Claude Code | 📋 Planned, added 2026-09-13 - not started | 📋 pending - next candidate for `/spec-new` |
+| 16 — Content-hash duplicate-upload detection, reinstated | Claude Code | ✅ Done, 2026-09-14 | ✅ Spec'd, reviewed, and implemented via the SDD process end to end - first phase to go through it - see detail below |
+| 17 — Indexing write path standardized on LangChain's `index()`/`SQLRecordManager`, replacing LlamaIndex | Claude Code | ✅ Done, 2026-09-14 | ✅ Spec'd, reviewed (two real gaps found and resolved *during* implementation, not glossed over - see detail below), and implemented - see detail below |
+| 18 — Chunking-strategy auto-selection: log the rationale, not just the result | Claude Code | ✅ Done, 2026-09-14 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 19 — Chunk-level metadata expansion (`doc_type`, `department`, new `doc_classification`) for filtering | Claude Code | ✅ Done, 2026-09-14 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 20 — MultiQueryRetriever + Self-Query Retriever | Claude Code | ✅ Done, 2026-09-14 | ✅ Spec'd, reviewed (real dependency deadlock found and resolved *during* implementation, and one real free-text-filter limitation found during live verification - both recorded, not glossed over - see detail below), and implemented - see detail below |
+| 21 — Remove the duplicate per-strategy endpoints; one endpoint each for ingestion and retrieval | Claude Code | ✅ Done, 2026-09-14 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 22 — Comment-length cleanup across `src/hrb_chatbot/` + a codified 2-line rule | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 23 — FastAPI gateway layer: role-based access (RBAC) in front of RAG ingestion + retrieval, OAuth placeholder | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 24 — Fix: `validation_exception_handler` crashes on a malformed (non-JSON) body instead of returning a clean 422 | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 25 — Reindex by filename, not just `document_id` | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 26 — Simplify: one ingestion endpoint (upload+chunk+embed+store combined), separate index/reindex endpoint removed | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 27 — Delete-all-documents endpoint | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 28 — Fix: document_version reports 2 on a document's first-ever index | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 29 — Suppress misleading pdfminer FontBBox console warning | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 30 — Fix: running the test suite silently wiped the shared dev DB | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 31 — ACTIVE_VECTOR_DB/ACTIVE_LLM_PROVIDER .env vars, one resolver helper each | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 32 — Pilot: one `RagQueryParams` dataclass replaces the 10-field parameter list repeated across routes_query.py/rag_service.py/pipeline.answer_query() | Claude Code | ✅ Done, 2026-09-16 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 33 — Remove dead pass-through wrapper functions in both pipeline.py files | Claude Code | ✅ Done, 2026-09-16 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 34 — Simplify retrieve_chunks() to a single query; remove decompose_query() | Claude Code | ✅ Done, 2026-09-16 | ✅ Spec'd, reviewed, and implemented - see detail below |
+
 
 **If you're picking this up after a restart with no session memory**, the
 one thing to check first is Phase 10's actual live AWS state - it does not
@@ -463,7 +490,7 @@ later, separate wave once this core is solid.
     support Phase 5.1's future multi-query output without its own
     signature changing), and attaches each chunk's source `filename` from
     the metadata store - one lookup per distinct document, not per chunk.
-  - **`ai/rag_pipeline/response_generation/generator.py`** - builds a
+  - **`ai/rag_pipeline/response_generation/response_generator.py`** - builds a
     grounded prompt (context blocks labeled `[filename, chunk N]`, an
     explicit "answer using ONLY the context... say you don't know
     otherwise" instruction folded into the question text, since
@@ -502,7 +529,7 @@ later, separate wave once this core is solid.
   to the real retrieved chunk text, with `sources` correctly showing the
   real `filename`. Also unit-tested with fakes (no network): 9 tests
   across `retriever.py` (filename attachment, sub-query dedup, missing-
-  metadata fallback, `top_k` limiting) and `generator.py` (no-chunks
+  metadata fallback, `top_k` limiting) and `response_generator.py` (no-chunks
   short-circuit, grounding instruction present in the prompt, shared vs.
   overridden client selection). Route-level tests updated to monkeypatch
   `rag_service.answer_query()` rather than asserting the old `501` - one
@@ -1356,6 +1383,1080 @@ Explicitly deferred to a later, separate wave - not part of the above:
   the user asked whether Module 5 had been included and was told it
   hadn't been (Phases 14.1/14.2 map to modules 2-4 plus the idempotency
   cleanup only). Not started.
+
+- [x] **Phase 16 (Claude Code, 2026-09-14 on request) — Content-hash
+  duplicate-upload detection, reinstated.** The first phase taken through
+  the new SDD process end to end (`CLAUDE.md`'s SDD section): spec written
+  via `/spec-new` below and reviewed before any code changed, exactly as
+  planned.
+
+  - **Spec:**
+    - **Context:** Surfaced live - uploading the same PDF twice produced
+      two separate documents (`b681dbdf...` and `b05ca4a7...`) instead of
+      the second being flagged as a duplicate. Root cause: Phase 14.1
+      (2026-09-13) removed the check, explicitly as a "complex optional"
+      piece to drop for now, **"not a verdict on whether it's worth
+      having."** `content_hash` is still computed and stored on every
+      upload (`services/documents_service.py` line ~90); only the lookup
+      against it was removed. `find_by_content_hash()` still exists,
+      fully implemented, on `BaseMetadataClient`/`SqliteClient`/
+      `PostgresClient`, DB-indexed. `DocumentUploadResult.status` and
+      `DocumentUploadResponse.duplicate_count` still document `"duplicate"`
+      as a real value. Nothing here is new design - it's restoring one
+      deleted function call plus its tests. **Not the same mechanism as
+      the still-deferred `Idempotency-Key` header cache** (Redis-backed
+      re-implementation, no timeline) - that's HTTP-request replay
+      protection; this is a persistent, DB-backed check against actual
+      file content, unaffected by that limitation.
+    - **Data/API contracts:** No model or client changes. `services/
+      documents_service.py::save_upload()` gets exactly one new step,
+      inserted between computing `content_hash` and the
+      `supersedes_document_id` lookup (matching the original, pre-removal
+      order precisely - see Open questions): call
+      `get_db_gateway().metadata_store().find_by_content_hash(content_hash)`;
+      if it returns a row, return `DocumentUploadResult(status="duplicate",
+      document_id=<existing id>, message=<existing id/filename/version>,
+      file_size_bytes=<existing>, document_version=<existing>)` instead of
+      creating a new document.
+    - **User-visible behavior:** Uploading byte-identical content -
+      regardless of filename - returns `status: "duplicate"` pointing at
+      the *existing* document's `document_id`/`document_version`, and
+      `duplicate_count` on the response reflects it. No new row, file, or
+      directory is created. Content that merely shares a filename but
+      differs in bytes is unaffected - still `"uploaded"` as a new
+      document, same as today.
+    - **Failure modes:** None new - a duplicate is a per-file `200`
+      result (`status: "duplicate"`), not an error, matching the existing
+      partial-success batch-upload pattern.
+    - **Retrieval quality criteria:** N/A - upload-time only, doesn't
+      touch chunking/indexing/retrieval.
+    - **Out of scope:**
+      - The `Idempotency-Key` header cache / Redis re-implementation -
+        separate mechanism, stays deferred.
+      - Retroactively merging or cleaning up documents already
+        duplicated during the window this check was off (including the
+        `b681dbdf...`/`b05ca4a7...` pair from the report that prompted
+        this) - this fix only prevents *new* duplicates; existing ones
+        are a separate, explicit cleanup task if wanted.
+      - Fuzzy/near-duplicate detection (embedding-similarity based, not
+        exact hash) - a materially different feature, not this fix.
+    - **Open questions:** The original implementation ran the duplicate
+      check *before* validating `supersedes_document_id` - so if a
+      caller uploads content that happens to match an existing document's
+      hash while also passing `supersedes_document_id`, the result is
+      `"duplicate"` and the supersede is silently skipped, not an error.
+      Restoring that exact ordering as part of "same as before," not
+      changing it - flagged here since it's a real interaction a caller
+      could hit, not because it needs a decision before implementing.
+
+  **Verified:** the exact reported scenario reproduced live against a real
+  `TestClient` call (upload `JPMC Healthcare Benefits.pdf` twice, identical
+  bytes) - first upload `status: "uploaded"`; second `status: "duplicate"`,
+  `duplicate_count: 1`, pointing at the first upload's `document_id`, no
+  second document created. Full test suite green (89/89 - was 88, minus the
+  now-inverted `test_uploading_identical_content_twice_creates_two_separate_
+  documents`, plus the two restored duplicate tests). Note: this fix only
+  prevents *new* duplicates - the `b681dbdf...`/`b05ca4a7...` pair from the
+  original bug report predates it and still exists as two documents; no
+  retroactive cleanup was done (see Out of scope above).
+
+- [x] **Phase 17 (Claude Code, 2026-09-14 on request) — Indexing write
+  path standardized on LangChain's `index()`/`SQLRecordManager`, replacing
+  LlamaIndex.** Chosen as "Option A" of three presented (full swap vs. a
+  surgical hash-tracking-only adoption vs. concept-only) - the one that's
+  actually "as per LangChain's documentation," not just LangChain-flavored.
+
+  - **Spec:**
+    - **Context:** User asked to standardize the document-update path on
+      LangChain's own indexing API. Checked feasibility first:
+      `langchain.indexes.index()` + `SQLRecordManager` are installed and
+      real (`langchain==0.3.20`), and `retriever.py` already builds the
+      exact `Chroma`/`PineconeVectorStore` LangChain objects `index()`
+      needs - they're just not used for writing yet. **This reverses a
+      deliberate Phase 14.2 decision** ("one library per pipeline stage" -
+      LlamaIndex specifically for indexing, recorded in `CLAUDE.md`).
+      Overturning a recorded decision needs its own recorded reason, not a
+      silent swap - see the `docs/FAQ.md` entry this phase must add.
+    - **Data/API contracts:** No external contract changes - confirmed.
+      `IndexResponse` keeps the same shape; callers of `POST .../index` see
+      no difference except the new real capability: **skip-if-unchanged**.
+      Internally, `ai/doc_processing/indexing/vector_indexer.py::write_chunks()`
+      was rewritten onto `langchain.indexes.index()` (`cleanup="incremental"`,
+      `source_id_key="document_id"`), against a shared LangChain vector
+      store builder moved to `common/clients/db_client/langchain_vector_store.py`
+      (not left in `retriever.py` - importing it from there would have
+      created a circular import once `vector_indexer.py` needed it too;
+      `common/` is the right home since neither pipeline should depend on
+      the other's module). `sqlalchemy` pinned explicitly in
+      `requirements.txt`; the now-unused `llama-index-*` packages removed
+      from it entirely (nothing in `src/` imports `llama_index` anymore -
+      confirmed by grep before removing). **Two real gaps found only while
+      implementing, not anticipated by the spec as written - both resolved,
+      not glossed over:**
+      1. **Chunk ids.** `index()` computes each chunk's id itself (a hash),
+         it doesn't accept an arbitrary caller-supplied one - confirmed by
+         reading the actual installed source
+         (`langchain_core/indexing/api.py`), not assumed from docs. This
+         project's delete/supersede logic depends on ids it can compute
+         itself. Resolved with a custom `key_encoder` callable
+         (`build_chunk_id()`: `document_id:chunk_index:content_hash`) -
+         close enough to the old `document_id:chunk_index` scheme that
+         delete/supersede logic barely changed, while still giving
+         `index()` a real, content-derived signal to detect a change by.
+         One consequence caught in testing: `update_metadata()` replaces a
+         chunk's full metadata dict, so the supersede-flip step must keep
+         passing `chunk_index` explicitly (parsed back out of the id) -
+         an early version of this dropped it, silently wiping the field;
+         caught by asserting on it directly, not just on the report shape.
+      2. **Embeddings.** `index()` embeds internally via the vector store's
+         own embedding function - it can't accept pre-computed embeddings.
+         The old pipeline computed embeddings separately first
+         (`embedding_generator.py`), which would have meant embedding
+         every chunk *twice*, and silently breaking the documented
+         `embedding_model` per-call override (the vector store's embedding
+         function didn't know about it). Resolved: `get_vector_store()`
+         now takes an `embedding_model` override directly;
+         `pipeline.py`'s separate pre-embedding step was removed
+         (`embedding_generator.py` itself is untouched, just no longer
+         called from the main pipeline); `embedding_dimension` is measured
+         with one cheap `embed_query()` call, not by re-embedding
+         everything a second time.
+      - `documents_service.py`'s delete path also had to change:
+        `storage_chunk_ids()` (a workaround for a LlamaIndex-specific
+        Pinecone id-prefixing quirk) no longer applies now that indexing
+        doesn't go through LlamaIndex at all - deleting a document would
+        have silently targeted the wrong ids on Pinecone otherwise.
+        `storage_chunk_ids()` itself is now dead code, left in place, not
+        deleted, since it's still referenced from `vector_indexer.py`'s
+        module docstring history - worth a follow-up cleanup, not urgent.
+      - **The cross-document `supersedes_document_id`/`is_current` flip
+        stays this project's own logic**, confirmed unaffected in
+        substance - `SQLRecordManager` has no concept of "a different
+        document replaces this one," only "this source_id's own content
+        changed." Live-tested (see Verified below): `chunk_index` and
+        `is_current` both survive the flip correctly.
+    - **User-visible behavior:** Confirmed live - re-indexing unchanged
+      content reports `chunks_indexed: 0` (was previously always > 0 on
+      any re-index). Changed content is re-indexed and the old chunk
+      cleaned up. Stale chunks from a shrunk/changed document are deleted
+      for real via `index()`'s own cleanup.
+    - **Failure modes:** No new ones, confirmed - `write_chunks()` still
+      returns the same `dict` shape `IndexResponse` expects.
+    - **Retrieval quality criteria:** N/A - `retriever.py`'s search logic
+      itself is unchanged; it now imports its vector-store builder from
+      the new shared module instead of defining it locally, same behavior.
+      Existing vectors written by the old LlamaIndex path remain fully
+      queryable - confirmed no migration was needed.
+    - **Out of scope, confirmed:** chunking (`text_chunker.py`) untouched;
+      no migration/backfill of already-indexed documents; no change to the
+      Phase 16 duplicate-upload check.
+    - **Open questions:** the flagged count-reporting change
+      (`chunks_indexed: 0` on a genuinely unchanged re-index) is real and
+      confirmed live - no existing test asserted the old, wrong-by-design
+      behavior, so nothing needed correcting there.
+  **Verified:** full test suite green (90/90 - two tests rewritten for the
+  new skip/cleanup counts, `test_retriever.py` updated for the moved
+  vector-store builder, `FakeEmbeddings` moved to `conftest.py` as a
+  shared fake so no test needs a real OpenAI call). Live, end-to-end
+  through the real API: upload → first index (48 chunks) → second index of
+  *identical* content (`chunks_indexed: 0`, confirmed real skip-if-unchanged) →
+  a real grounded query with 5 sources → delete (48 chunks removed, confirming
+  the new ids delete correctly) → 404 after. Supersede-flip tested directly
+  against a real ChromaDB collection, confirming `chunk_index`/`is_current`
+  both survive. **Pinecone path implemented identically but not verified
+  live against a real Pinecone account in this session** - same category of
+  caveat this project already uses elsewhere (e.g. Postgres, "healthy
+  locally, not the active store yet"). One unrelated bug found and fixed
+  live during this work: `.claude/scripts/spec_gate.py`'s phase-detection
+  regex silently stopped scanning after Phase 4.5 (this file's phase
+  content spans two separate `##` headings, not one) - caught because the
+  gate itself blocked this phase's first real edit; fixed, verified both
+  branches (allow/deny) still correct, not just the one that was broken.
+
+- [x] **Phase 18 (done, 2026-09-14) — Chunking-strategy
+  auto-selection: log the rationale, not just the result.** "Option 1" of
+  two presented (deterministic + richer logging vs. an LLM-based content
+  reviewer) - chosen after checking LangChain's and LlamaIndex's own
+  documentation, neither of which recommends or documents an automatic,
+  content-inspecting strategy-picker; both frame splitter choice as a
+  stable, structural, upfront decision. That's what `decide_chunking_
+  strategy()` already does - this phase makes it explain itself, it
+  doesn't redesign it.
+
+  - **Spec:**
+    - **Context:** User asked for the chunking-strategy auto-selection to
+      review document content and log its reasoning. `decide_chunking_
+      strategy()` (`ai/doc_processing/chunking/text_chunker.py`) already
+      makes this decision on every upload where `chunking_strategy` isn't
+      given explicitly - it just doesn't say *why* beyond `logger.info(
+      "chunking: auto-selected strategy=%s", strategy)`.
+    - **Data/API contracts:** None. `decide_chunking_strategy()` keeps its
+      exact signature and return type (`str`) - no caller (`chunk_text()`,
+      `pipeline.py`, `IndexResponse`) changes. This is a logging-only
+      change, not a new field surfaced to API callers - the user asked to
+      *log* the rationale, not return it.
+    - **User-visible behavior:** None from the API's point of view.
+      Server-side log output for an auto-selected strategy changes from
+      "auto-selected strategy=markdown" to something that names the actual
+      evidence, e.g. "3 markdown heading line(s) found -> 'markdown'" /
+      "1847 characters, at or under the 2000-character whole-document
+      threshold -> 'none'".
+    - **Failure modes:** None new - this function has never raised; it
+      isn't gaining a code path that could.
+    - **Retrieval quality criteria:** N/A - decision logic itself is
+      unchanged, only its logging.
+    - **Out of scope:**
+      - No new detection signals (e.g., table density, code-block
+        detection) and no new thresholds - this file's existing
+        thresholds are already "measured, not guessed" (see
+        `WHOLE_DOCUMENT_MAX_LENGTH`'s own history); inventing new ones
+        without the same grounding would repeat exactly the mistake this
+        codebase has avoided elsewhere. Logging the *existing* rules'
+        evidence, not adding rules, is the whole scope.
+      - No separate "pre-processing" module/file - the enhanced function
+        stays in `text_chunker.py`. A new file for ~15 extra lines of
+        logging would be the premature abstraction this project's own
+        conventions argue against; revisit only if the logic actually
+        grows past this.
+      - `"semantic"` stays excluded from auto-selection, unchanged - its
+        existing rationale (accuracy-criticality isn't detectable from
+        text alone) still holds and this phase doesn't relitigate it.
+    - **Open questions:** none.
+  **Verified:** full test suite green (93/93, unchanged - confirms the
+  decision *rules* genuinely didn't change, only their logging). Live-ran
+  all four branches directly: markdown (`2 markdown heading line(s) found`),
+  html (`HTML heading tag(s) ['<h2'] found`), none
+  (`30 character(s), at or under the 1000-character... threshold`), and
+  recursive (`3199 character(s), ... over the 1000-character threshold`) -
+  each logs the real evidence, not just the chosen name.
+
+- [x] **Phase 19 (done, 2026-09-14) — Chunk-level
+  metadata expansion for filtering: `doc_type`, `department`, and a new
+  `doc_classification` field.** Foundation for Phase 20 (Self-Query needs
+  real filterable metadata to parse queries into) - not useful on its own
+  beyond enabling manual `filter=` queries by these fields.
+  **Depends on Phase 17 landing first** - this touches the exact write
+  path Phase 17 rewrites; building it against today's LlamaIndex-based
+  `write_chunks()` first would mean redoing it once Phase 17 replaces
+  that function. `timestamp` deliberately excluded from this phase, per
+  explicit request.
+
+  - **Spec:**
+    - **Context:** Today, `owner`/`department`/`doc_type`/`purpose` are
+      extracted by `document_metadata_extractor.py` (LLM, best-effort,
+      first-3000-characters-only) but only ever written to the **SQL**
+      `documents` row - never to vector-store chunk metadata, which today
+      only carries `chunk_index`/`is_current`/`indexed_at`. That means
+      none of them can be used in `retriever.py`'s `filter=` kwarg, the
+      same mechanism `is_current` already uses. `owner` and `purpose` are
+      deliberately excluded from this expansion (see Out of scope) - not
+      an oversight.
+    - **Data/API contracts:**
+      - New SQL column `doc_classification TEXT`, same `ALTER TABLE`
+        pattern as the existing `owner`/`department`/`doc_type`/`purpose`
+        columns, in both `sqlite_client.py` and `postgres_client.py`.
+      - `document_metadata_extractor.py`'s `EXTRACTION_QUESTION` prompt
+        and `EMPTY_RESULT` gain a fifth field, `doc_classification` - free
+        text, best-effort, same shape as `doc_type` (not a fixed enum;
+        real documents vary too much to hardcode a closed list - e.g.
+        "401k", "health benefits", "leave policy", whatever the document
+        itself indicates).
+      - `DocumentRecord` (`models/documents.py`) gains a `doc_classification: str | None` field, matching `doc_type`'s existing shape exactly.
+      - Chunk metadata gains `doc_type`, `department`, `doc_classification`
+        alongside today's `chunk_index`/`is_current`/`indexed_at`.
+    - **User-visible behavior:** `GET /documents/{id}` now reports
+      `doc_classification` like it already reports `doc_type`. No new
+      endpoint or query-facing behavior yet - Phase 20 is what actually
+      lets a query use these filters.
+    - **Failure modes:** None new - extraction is already best-effort and
+      already never blocks indexing; a failed extraction just leaves
+      `doc_type`/`department`/`doc_classification` null on that document's
+      chunks, same as `owner`/`purpose` already can be today.
+    - **Retrieval quality criteria:** N/A directly (Phase 20 covers actual
+      filtered retrieval) - but worth stating the mechanism precisely
+      since it's easy to get backwards: on a **re-index** of a document
+      that's already been through first-index extraction,
+      `doc_type`/`department`/`doc_classification` are already known (sitting
+      in the SQL row `write_chunks()` already fetches as `existing_document`)
+      and go straight into the chunk metadata built at write time - no
+      follow-up write needed. Only a document's **first-ever** index needs
+      a second, follow-up `vector_store.update_metadata()` call once
+      extraction finishes after indexing (same shape as the existing
+      supersede-flip pattern, not a new one) - because extraction runs
+      *after* chunks are written for a first index, so those three fields
+      genuinely aren't known yet at write time.
+    - **Out of scope:**
+      - `timestamp` - explicitly excluded per request.
+      - `owner`, `purpose` - not filter candidates (`owner` is
+        audit/display, not something a query implies; `purpose` is a free
+        sentence, not a categorical value a filter can match on). Not
+        propagated to chunk metadata.
+      - Backfilling chunk metadata for already-indexed documents - only
+        applies going forward; an old document gets these fields on its
+        next re-index, not retroactively.
+      - Any actual use of these fields in retrieval - that's Phase 20.
+    - **Open questions:** none - the exact code this touches (which
+      function builds chunk metadata, in what shape) depends on whether
+      Phase 17 has landed by the time this is implemented; the fields and
+      behavior above hold either way.
+  **Verified:** full test suite green (97/97 - one existing extraction test
+  updated for the new field, five new tests added covering both mechanisms:
+  a first index leaves `doc_type`/`department`/`doc_classification` out of
+  the initial chunk metadata entirely rather than null; the follow-up
+  `apply_extracted_chunk_metadata()` patch preserves `chunk_index`/
+  `is_current`/`indexed_at` while adding the three new fields, same
+  REPLACE-semantics lesson as the Phase 17 supersede-flip; a re-index pulls
+  the fields straight from `existing_document`; and either path omits a
+  field entirely when extraction couldn't determine it, since Pinecone's
+  `update()` rejects a literal `None` value outright while Chroma silently
+  drops it - confirmed by direct test against a real ephemeral Chroma
+  client). Live-verified end to end against the real OpenAI extraction
+  call, a real Chroma collection, and the real SQLite metadata store
+  (`resources/kb_docs/JPMC Guild Tuition Assistance.pdf`): first index -
+  chunk metadata came back
+  `{'doc_type': 'benefits', 'department': None, 'doc_classification':
+  'Guild Education benefit program', 'is_current': True, 'chunk_index': 0}`
+  (an absent `department` key confirmed - the extractor genuinely found
+  none for this document, and that's a missing key, not a stored null);
+  re-index (after manually setting the SQL row's `doc_classification` to a
+  sentinel value, to prove the value is read fresh from SQL at write time
+  rather than reused from the first index) - the new chunk immediately
+  carried the sentinel value, no follow-up call involved.
+
+- [x] **Phase 20 (done, 2026-09-14) — MultiQueryRetriever
+  and Self-Query Retriever.** **Depends on Phase 19** - Self-Query has
+  nothing to parse a filter into without Phase 19's chunk metadata.
+  Chosen after checking real-world LangChain guidance for RAG retrieval
+  optimization (see the chat discussion this spec follows from).
+
+  - **Spec:**
+    - **Context:** User wants two of LangChain's documented retrieval
+      techniques: `MultiQueryRetriever` (rewrites one question into several
+      variations, searches with each, merges results - catches phrasing a
+      single query misses) and Self-Query Retriever (an LLM parses the
+      question itself into a structured metadata filter, e.g. "what's my
+      401k vesting schedule" -> `doc_classification="401k"`).
+    - **Data/API contracts:**
+      - Both are **layers on top of** the existing similarity/MMR choice,
+        not a third alternative to it - `RagQueryRequest` gains two new
+        optional, explicit, default-`False` fields: `use_multi_query: bool`
+        and `use_self_query: bool`. Neither changes the meaning of
+        `search_strategy` - they wrap whichever base retriever
+        (similarity or MMR) `search_strategy` already selects. Explicit
+        opt-in on both, not inferred from the query text - matches this
+        project's existing "no magic, override is always explicit" pattern
+        (`vector_db`, `chunking_strategy`, etc. all work the same way).
+      - `RagQueryResponse` gains an optional field surfacing what
+        Self-Query actually parsed out (e.g. `applied_filter: dict | None`)
+        - without this, a wrong or surprising filter would be undebuggable
+        from the API response alone.
+      - Self-Query needs an `AttributeInfo` list (LangChain's own schema
+        for "what fields exist, what they mean") built from Phase 19's
+        three filterable fields (`doc_type`, `department`,
+        `doc_classification`) - `is_current` is deliberately NOT exposed
+        to self-query's schema; it's an internal/system field a user
+        question would never naturally reference, and it must stay under
+        this project's own control (see Phase 16's careful handling),
+        not something an LLM-parsed filter should be able to override.
+    - **User-visible behavior:** With both flags off (the default), query
+      behavior is byte-for-byte unchanged from today. With
+      `use_multi_query: true`, more candidate chunks get considered before
+      the same top_k is returned. With `use_self_query: true`, the query
+      is filtered by whatever `doc_type`/`department`/`doc_classification`
+      the model parses out of the question - `applied_filter` in the
+      response shows exactly what was applied.
+    - **Failure modes:** Self-Query's own LLM parse can fail or return no
+      filter - falls back to an unfiltered search rather than erroring,
+      same "best-effort, never block the user's answer" philosophy as
+      `document_metadata_extractor.py`.
+    - **Retrieval quality criteria:** Golden dataset
+      (`resources/golden_dataset/golden_dataset.json`) should be re-run
+      with both flags on and off to confirm neither regresses the
+      default-off path and that self-query's parsed filters are actually
+      correct on questions that name a specific plan/department.
+    - **Out of scope:** `ContextualCompressionRetriever`/reranking,
+      Parent-Document Retriever, `EnsembleRetriever`/hybrid BM25 search -
+      all discussed as options, none requested yet.
+    - **Open questions:** none.
+  **Addendum, found during implementation (2026-09-14) - same "flag real
+  gaps found mid-implementation" discipline as Phase 17's two gaps:**
+    - **Real dependency deadlock, confirmed by trying it live:** LangChain's
+      own per-provider chat packages can't be installed here at all.
+      `langchain-anthropic`'s newest 0.3.x release (the last one compatible
+      with this project's `langchain-core==0.3.86`, itself required by
+      `langchain`/`langchain-openai`/`langchain-pinecone`/`langchain-chroma`)
+      hard-requires `anthropic<1.0.0`, but this project's own
+      `anthropic_client.py` needs `anthropic==1.2.0`. Every newer
+      `langchain-anthropic` release needs `langchain-core>=1.6`, which
+      breaks the rest of the pinned stack instead. No version satisfies
+      both - confirmed by actually installing each combination, not just
+      reading changelogs. Resolution: `common/clients/llm_client/
+      langchain_chat_model.py` (new) - a small `BaseChatModel` subclass
+      (`GatewayChatModel`) wrapping this project's own multi-provider
+      `ask()` clients via `client_gateway.py`. Zero new dependencies, and
+      it's the same gateway/enum pattern CLAUDE.md already documents
+      instead of bypassing it for a per-provider LangChain package.
+    - **`RagQueryRequest` had no provider selector at all before this** -
+      `model_name` only ever overrides `OpenAIChatClient`'s model in
+      `response_generator.py::generate_answer()`, which stays OpenAI-only,
+      unchanged (out of scope for this phase - flagging it, not fixing
+      it). New field `llm_provider: LlmProvider | None` (defaults to
+      `openai`) picks which provider backs `GatewayChatModel` for
+      MultiQueryRetriever's rewriting / Self-Query's filter-parsing only -
+      independent of the final answer's model.
+    - **`retrieve_chunks()`'s return type changes** from `list[dict]` to
+      `tuple[list[dict], dict | None]` (chunks, applied_filter) to carry
+      `applied_filter` up to `answer_query()`/`RagQueryResponse` - ripples
+      through `ai/rag_pipeline/pipeline.py` and its own tests.
+    - **is_current must never be overridable by a parsed filter** (the
+      spec's own stated rule) - a plain dict merge of Self-Query's parsed
+      filter with `CURRENT_CHUNKS_ONLY` would let a same-shaped key
+      silently replace it, so they're explicitly AND-ed together
+      (`{"$and": [CURRENT_CHUNKS_ONLY, parsed_filter]}`) instead of merged.
+    - **Both flags together:** not mutually exclusive - if both are true,
+      Self-Query's filter is parsed once from the *original* question
+      (filtering intent shouldn't come from a MultiQuery paraphrase), then
+      MultiQueryRetriever wraps a base retriever already constructed with
+      that combined filter.
+  **Verified:** full test suite green (106/106 - 5 new retriever-level
+  tests using a fake `BaseChatModel` double, so none of them spend real API
+  cost: `_combine_with_current_only()`'s bare-vs-AND-combined cases,
+  `search_multi_query()` merging/deduping across LLM-rewritten sub-queries,
+  `_parse_self_query_filter()` both parsing a real filter and returning
+  `None` when the model finds nothing to filter on, and the core
+  correctness case the spec calls out explicitly - a superseded chunk that
+  *also* matches the parsed filter is still excluded, `is_current` proven
+  un-overridable; plus 3 new route-level tests for `use_multi_query`/
+  `use_self_query`/`llm_provider`/`applied_filter`). Live-verified against
+  real OpenAI + a real indexed document
+  (`resources/kb_docs/JPMC Empower 401(k) Savings Plan.pdf`) through the
+  real `/v1/rag-retrieval/query` endpoint: `use_multi_query=true` alone
+  retrieved 7 real chunks and generated a grounded answer; `use_self_query`
+  alone correctly parsed `{"doc_type": {"$eq": "benefits"}}` and matched 5
+  real chunks when queried in isolation; both flags together ran without
+  error, self-query's filter parsed once from the original question, then
+  fed into the multi-query-wrapped base retriever, exactly as spec'd.
+  **One real, honest limitation found during this live verification, not
+  glossed over:** `doc_classification` is deliberately free text (Phase
+  19's own design - "not a fixed enum, real documents vary too much"), so
+  Self-Query's `$eq` filter only matches when its LLM's guessed value
+  happens to exactly match what extraction actually stored - e.g. the LLM
+  reliably parses `doc_classification="401k"` from a "what's my 401k
+  vesting schedule" question (matching `METADATA_FIELD_INFO`'s own written
+  example), but this document's real extracted value is `"401(k) Savings
+  Plan"`, an exact-string mismatch that correctly-but-uselessly returns zero
+  chunks. `doc_type` (semi-controlled - extraction picks from a short fixed
+  list) does not have this problem, confirmed by isolating it: filtering on
+  `doc_type=benefits` alone matched real chunks every time. This is a real
+  design tension between Phase 19's free-text field and Self-Query's
+  exact-match semantics, not a Phase 20 bug - flagging it as a follow-up
+  item (e.g. a `contain`/fuzzy comparator, or re-scoping
+  `doc_classification` toward a smaller controlled set) rather than fixing
+  it now, since it wasn't part of this phase's spec.
+
+- [x] **Phase 21 (Claude Code, 2026-09-14 on request) — Remove the
+  duplicate per-strategy endpoints; one endpoint each for ingestion and
+  retrieval.** Implemented before Phases 18-20, as recommended - not a
+  hard technical dependency, but Phase 20 adds new fields to
+  `RagQueryRequest`, and doing that against a single query endpoint
+  instead of two is simpler and avoids touching the soon-to-be-removed
+  `/query/mmr` at all.
+
+  - **Spec:**
+    - **Context:** This API currently has two endpoints for the same
+      operation, twice: `POST /documents/{id}/index` (dynamic,
+      `chunking_strategy` as an optional body field) and `POST
+      /documents/{id}/index/{chunking_strategy}` (one URL per strategy,
+      fixed from the path); `POST /query` (dynamic, `search_strategy` as
+      an optional body field) and `POST /query/mmr` (fixed to MMR). Each
+      pair does the identical thing two different ways. Consolidate to one
+      endpoint per resource, strategy selection always via the request
+      body - matches how every other override on these endpoints already
+      works (`vector_db`, `embedding_model`, `chunk_size`, `top_k`, ...).
+    - **Data/API contracts:**
+      - **Removed:** `POST /documents/{id}/index/{chunking_strategy}`
+        (`routes_documents.py::index_document_with_strategy()`) and `POST
+        /query/mmr` (`routes_query.py::query_mmr()`). Both routers'
+        shared helpers (`_index_document()`, `_answer_query()`) stay -
+        still used by the one remaining route each.
+      - `IndexRequest.chunking_strategy` and `RagQueryRequest.search_strategy`
+        become real `StrEnum`s (`ChunkingStrategy`, `SearchStrategy` in
+        `common/enums.py`), matching the `VectorDB`/`MetadataStore`/
+        `LlmProvider` pattern already established. Reason this matters now
+        and didn't before: removing the URL-based endpoints removes the
+        404-at-the-path-level validation they gave "for free" - without
+        converting to an enum, an unknown strategy would only be caught
+        deeper in the pipeline (a `ValueError` a few calls in), not at the
+        API boundary. `CHUNKING_STRATEGIES`/`SEARCH_STRATEGIES` (the
+        dispatch dicts in `text_chunker.py`/`retriever.py`) stay exactly
+        as they are - dict keys and enum values must simply agree, not be
+        merged into one structure.
+      - `README.md`'s `.../index/recursive` example and the Postman
+        collection's three `/index/{strategy}` requests + one `/query/mmr`
+        request are removed; the surviving dynamic-endpoint examples
+        already demonstrate `chunking_strategy`/`search_strategy` as body
+        fields.
+    - **User-visible behavior:** `POST /documents/{id}/index/recursive`
+      and `POST /query/mmr` return `404` (unmatched route) after this
+      phase - a real, intentional breaking change, not an oversight.
+      `POST /documents/{id}/index` with `{"chunking_strategy":
+      "recursive"}` and `POST /query` with `{"search_strategy": "mmr"}`
+      are the replacements - already supported today, unchanged.
+    - **Failure modes:** An unknown `chunking_strategy`/`search_strategy`
+      value now returns `422` (Pydantic enum validation) instead of the
+      old dynamic endpoint's `ValueError`-derived `422` or the removed
+      URL endpoint's `404` - one consistent shape across both, at the API
+      boundary instead of a few calls into the pipeline.
+    - **Retrieval quality criteria:** N/A - no chunking/retrieval logic
+      changes, only which URLs reach it and how the value is validated.
+    - **Out of scope:**
+      - No change to `POST /documents` (upload), `GET`/`DELETE`
+        `/documents[/{id}]`, or any query field other than
+        `search_strategy`.
+      - Not bundling Phase 19/20's new fields into this phase - this is
+        endpoint surface cleanup only.
+    - **Open questions:** none.
+  **Verified:** full test suite green (93/93 - one obsolete test removed,
+  three added covering the new 404s and the enum-driven 422s). Live-checked
+  directly: `.../index/recursive` and `POST /query/mmr` both now `404`;
+  `{"chunking_strategy": "not-a-real-strategy"}` and an unknown
+  `search_strategy` both `422`, naming the valid options.
+
+  Doing this surfaced staleness well beyond this phase's own scope, fixed
+  alongside it rather than left for later:
+  - `CLAUDE.md`'s architecture section still said LlamaIndex writes vectors
+    (Phase 17 changed that) - fixed.
+  - `README_TEST.md` - a *living* reference ("every endpoint this project
+    **currently has**"), not a historical one - had drifted across this
+    entire session, not just this phase: the removed `deep=true` health
+    toggle, the *reinstated* (Phase 16) duplicate-upload detection still
+    described as removed, and `IndexRequest.vector_db`'s enum conversion
+    (turn 1 of this session) never reflected in its "expect 500" edge
+    case. All corrected and re-verified live against the real server, not
+    just reworded.
+  - `postman/hrb_chatbot.postman_collection.json` - the two removed
+    endpoints' requests deleted; their edge cases repurposed (not
+    dropped) to test the same intent through the surviving path.
+
+- [x] **Phase 22 (done, 2026-09-15) — Comment-length
+  cleanup across `src/hrb_chatbot/`, plus a codified 2-line rule.** Comment
+  length drifted longer phase over phase this session (module docstrings up
+  to 18 lines, inline blocks up to 9) - this phase both fixes the existing
+  drift and writes the limit down so it doesn't recur.
+
+  - **Spec:**
+    - **Context:** `docs/CODING-STANDARDS.md` already said "a line or two,
+      not a paragraph" but without a hard number or a stated exception -
+      an AST/regex scan of `src/hrb_chatbot/` found 94 violations (a
+      comment/docstring over 2 content lines) across 36 files.
+    - **Data/API contracts:** None - comments and docstrings only, zero
+      behavior change. `docs/CODING-STANDARDS.md` and
+      `.claude/skills/coding-standards/SKILL.md` gain an explicit two-line
+      hard limit, third line allowed only at a genuinely critical spot.
+    - **User-visible behavior:** None - same reason.
+    - **Failure modes:** None new.
+    - **Out of scope:** `tests/` (a different, already-consistent short-
+      "why" style; not what drifted) and non-Python docs (`docs/*.md`,
+      `CLAUDE.md`) - those are reference material, not the "comment" this
+      request means.
+    - **Open questions:** none.
+  **Verified:** all 36 flagged files edited by hand (not scripted) across
+  every layer (`common/clients/`, `ai/doc_processing/`, `ai/rag_pipeline/`,
+  `api/`, `services/`, `main.py`) - 94 violations (over 2 content lines) down
+  to 0 over the 3-line hard ceiling, ~48 legitimate 3-line exceptions kept
+  for genuinely critical spots (REPLACE-semantics gotchas, the is_current
+  override-safety boundary, the Pinecone/langchain-core dependency
+  deadlock), confirmed by an AST/regex re-scan after every batch. One
+  long-standing dead docstring reference fixed along the way
+  (`routes_documents.py` pointed at a module docstring that didn't exist)
+  and one stale claim fixed (`rag_service.py::answer_query()` still said
+  "Raises NotImplementedError until Phase 6 exists", untrue since Phase 6
+  shipped long ago). One long docstring's real content relocated rather
+  than deleted - `langchain_vector_store.py`'s `_TextBackfillPineconeIndex`
+  moved to `docs/FAQ.md`'s new entry 8, source trimmed to a 3-line pointer.
+  Full test suite green (106/106) after every batch, plus a live `/ping`
+  smoke test at the end. `docs/CODING-STANDARDS.md` and
+  `.claude/skills/coding-standards/SKILL.md` both codify the 2-line rule
+  (3 sparingly) going forward, so this doesn't drift again unnoticed.
+  **Flagged, not fixed (outside this phase's scope):** `PineconeClient.
+  query()`/`.upsert()` and `ChromaClient`'s equivalents appear to be dead
+  code in the current pipeline - indexing/retrieval both go through
+  LangChain's own vector store objects now (`langchain_vector_store.py`),
+  not these raw methods directly; confirmed by grepping for other callers
+  and finding none. Worth a real look in a future phase, not this one.
+
+- [x] **Phase 23 (done, 2026-09-15) — FastAPI gateway
+  layer: role-based access in front of RAG ingestion + retrieval, OAuth
+  placeholder.** Follows a conversation weighing a real API Gateway
+  (AWS API Gateway/Kong) against in-app FastAPI dependencies - the user
+  confirmed in-app. Sequenced ahead of Phase 15 (Evaluation) and today's
+  planned ReAct agent work, kept intentionally tight so it doesn't block either.
+
+  - **Spec:**
+    - **Context:** Today there is zero authentication or authorization -
+      every endpoint is reachable by anyone who can reach the URL. The user
+      wants: only an `HR_SUPPORT` role can reach the ingestion API (upload/
+      list/get/delete/index a document); `EMPLOYEE`, `MANAGER`, and
+      `HR_SUPPORT` can all reach retrieval (query), uniformly - no
+      per-document visibility differences yet, deliberately deferred. Real
+      OAuth is explicitly deferred too - this phase builds the seam
+      (dependency-injection point + role enum + 401/403 semantics) a real
+      OAuth integration will slot into later, not real authentication now.
+    - **Data/API contracts:**
+      - New `Role` `StrEnum` in `common/enums.py`: `EMPLOYEE`, `MANAGER`,
+        `HR_SUPPORT` - matching the existing `VectorDB`/`LlmProvider` pattern.
+      - New `api/gateway/` package: `current_user.py` (a `CurrentUser`
+        dataclass - `employee_id`, `full_name`, `role` - and a
+        `get_current_user(request)` FastAPI dependency reading three
+        request headers) and `rbac.py` (`require_role(*allowed_roles)`, a
+        dependency factory raising 403 when the resolved role isn't in the
+        allowed set).
+      - **Identity source, explicitly not real security:**
+        `X-Employee-Id`/`X-Full-Name`/`X-Role` request headers, read as-is,
+        no signature/verification. This is a deliberate, honestly-labeled
+        placeholder - trivially spoofable by design, not a security
+        control. All three are required (401 if any is missing, or if
+        `X-Role` doesn't match a real `Role` value) - fail closed, and
+        modeling what a real verified token's claims would guarantee,
+        rather than defaulting silently.
+      - `main.py` wires `Depends(require_role(...))` at
+        `app.include_router(...)` level for both routers - a router-level
+        gate, not injected into individual route handlers. Nothing in
+        `routes_documents.py`/`routes_query.py` changes.
+      - `common/error_codes.py` gains `UNAUTHENTICATED` (401) and
+        `FORBIDDEN` (403); `main.py`'s existing `HTTPException` handler
+        (already maps 429 -> `RATE_LIMITED`) gains these two mappings -
+        explicit codes, not a defaulted `INTERNAL_ERROR`, matching
+        `CODING-STANDARDS.md`'s existing error-code rule.
+      - New empty placeholder: `common/clients/auth_client/oauth_client.py`
+        (0 bytes, matching the existing `llm_client`/`db_client`/
+        `web_client` sibling pattern) - real OAuth lands here later; only
+        `get_current_user()`'s internals will need to change when it does,
+        nothing calling it.
+    - **User-visible behavior:** Every ingestion request now needs all
+      three headers with `X-Role: hr_support`, or it's a 401/403. Every
+      retrieval request needs all three headers with `X-Role` one of
+      `employee`/`manager`/`hr_support`. `GET /ping` and `GET /health`
+      stay open (operational endpoints, not business data).
+    - **Failure modes:** Missing any identity header -> 401 naming which
+      header(s). Unknown `X-Role` value -> 401 naming the valid options.
+      Valid identity, wrong role for this router -> 403 naming the
+      required role(s). Existing rate limiting (`enforce_rate_limit`)
+      is unchanged and stacks with this - both dependencies apply.
+    - **Retrieval quality criteria:** N/A - no retrieval-logic change.
+    - **Out of scope:** Real OAuth/JWT/API-key verification (placeholder
+      only, see above). Persisting `employee_id` onto `DocumentRecord` for
+      upload audit trail (a natural follow-up, not required to gate
+      access - flagged in `docs/BACKLOG.md`, not built here). Per-document
+      visibility by role (deferred per the user's own instruction).
+      Rate-limiting by identity instead of IP (still IP-keyed; noted as a
+      future enhancement now that identity exists).
+    - **Open questions:** none - reviewed conversationally over several
+      turns before this spec was written, not a first draft.
+  **Verified:** full test suite green (113/113 - 4 new gateway tests: no
+  headers -> 401 naming the missing ones, unknown `X-Role` value -> 401,
+  `employee`/`manager` attempting ingestion -> 403 naming the required
+  role, all three roles accepted for retrieval; plus 2 existing
+  `main.py::http_exception_handler` unit tests updated for the new
+  explicit 401/403 code mappings). Live-verified end to end: `GET /ping`
+  needs no headers (`200`); `GET /v1/rag-ingestion/documents` with no
+  headers is `401` `UNAUTHENTICATED` naming all three missing headers;
+  same call as `employee` is `403` `FORBIDDEN` naming `hr_support` as the
+  required role; as `hr_support` it's `200` and actually lists real
+  documents from the real SQLite store; `POST /v1/rag-retrieval/query` as
+  `manager` reaches the real pipeline (ran retrieval + generation for
+  real, not mocked). Existing test suite's two `TestClient` instances
+  (`test_routes_documents.py`, `test_routes_query.py`) updated with
+  default headers at the client level (one line each), not per call - no
+  existing test's own behavior changed. `README_TEST.md` gained an
+  upfront gateway-headers note plus a new, live-verified 1.7 case; the
+  Postman collection's `RAG Ingestion`/`RAG Retrieval` folders gained a
+  pre-request script injecting the placeholder headers automatically, so
+  every existing request in both folders keeps working without editing
+  each one by hand. `CLAUDE.md`'s request-flow section and
+  `docs/BACKLOG.md` (real-OAuth, uploader-identity-persistence,
+  identity-keyed rate limiting, per-document visibility - all explicitly
+  out of scope here) updated to match.
+
+- [x] **Phase 24 (done, 2026-09-15) — Fix:
+  `validation_exception_handler` crashes on a malformed (non-JSON) body
+  instead of returning a clean 422.** Found live while answering a user
+  question about re-indexing (a multipart/form-data body sent to
+  `POST /documents/{id}/index`, which expects JSON) - reproduced directly,
+  root-caused, not guessed at.
+
+  - **Spec:**
+    - **Context:** When a request body fails to parse as JSON at all (not
+      a field-level validation failure - the whole body is unparseable,
+      e.g. a file sent where JSON was expected), Pydantic's
+      `RequestValidationError.errors()` includes the raw request body
+      bytes in its `"input"` field. `main.py`'s
+      `validation_exception_handler` passes that straight to
+      `jsonable_encoder()`, whose default `bytes` handling calls
+      `.decode()` with no error handling - raising `UnicodeDecodeError`
+      whenever those raw bytes aren't valid UTF-8 (any real binary file,
+      e.g. a PDF). That crash happens *inside the exception handler
+      itself* - Starlette has no fallback for an exception raised while
+      already handling another exception, so it becomes a genuinely
+      unhandled crash (a raw traceback in the console, no JSON response
+      reaches the client) instead of the clean 422 every other malformed
+      request gets.
+    - **Data/API contracts:** `validation_exception_handler` gains
+      `custom_encoder={bytes: lambda value: value.decode("utf-8",
+      errors="replace")}` on its `jsonable_encoder()` call - malformed
+      UTF-8 in the echoed-back `"input"` is replaced (`�`), never
+      raised on. No response-shape change for every existing (already
+      passing) validation-error case - `details` still carries the same
+      Pydantic error list, just safe for binary edge cases too now.
+    - **User-visible behavior:** A non-JSON body to any JSON endpoint now
+      reliably gets a `422` with `code: "VALIDATION_ERROR"`, same as any
+      other malformed request - never a raw crash.
+    - **Failure modes:** None new - this closes a failure mode, doesn't add one.
+    - **Out of scope:** Making the gateway or any route accept
+      multipart/form-data on JSON-only endpoints - the fix is that a
+      *rejection* of the wrong body shape is now clean, not that the
+      wrong shape becomes accepted.
+    - **Open questions:** none - root-caused via direct reproduction
+      before this spec was written, not a guess.
+  **Verified:** root-caused by direct reproduction (not guessed at) - a
+  real multipart/form-data PDF body posted to `POST /documents/{id}/index`
+  reproduced the exact `UnicodeDecodeError` class the user hit
+  (`'utf-8' codec can't decode byte 0xd3'`). Confirmed the crash happens
+  *inside* `validation_exception_handler` itself via
+  `fastapi.encoders.ENCODERS_BY_TYPE[bytes]`'s default `lambda o:
+  o.decode()`. Fixed with a `custom_encoder` on the `jsonable_encoder()`
+  call; re-ran the exact failing request afterward - clean `422`,
+  `code: "VALIDATION_ERROR"`, no crash. New regression test
+  (`test_a_multipart_body_on_a_json_endpoint_is_a_clean_422_not_a_crash`)
+  added and confirmed it actually catches the regression - failed with
+  the exact same traceback when run against the pre-fix code (`git
+  stash`), passed after. Full suite green (114/114).
+
+- [x] **Phase 25 (done, 2026-09-15) — Reindex by
+  filename, not just `document_id`.** Follows from a conversation about
+  LangChain's own indexing model (`source_id_key` - one stable id per
+  document, not resolved from a category/name-that-may-collide) - the
+  conclusion was to keep `document_id` as that stable id, but let the
+  caller reindex by filename too, since that's what they typically
+  already know without a separate lookup.
+
+  - **Spec:**
+    - **Context:** `POST /documents/{document_id}/index` currently only
+      accepts a real `document_id` in the URL - a caller who knows a
+      document by name (not its system-generated id) has to `GET
+      /documents` and search first. Filenames aren't unique in this
+      system by design (Phase 16 - same name, different content, is a
+      new document), so a name-based lookup can be ambiguous; a
+      classification/type is a category shared by many documents, not a
+      usable identifier at all (not proposed here for that reason).
+    - **Data/API contracts:**
+      - `POST /documents/{identifier}/index` - the path param is renamed
+        `document_id` -> `identifier` in code (URL shape unchanged).
+        Resolution: try `identifier` as a real `document_id` first
+        (existing behavior, unchanged, ignores `is_current` - explicit id
+        always wins regardless of supersede status). If no such id
+        exists, treat it as a filename and match against **current**
+        (`is_current=true`) documents only.
+      - Zero matches (neither an id nor a current filename) -> `404`
+        `DOCUMENT_NOT_FOUND`, same as today.
+      - Exactly one filename match -> reindex it, identical to passing
+        its `document_id` directly.
+      - More than one filename match -> new `409`,
+        `AMBIGUOUS_DOCUMENT_IDENTIFIER` (new `error_codes.py` entry),
+        naming the matching `document_id`s so the caller can disambiguate.
+      - `IndexResponse.document_id` already reports the real, resolved id
+        - no contract change needed there; a caller using a filename
+          finds out the real id from the response.
+    - **User-visible behavior:** `POST /documents/JPMC Healthcare
+      Benefits.pdf/index` (URL-encoded) behaves identically to using that
+      document's real id, as long as exactly one current document has
+      that name.
+    - **Failure modes:** Ambiguous filename -> `409` naming the
+      candidates, not a silent pick of "most recent" (explicit over
+      implicit, matching this project's own established convention -
+      `vector_db`, `chunking_strategy`, etc. are never silently guessed).
+    - **Out of scope:** Filename lookup on `GET`/`DELETE
+      /documents/{id}}` - only requested for reindex. `doc_classification`/
+      `doc_type` as a lookup key (bulk-reindex-by-category is a different,
+      unrequested operation).
+    - **Open questions:** none.
+  **Verified:** full suite green (118/118 - 5 new tests: filename resolves
+  to the correct document_id and reindexes; two current documents sharing
+  a filename is 409 naming both ids; unknown filename is still 404;
+  filename resolution ignores a superseded document's old name while id
+  lookup still reaches it regardless). Live-verified on the real dev DB:
+  `JPMC Healthcare Benefits.pdf` genuinely resolves to 8 different current
+  documents there (accumulated across this whole session's testing) and
+  correctly 409s naming all 8 - confirming the ambiguity path against
+  real, not synthetic, data. A fresh, unambiguous upload reindexed
+  successfully by filename alone (real embedding call, 39 chunks, the
+  response's `document_id` matching the actual uploaded id) - test
+  document and its vectors cleaned up afterward. `README_TEST.md` (new
+  4.12-4.14, plus a stale "now LlamaIndex's VectorStoreIndex" line fixed
+  in the section intro while there) and the Postman `Index` folder (two
+  new items) updated to match.
+
+- [x] **Phase 26 (done, 2026-09-15) — Simplify: one ingestion endpoint,
+  separate index/reindex endpoint removed.** Explicit user request:
+  Phases 16/25's two-step upload-then-index design (built for dedup/re-
+  index/cost-control reasons) was overengineered for a learning project
+  with no production traffic - beginner-unfriendly complexity solving a
+  problem this project doesn't have.
+
+  - **Spec:** `POST /v1/rag-ingestion/documents` now does the whole
+    pipeline per file in one call - save, extract, chunk (auto-selected
+    strategy), embed, write to vector store - and returns one combined
+    result per file (upload outcome + indexing outcome together).
+    `POST /documents/{id}/index` (and filename-based reindex, Phase 25)
+    removed - `routes_documents.py`'s `_index_document`/`index_document`/
+    `_resolve_document_by_id_or_filename`/`_preflight_backends_ready`,
+    `models/documents.py`'s `IndexRequest`/`IndexResponse`. Per-call
+    chunking/embedding/vector_db overrides removed too - defaults only,
+    no options surface to keep simple. Content-hash dedup (Phase 16) kept
+    unchanged - a real, already-working check, not part of what was
+    flagged as overengineered. `GET`/`DELETE /documents[/{id}]` unchanged.
+  **Verified:** full suite green (113/113) - test_routes_documents.py
+  rewritten with an autouse fake for `pipeline.index_document()` (no real
+  embedding cost per test), every /index-specific test removed, upload
+  tests updated to assert the now-combined result shape
+  (`action`/`chunks_indexed`). Phase 24's regression test repointed at
+  `/query` (still JSON-only) since its original target endpoint no longer
+  exists - same bug class, still covered. Live-verified end to end with a
+  real PDF: one `POST /documents` call did upload + real chunking (45
+  chunks) + real embedding + real vector store write, response reported
+  `action: "insert"`, `chunks_indexed: 45`; `GET` immediately after showed
+  `status: "indexed"`; cleaned up via `DELETE`. `README_TEST.md` (section
+  4 replaced with a short redirect, sections 2/3's stale "not indexed
+  yet" language fixed) and Postman (`Index` sub-folder removed from `RAG
+  Ingestion`; `Upload` item descriptions updated) updated to match.
+
+- [x] **Phase 27 (done, 2026-09-15) — Delete-all-documents endpoint.**
+
+  - **Spec:** `DELETE /v1/rag-ingestion/documents` (no id - the existing
+    single-document delete is still `DELETE /documents/{id}`). Deletes
+    every document's vectors, metadata row, and uploaded file - same
+    full-delete semantics as the single version, just for all of them.
+    `documents_service.delete_all_documents()` loops
+    `list_documents()` + the existing `delete_document()` per row (no new
+    deletion logic). Response: `documents_deleted`, `chunks_removed`
+    (summed). Gated to `HR_SUPPORT` same as the rest of `RAG Ingestion`
+    (router-level dependency, unchanged). No confirmation flag - matches
+    this project's existing single-delete endpoint, which also has none.
+  **Verified:** full suite green (114/114) - new test uploads 2 documents,
+  calls delete-all, confirms `documents_deleted >= 2` and the list is
+  empty afterward. Live/real run against the actual dev DB (not mocked)
+  found and fixed a real bug: `delete_document()` returning `None` for a
+  row already gone by the time the loop reached it crashed the whole
+  batch (`TypeError` on `None["chunks_removed"]`) - now skipped instead,
+  doesn't fail the rest. Postman gained a `Delete ALL documents` item.
+
+- [x] **Phase 28 (done, 2026-09-15) — Fix: document_version reports 2 on
+  a document's first-ever index.** Found live by the user testing upload.
+
+  - **Spec:** `create_document()` inserts `document_version = 1`;
+    `record_successful_index()` then does `document_version = document_version
+    + 1` on *every* successful index, including the first. Since Phase 26
+    fused upload+index into one call, a fresh document's first-ever index
+    now always reports version 2, never 1 - confusing (`action: "insert"`
+    alongside `document_version: 2` reads like something was indexed
+    twice). Fix: `create_document()` inserts `document_version = 0`
+    instead - "no successfully indexed version yet" - so the first
+    successful index correctly lands on 1, and each subsequent re-index
+    still increments normally (2, 3, ...). `sqlite_client.py` and
+    `postgres_client.py` both change (same pattern, two backends).
+    `documents_service.py`'s failure-path fallback (`index_outcome.get(
+    "document_version", 1)`, used when indexing itself fails) changes to
+    `0` too, matching what the row actually holds in that case.
+    `DocumentRecord`/`DocumentUploadResult`'s field docs updated to match.
+  **Verified:** new direct-SQLite regression test
+  (`test_sqlite_client_document_version.py`, no HTTP/no embedding cost) -
+  `create_document()` leaves `document_version=0`, first
+  `record_successful_index()` returns 1, a second returns 2. Live-verified
+  through the real API too: a fresh upload now returns
+  `document_version: 1` (was 2). Full suite green (115/115).
+
+- [x] **Phase 29 (done, 2026-09-15) — Suppress misleading pdfminer
+  FontBBox console warning.** Root-caused live, not guessed at - traced
+  to `pdfminer.pdffont` (a `pdfplumber` dependency, used by
+  `table_extractor.py`), not this project's own code and not pypdf.
+
+  - **Spec:** `table_extractor.py` sets `logging.getLogger("pdfminer")`'s
+    level to `ERROR` at module import - this is the only file that uses
+    `pdfplumber`. Harmless, known pdfminer quirk (a font missing a
+    `FontBBox`, falls back to a default) - the warning itself is noise,
+    not a real problem, so silencing it (not "fixing" pdfminer) is correct.
+  **Verified:** live-ran `extract_tables_from_pdf()` against the exact PDF
+  that showed the warning - no `FontBBox` message printed. Full suite
+  green (115/115).
+
+- [x] **Phase 30 (done, 2026-09-15) — Fix: running the test suite silently
+  wiped the shared dev DB.** Found live - the user's own manually-uploaded
+  test document 404'd, traced to `pytest` having deleted it.
+
+  - **Spec:** `test_delete_all_removes_every_document` (Phase 27's test)
+    called the *real* `DELETE /documents` endpoint against the real,
+    shared dev SQLite DB - every `pytest` run wiped every document,
+    including anything uploaded manually via Postman in between tool
+    calls, with no warning. Rewritten to fake
+    `documents_service.delete_all_documents()` (matching the existing
+    query-route test pattern) and assert only that the route calls it and
+    returns its result - real bulk-delete behavior is already covered by
+    `delete_document()`'s own tests plus `delete_all_documents()`'s thin,
+    obviously-correct loop over it.
+  **Verified:** uploaded a real document, ran the full suite, confirmed
+  the document still existed afterward (previously it would not have).
+  Full suite still green (115/115).
+
+- [x] **Phase 31 (2026-09-15) — ACTIVE_VECTOR_DB/ACTIVE_LLM_PROVIDER
+  .env vars, one resolver helper each.**
+
+  - **Spec:** `RAG_VECTOR_DB` renamed to `ACTIVE_VECTOR_DB` in `.env`; new
+    `ACTIVE_LLM_PROVIDER` (default `openai`) for the LLM used in
+    embedding/retrieval-time reasoning (not the final answer's model,
+    which stays a separate, per-call override - unchanged). Two new
+    helpers in `common/config/settings.py` -
+    `get_active_vector_db(override)`/`get_active_llm_provider(override)` -
+    replace the repeated `x or read_setting(None, "RAG_VECTOR_DB", ...)`/
+    `llm_provider or "openai"` scattered across `ai/doc_processing/
+    pipeline.py`, `ai/rag_pipeline/pipeline.py`,
+    `ai/rag_pipeline/query_retrieval/retriever.py`, `common/clients/
+    db_client/db_gateway.py`.
+  **Verified:** all 5 call sites switched to the two new helpers; stale
+  `RAG_VECTOR_DB` references in `models/rag.py`'s docstring and
+  `vector_indexer.py`'s comment updated too. Full suite green (115/115).
+
+- [x] **Phase 32 (2026-09-16) — Pilot: `RagQueryParams` dataclass
+  replaces the repeated 10-field parameter list on the `/query` path.**
+
+  - **Spec:** User-reported code smell - `routes_query.py`,
+    `services/rag_service.py`, and `ai/rag_pipeline/pipeline.py`'s
+    `answer_query()` each redeclare the same 10 parameters
+    (query/top_k/vector_db/search_strategy/model_name/temperature/
+    max_tokens/use_multi_query/use_self_query/llm_provider) - adding one
+    field means editing 3 signatures. Deliberately scoped to this one
+    payload only, as a pilot to review before considering it for
+    `routes_documents.py`/`documents_service.py` - not applied there in
+    this phase.
+    - New `common/rag_query_params.py`: a plain `@dataclass` (not
+      Pydantic) `RagQueryParams` with those 10 fields, same names/types/
+      defaults as `RagQueryRequest`. Lives in `common/`, not `ai/`, so
+      `routes_query.py` importing it does not become "routes importing
+      ai/ directly" (CLAUDE.md's architecture rule) - it is a plain,
+      framework-free data container, not pipeline logic.
+    - `routes_query.py` builds one `RagQueryParams` from `payload` and
+      calls `rag_service.answer_query(params)` - one argument, not 10.
+    - `rag_service.answer_query(params: RagQueryParams)` passes `params`
+      straight through to `pipeline.answer_query(params)` unchanged.
+    - `ai/rag_pipeline/pipeline.py`'s `answer_query(params: RagQueryParams)`
+      unwraps `params.*` at the top (where `resolved_vector_db`/
+      `resolved_search_strategy`/`resolved_llm_provider` are already
+      computed today) and calls the *unchanged* `retrieve_chunks()`/
+      `generate_answer()` with the same individual arguments as today -
+      those two functions are out of scope for this phase.
+    - `retriever.py`, `routes_documents.py`, `documents_service.py`,
+      `ai/doc_processing/pipeline.py` are explicitly **not** touched.
+    - Tests: `tests/hrb_chatbot/api/rag/test_routes_query.py`'s
+      `_fake_answer_query`/`_capturing_fake` helpers and
+      `tests/hrb_chatbot/api/test_error_handling.py`'s
+      `_fake_answer_query` updated to the new single-`params` signature -
+      same assertions, same coverage, no behavior change.
+  **Verified:** `code-reviewer` subagent run against the diff - bandit
+  clean, no scope creep beyond the 6 listed files, no overengineering. Two
+  findings addressed: docstring trimmed to CODING-STANDARDS' 2-line limit;
+  the "same types as `RagQueryRequest`" spec wording was imprecise -
+  `vector_db`/`search_strategy`/`llm_provider` stay `str | None` in the
+  dataclass, matching the pre-existing convention already in
+  `rag_service.py`/`pipeline.py` (enums live at the Pydantic/route
+  boundary only, per `CLAUDE.md`'s architecture section - not a new
+  deviation this phase introduced). Flagged, not fixed: no dedicated test
+  file for the dataclass itself - it has no logic, and its field defaults
+  are already exercised indirectly via
+  `test_use_multi_query_and_use_self_query_default_to_false`. Full suite
+  green (115/115).
+
+- [x] **Phase 33 (2026-09-16) — Remove dead pass-through wrapper
+  functions, both pipeline.py files.**
+
+  - **Spec:** User-reported: `ai/rag_pipeline/pipeline.py`'s
+    `retrieve_chunks()`/`generate_answer()` and `ai/doc_processing/
+    pipeline.py`'s `index_chunks()` add nothing over the function they
+    call - same signature, no resolved defaults, no transformation.
+    Confirmed via grep: none of the three is imported or called from
+    anywhere except the same file's own orchestrator function
+    (`answer_query()`/`index_document()`), and no test references any of
+    them directly. This is different from the service-layer thinness
+    kept in Phase 32 (`rag_service.answer_query()` forwarding to
+    `pipeline.answer_query()`) - that one is a real, documented layer
+    boundary (routes never import `ai/` directly, per `CLAUDE.md`); these
+    three are same-package indirection with no boundary to justify them.
+    - `ai/rag_pipeline/pipeline.py`: delete `retrieve_chunks()` and
+      `generate_answer()`; drop the `as _retrieve_chunks`/
+      `as _generate_answer` import aliases (import the real names
+      directly); `answer_query()` calls `retrieve_chunks()`/
+      `generate_answer()` (the real functions) directly.
+    - `ai/doc_processing/pipeline.py`: delete `index_chunks()`;
+      `index_document()` calls `write_chunks()` (already imported)
+      directly instead. `chunk_document()` is kept - it resolves
+      `chunk_overlap`'s falsy-but-valid-zero default correctly (`if
+      chunk_overlap is None` vs `or`), so it is not a pure pass-through.
+    - No test changes expected - nothing references the removed names.
+  **Verified:** grepped for any reference to the 3 removed names across
+  `src/` and `tests/` before deleting - none found beyond the file that
+  defined them. Full suite green (115/115) after removal.
+
+  **Also checked, no change needed:** the ingestion path
+  (`routes_documents.py` -> `documents_service.py` ->
+  `pipeline.index_document()`) does not have Phase 32's
+  repeated-10-parameter problem - the route only exposes `files`/
+  `supersedes_document_id`; every other `index_document()` parameter
+  (`vector_db`, `chunking_strategy`, etc.) is never set by a caller and
+  always resolves from `.env`. Applying `RagQueryParams`-style there
+  would add a class with no duplication to remove - flagged as
+  considered, not a gap.
+
+- [x] **Phase 34 (2026-09-16) — Simplify `retrieve_chunks()` to a
+  single query; remove `decompose_query()`.**
+
+  - **Spec:** User-reported: `retriever.py`'s `retrieve_chunks(queries:
+    list[str], ...)` loops over multiple queries and dedupes results by
+    `(document_id, chunk_index)` - scaffolding for Phase 5.1's real query
+    decomposition. `pipeline.py`'s `decompose_query()` is the only
+    caller's source of that list, and it is a documented MVP placeholder
+    that always returns `[query]` (one item). Today the loop always runs
+    once and the dedup set never removes anything - real complexity for
+    a feature that does not exist yet, same category of issue as Phase
+    33. Confirmed via grep: `decompose_query` and `retrieve_chunks` have
+    no other callers.
+    - `retriever.py`: `retrieve_chunks(query: str, ...)` - drop the outer
+      loop and `seen_chunk_keys` dedup set; call the search
+      function/`search_multi_query` once with `query` directly; Self-
+      Query's `queries[0]` becomes plain `query`. `search_multi_query()`
+      itself is untouched - its own dedup handles LangChain's internal
+      rewritten-query fan-out (`use_multi_query=True`), a separate,
+      still-active mechanism from `decompose_query()`.
+    - `pipeline.py`: delete `decompose_query()` (removing the outer loop
+      makes it a pure identity call - the same dead-wrapper pattern
+      Phase 33 already removed elsewhere); `answer_query()` passes
+      `params.query` to `retrieve_chunks()` directly. Module docstring's
+      reference to `decompose_query()` updated.
+    - Tests: `test_retriever.py`'s ~13 `retrieve_chunks([...])` calls
+      become `retrieve_chunks(...)` (plain string, not a list).
+      `test_the_same_chunk_found_by_two_subqueries_is_not_duplicated`
+      tests exactly the multi-query dedup path being removed - deleted,
+      not adapted (the scenario it names, "two subqueries," can no
+      longer occur once the outer loop is gone). Real dedup coverage for
+      the still-active `use_multi_query` path stays via
+      `test_search_multi_query_merges_and_dedupes_across_rewritten_queries`,
+      untouched.
+    - When Phase 5.1's real decomposition ships, `retrieve_chunks()`
+      regains a list parameter and a real caller then - not built ahead
+      of that need now.
+  **Verified:** `code-reviewer` subagent run against the diff - bandit
+  clean, scope matched the spec, `decompose_query()` fully gone (grepped),
+  no overengineering. One finding fixed: `answer_query()`'s own docstring
+  still said "decompose, retrieve, generate" after the module-level
+  docstring was already updated - reworded to "retrieve, generate." Full
+  suite green (114/114).
 
 ## Verification checklist (Phases 1-3)
 

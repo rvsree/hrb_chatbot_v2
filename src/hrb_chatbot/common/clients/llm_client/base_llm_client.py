@@ -1,10 +1,5 @@
-"""The shared interface that every LLM provider client implements.
-
-OpenAI, Anthropic and OpenRouter each have different client libraries; this
-defines the three methods the rest of the project relies on (`ask`,
-`ask_with_tools`, `health_check`) so calling code doesn't need to know which
-provider is behind it. ABC enforces that a subclass implements all of them.
-"""
+"""Shared interface every LLM provider client implements (ask/ask_with_tools/
+health_check) - ABC enforces every subclass implements all three."""
 
 from abc import ABC, abstractmethod
 
@@ -42,7 +37,6 @@ class BaseLLMClient(ABC):
 
     @abstractmethod
     def health_check(self) -> dict:
-        """Report whether this client is usable: makes one real, free call to the
-        provider and reports the outcome - never raises, see BaseLLMClient's own
-        module docstring and CODING-STANDARDS.md's "Errors: where they live" section."""
+        """Report whether this client is usable - one real, free call, never
+        raises (see CODING-STANDARDS.md's "Errors: where they live")."""
         raise NotImplementedError

@@ -13,15 +13,16 @@ from src.hrb_chatbot.api.rag import routes_query
 from src.hrb_chatbot.main import app
 
 client = TestClient(app)
+# Phase 23 gateway: retrieval accepts EMPLOYEE/MANAGER/HR_SUPPORT - set once
+# so every existing call below keeps working without touching each one individually.
+client.headers.update({"X-Employee-Id": "E00002", "X-Full-Name": "Eddy Employee", "X-Role": "employee"})
 
 
-async def _fake_answer_query(
-    query, top_k=5, vector_db=None, search_strategy=None, model_name=None, temperature=0.0, max_tokens=None
-):
+async def _fake_answer_query(params):
     return {
-        "query": query,
+        "query": params.query,
         "answer": "This is a fake grounded answer.",
-        "model_used": model_name or "gpt-4.1-mini",
+        "model_used": params.model_name or "gpt-4.1-mini",
         "sources": [
             {
                 "document_id": "doc-1",
@@ -31,8 +32,9 @@ async def _fake_answer_query(
                 "score": 0.95,
             }
         ],
-        "vector_db": vector_db or "chromadb",
-        "search_strategy": search_strategy or "similarity",
+        "vector_db": params.vector_db or "chromadb",
+        "search_strategy": params.search_strategy or "similarity",
+        "applied_filter": {"doc_classification": {"$eq": "401k"}} if params.use_self_query else None,
     }
 
 
@@ -98,15 +100,80 @@ def test_search_strategy_field_is_accepted_and_passed_through(monkeypatch):
     assert response.json()["search_strategy"] == "mmr"
 
 
-def test_dedicated_mmr_endpoint_always_uses_mmr_even_if_body_says_otherwise(monkeypatch):
-    monkeypatch.setattr(routes_query.rag_service, "answer_query", _fake_answer_query)
+def test_dedicated_mmr_endpoint_no_longer_exists():
+    # Phase 21 removed it - MMR is selected via search_strategy in the body
+    # of POST /query instead (see test_search_strategy_field_is_accepted_and_passed_through).
+    response = client.post("/v1/rag-retrieval/query/mmr", json={"query": "test"})
+
+    assert response.status_code == 404
+
+
+def test_unknown_search_strategy_is_a_422_naming_the_valid_options():
+    response = client.post("/v1/rag-retrieval/query", json={"query": "test", "search_strategy": "made-up"})
+
+    assert response.status_code == 422
+
+
+def test_use_multi_query_and_use_self_query_are_accepted_and_passed_through(monkeypatch):
+    captured = {}
+
+    async def _capturing_fake(params):
+        captured["params"] = params
+        return await _fake_answer_query(params)
+
+    monkeypatch.setattr(routes_query.rag_service, "answer_query", _capturing_fake)
 
     response = client.post(
-        "/v1/rag-retrieval/query/mmr", json={"query": "test", "search_strategy": "similarity"}
+        "/v1/rag-retrieval/query",
+        json={"query": "what's my 401k vesting schedule", "use_multi_query": True, "use_self_query": True, "llm_provider": "anthropic"},
     )
 
     assert response.status_code == 200
-    assert response.json()["search_strategy"] == "mmr"
+    assert captured["params"].use_multi_query is True
+    assert captured["params"].use_self_query is True
+    assert captured["params"].llm_provider == "anthropic"
+    assert response.json()["applied_filter"] == {"doc_classification": {"$eq": "401k"}}
+
+
+def test_use_multi_query_and_use_self_query_default_to_false(monkeypatch):
+    captured = {}
+
+    async def _capturing_fake(params):
+        captured["params"] = params
+        return await _fake_answer_query(params)
+
+    monkeypatch.setattr(routes_query.rag_service, "answer_query", _capturing_fake)
+
+    response = client.post("/v1/rag-retrieval/query", json={"query": "test"})
+
+    assert response.status_code == 200
+    assert captured["params"].use_multi_query is False
+    assert captured["params"].use_self_query is False
+    assert captured["params"].llm_provider is None
+    assert response.json()["applied_filter"] is None
+
+
+def test_unknown_llm_provider_is_a_422_naming_the_valid_options():
+    response = client.post("/v1/rag-retrieval/query", json={"query": "test", "llm_provider": "made-up"})
+
+    assert response.status_code == 422
+
+
+def test_retrieval_without_any_identity_headers_is_a_401():
+    anonymous_client = TestClient(app)
+
+    response = anonymous_client.post("/v1/rag-retrieval/query", json={"query": "test"})
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHENTICATED"
+
+
+def test_retrieval_accepts_all_three_roles(monkeypatch):
+    monkeypatch.setattr(routes_query.rag_service, "answer_query", _fake_answer_query)
+
+    for role in ("employee", "manager", "hr_support"):
+        response = client.post("/v1/rag-retrieval/query", json={"query": "test"}, headers={"X-Role": role})
+        assert response.status_code == 200, role
 
 
 def test_unexpected_pipeline_failure_returns_a_clean_500(monkeypatch):

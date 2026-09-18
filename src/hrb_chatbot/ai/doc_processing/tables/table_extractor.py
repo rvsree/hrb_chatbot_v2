@@ -1,14 +1,18 @@
-"""Table-aware PDF parsing, separate from text_chunker.py's plain-text
-extraction (pypdf's page.extract_text() has no table awareness at all - cells
-get flattened into reading-order text, usually losing row/column structure).
-Uses pdfplumber, which understands table geometry directly.
-"""
+"""Table-aware PDF parsing via pdfplumber (pypdf's extract_text() flattens
+tables into reading-order text, losing row/column structure)."""
+
+import logging
 
 import pdfplumber
 
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("doc_processing.tables")
+
+# pdfminer (pdfplumber's own dependency) warns "Could not get FontBBox..."
+# on some real PDFs - a known, harmless quirk (falls back to a default
+# bbox), not a real problem - silenced here, not fixed upstream.
+logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
 
 def extract_tables_from_pdf(file_path: str) -> list[str]:

@@ -1,9 +1,5 @@
-"""One place that hands out every client the project uses.
-
-Avoids every module building its own OpenAIChatClient/TavilyClient/etc. and
-re-reading the same settings. Each client is created on first request, then
-cached (get_client_gateway().openai_chat() always returns the same object).
-"""
+"""One place that hands out every client the project uses - built lazily,
+cached, so nothing re-reads the same settings twice."""
 
 from src.hrb_chatbot.common.clients.llm_client.anthropic_client import AnthropicChatClient
 from src.hrb_chatbot.common.clients.llm_client.bedrock_client import BedrockChatClient
@@ -65,10 +61,8 @@ class ClientGateway:
         return self.tavily_search_client
 
 
-# Singleton, Python-style: no DI container/@Component here like Spring's
-# ApplicationContext - this module-level variable IS the one shared instance.
-# `global` tells the function below "reuse the outer variable, don't create a
-# new local one" - the same effect a Spring singleton bean gives you for free.
+# Module-level singleton, not a DI container - `global` below reuses this
+# one shared instance each call (same effect as a Spring singleton bean).
 _shared_gateway: ClientGateway | None = None
 
 

@@ -1,31 +1,59 @@
-"""Tests for POST/GET /v1/rag-ingestion/documents (api/rag/routes_documents.py).
-Covers the upload validation rules (services/documents_service.py's
-validate_file()) and the list/get-by-id read path, end to end through
-FastAPI's TestClient - the same real SQLite metadata store the app itself
-uses (documents_service.py calls get_db_gateway() directly, not through an
-injectable dependency, so there's no fake-store seam to patch here yet)."""
+"""Tests for POST/GET/DELETE /v1/rag-ingestion/documents (api/rag/routes_documents.py).
+Phase 26: upload now indexes immediately (one endpoint, no separate
+/index step) - pipeline.index_document() is faked for every test here
+(see _fake_indexing below) so no test spends real embedding API cost."""
 
 import io
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 
 from src.hrb_chatbot.main import app
 from src.hrb_chatbot.models.documents import MAX_FILE_SIZE_BYTES
+from src.hrb_chatbot.services import documents_service
 
 client = TestClient(app)
+# Phase 23 gateway: ingestion requires HR_SUPPORT - set once so every
+# existing call below keeps working without touching each one individually.
+client.headers.update({"X-Employee-Id": "E00001", "X-Full-Name": "Hana Support", "X-Role": "hr_support"})
+
+
+@pytest.fixture(autouse=True)
+def _fake_indexing(monkeypatch):
+    # Every upload now indexes immediately (Phase 26) - fake the pipeline
+    # call so these tests never spend a real embedding call.
+    async def _fake_index_document(document_id, file_path, **kwargs):
+        return {
+            "document_id": document_id,
+            "action": "insert",
+            "chunks_indexed": 1,
+            "chunks_removed": 0,
+            "vector_db": "chromadb",
+            "chunking_strategy": "recursive",
+            "embedding_model": "text-embedding-3-small",
+            "embedding_dimension": 1536,
+            "chunk_size": 1000,
+            "chunk_overlap": 150,
+            "document_version": 1,
+        }
+
+    monkeypatch.setattr(documents_service.pipeline, "index_document", _fake_index_document)
 
 
 def _pdf_file(filename: str = "policy.pdf", content: bytes | None = None):
     # A fresh random default per call, not one shared literal - tests hit the
-    # real SQLite DB with no per-test reset. Tests that want to deliberately
-    # reuse the same content across two uploads still pass content= explicitly.
+    # real SQLite DB with no per-test reset, and content-hash dedup (see
+    # test_uploading_identical_content_twice_is_a_duplicate_not_a_new_document
+    # below) means two tests uploading the same literal bytes would collide
+    # with each other. Tests that want to deliberately reuse the same
+    # content across two uploads still pass content= explicitly.
     if content is None:
         content = f"%PDF-1.4 fake content {uuid.uuid4().hex}".encode()
     return {"files": (filename, io.BytesIO(content), "application/pdf")}
 
 
-def test_single_valid_pdf_is_uploaded():
+def test_single_valid_pdf_is_uploaded_and_indexed():
     response = client.post("/v1/rag-ingestion/documents", files=_pdf_file())
 
     assert response.status_code == 200
@@ -37,6 +65,8 @@ def test_single_valid_pdf_is_uploaded():
     assert result["status"] == "uploaded"
     assert result["document_id"] is not None
     assert result["error"] is None
+    assert result["action"] == "insert"
+    assert result["chunks_indexed"] == 1
 
 
 def test_batch_of_two_valid_pdfs_are_both_uploaded():
@@ -120,6 +150,9 @@ def test_uploaded_document_appears_in_list_and_get_by_id():
     assert get_response.status_code == 200
     document = get_response.json()
     assert document["filename"] == "findable.pdf"
+    # Fake pipeline.index_document() returns a result dict but doesn't touch
+    # the DB (the real write_chunks() does that internally) - status stays
+    # "uploaded" here, same as documents_service.create_document() set it.
     assert document["status"] == "uploaded"
 
 
@@ -132,7 +165,7 @@ def test_get_unknown_document_id_is_a_404_with_the_standard_error_shape():
     assert body["code"] == "DOCUMENT_NOT_FOUND"
 
 
-def test_deleting_an_unindexed_document_removes_it_and_reports_zero_chunks():
+def test_deleting_an_indexed_document_removes_it():
     upload_response = client.post(
         "/v1/rag-ingestion/documents", files=_pdf_file(filename="to-delete.pdf")
     )
@@ -144,7 +177,6 @@ def test_deleting_an_unindexed_document_removes_it_and_reports_zero_chunks():
     body = delete_response.json()
     assert body["document_id"] == document_id
     assert body["filename"] == "to-delete.pdf"
-    assert body["chunks_removed"] == 0  # never indexed - nothing in the vector store to remove
 
     # Really gone, not just reported as deleted.
     get_response = client.get(f"/v1/rag-ingestion/documents/{document_id}")
@@ -173,23 +205,43 @@ def test_deleting_the_same_document_twice_is_404_the_second_time():
     assert second_delete.status_code == 404
 
 
-def test_uploading_identical_content_twice_creates_two_separate_documents():
-    # No content-hash dedup anymore - every upload always creates a new
-    # document, even if the exact same bytes were uploaded before.
+def test_uploading_identical_content_twice_is_a_duplicate_not_a_new_document():
+    # uuid-salted, not a fixed literal - this hits the real, persistent
+    # SQLite DB (no per-test reset), so a fixed literal would start matching
+    # leftover rows from a previous test *run*, not just within this one.
     same_content = f"%PDF-1.4 identical bytes both times {uuid.uuid4().hex}".encode()
 
     first = client.post("/v1/rag-ingestion/documents", files=_pdf_file(content=same_content))
     second = client.post("/v1/rag-ingestion/documents", files=_pdf_file(content=same_content))
 
     assert first.json()["results"][0]["status"] == "uploaded"
+    first_document_id = first.json()["results"][0]["document_id"]
+
     second_body = second.json()
-    assert second_body["uploaded_count"] == 1
-    assert second_body["duplicate_count"] == 0
+    assert second_body["uploaded_count"] == 0
+    assert second_body["duplicate_count"] == 1
+    assert second_body["rejected_count"] == 0
+
+    duplicate_result = second_body["results"][0]
+    assert duplicate_result["status"] == "duplicate"
+    # Points back at the FIRST upload's document - no second document was created.
+    assert duplicate_result["document_id"] == first_document_id
+    assert duplicate_result["message"] is not None
+    assert first_document_id in duplicate_result["message"]
+
+
+def test_identical_content_under_a_different_filename_is_still_a_duplicate():
+    same_content = f"%PDF-1.4 same bytes, different name {uuid.uuid4().hex}".encode()
+
+    first = client.post("/v1/rag-ingestion/documents", files=_pdf_file(filename="v1.pdf", content=same_content))
+    second = client.post(
+        "/v1/rag-ingestion/documents", files=_pdf_file(filename="renamed-copy.pdf", content=same_content)
+    )
 
     first_document_id = first.json()["results"][0]["document_id"]
-    second_document_id = second_body["results"][0]["document_id"]
-    assert second_body["results"][0]["status"] == "uploaded"
-    assert second_document_id != first_document_id
+    second_result = second.json()["results"][0]
+    assert second_result["status"] == "duplicate"
+    assert second_result["document_id"] == first_document_id
 
 
 def test_same_filename_with_different_content_is_not_a_duplicate():
@@ -251,12 +303,58 @@ def test_supersedes_document_id_on_a_valid_target_is_recorded_on_the_new_documen
     assert result["status"] == "uploaded"
     new_document_id = result["document_id"]
 
-    # supersedes is recorded now, but the old document isn't flipped to
-    # is_current=false until the new one is actually indexed (not yet here).
     new_document = client.get(f"/v1/rag-ingestion/documents/{new_document_id}").json()
     assert new_document["supersedes"] == target_id
-    assert new_document["is_current"] is True
 
-    target_document = client.get(f"/v1/rag-ingestion/documents/{target_id}").json()
-    assert target_document["is_current"] is True
-    assert target_document["superseded_by"] is None
+
+def test_ingestion_without_any_identity_headers_is_a_401():
+    anonymous_client = TestClient(app)
+
+    response = anonymous_client.get("/v1/rag-ingestion/documents")
+
+    assert response.status_code == 401
+    body = response.json()
+    assert body["code"] == "UNAUTHENTICATED"
+    assert "X-Employee-Id" in body["error"]
+
+
+def test_ingestion_with_an_unknown_role_value_is_a_401():
+    response = client.get("/v1/rag-ingestion/documents", headers={"X-Role": "made-up-role"})
+
+    assert response.status_code == 401
+    body = response.json()
+    assert body["code"] == "UNAUTHENTICATED"
+    assert "made-up-role" in body["error"]
+
+
+def test_ingestion_as_employee_or_manager_is_a_403_only_hr_support_may_upload():
+    for role in ("employee", "manager"):
+        response = client.post("/v1/rag-ingestion/documents", files=_pdf_file(), headers={"X-Role": role})
+
+        assert response.status_code == 403, role
+        body = response.json()
+        assert body["code"] == "FORBIDDEN"
+        assert "hr_support" in body["error"]
+
+
+def test_the_separate_index_endpoint_no_longer_exists():
+    # Phase 26 - upload does the whole pipeline in one call now.
+    response = client.post("/v1/rag-ingestion/documents/does-not-exist/index")
+
+    assert response.status_code == 404
+
+
+def test_delete_all_calls_the_service_and_returns_its_result(monkeypatch):
+    # Faked, not a real call - the real delete_all_documents() wipes the
+    # ENTIRE dev DB, including whatever a person is testing manually via
+    # Postman at the same time (confirmed live - this used to run for
+    # real here and deleted a user's in-progress test document).
+    async def _fake_delete_all():
+        return {"documents_deleted": 3, "chunks_removed": 12}
+
+    monkeypatch.setattr(documents_service, "delete_all_documents", _fake_delete_all)
+
+    response = client.delete("/v1/rag-ingestion/documents")
+
+    assert response.status_code == 200
+    assert response.json() == {"documents_deleted": 3, "chunks_removed": 12}

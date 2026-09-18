@@ -1,17 +1,6 @@
-"""The health endpoints.
-
-GET /ping - free, instant, no provider calls. This is what a container
-HEALTHCHECK or a deploy's smoke test should point at (see the Dockerfile and
-.github/workflows/deploy.yml) - it only answers "is the process up and
-serving requests", which is all an automated probe running every 30 seconds
-forever should ever need to know.
-
-GET /health - the real diagnostic: it actually calls each backend (the LLM
-provider, the vector store, the document-metadata store) and reports whether
-each one is truly reachable, not just "configured". That real call is exactly
-why this is a separate endpoint from /ping - a probe firing every 30 seconds
-must never be the thing spending API tokens or getting rate-limited.
-"""
+"""The health endpoints. GET /ping - free, instant, no provider calls (what
+a container HEALTHCHECK/deploy smoke test should point at). GET /health -
+the real diagnostic, actually calls each backend and reports reachability."""
 
 from fastapi import APIRouter
 

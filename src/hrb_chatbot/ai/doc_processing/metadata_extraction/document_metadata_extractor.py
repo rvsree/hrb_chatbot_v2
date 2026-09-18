@@ -1,11 +1,6 @@
-"""LLM-based extraction of document-level metadata (owner, department, doc
-type, purpose) from a document's own text - none of this is provided by the
-uploader, so the only way to get it is to ask a model to read the document
-and guess, same as a human skimming the first page would.
-
-Best-effort by design: a wrong or missing guess here must never block
-indexing - see extract_document_metadata()'s own try/except.
-"""
+"""LLM-based extraction of document-level metadata (owner/department/
+doc_type/purpose/doc_classification) - best-effort, a wrong or missing
+guess must never block indexing (see extract_document_metadata()'s try/except)."""
 
 import json
 
@@ -14,12 +9,11 @@ from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("doc_processing.metadata_extraction")
 
-# Owner/department/type/purpose is almost always stated (or inferable) on a
-# document's first page/header - no need to send the whole document and pay
-# for tokens a title page already answers.
+# Owner/department/type/purpose is almost always on a document's first
+# page/header - no need to send the whole doc and pay for tokens a title page answers.
 MAX_CHARACTERS_SENT = 3000
 
-EMPTY_RESULT = {"owner": None, "department": None, "doc_type": None, "purpose": None}
+EMPTY_RESULT = {"owner": None, "department": None, "doc_type": None, "purpose": None, "doc_classification": None}
 
 EXTRACTION_QUESTION = (
     "Read the document text above and answer with ONLY a JSON object, no other "
@@ -27,7 +21,10 @@ EXTRACTION_QUESTION = (
     '{"owner": "<person or role who owns this document, or null>", '
     '"department": "<department/team, or null>", '
     '"doc_type": "<one of: policy, regulatory, investment, benefits, other>", '
-    '"purpose": "<one sentence describing the document\'s scope/purpose, or null>"}\n'
+    '"purpose": "<one sentence describing the document\'s scope/purpose, or null>", '
+    '"doc_classification": "<the specific topic this document covers, in the '
+    "document's own terms, e.g. '401k', 'health benefits', 'leave policy' - "
+    'not a fixed list, or null>"}\n'
     "Use null (not a guess) for any field the text doesn't actually support."
 )
 

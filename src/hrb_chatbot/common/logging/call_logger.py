@@ -1,8 +1,5 @@
-"""Logs the start, duration, and outcome of one outbound call to a backend
-service (LLM provider, vector store, metadata store) - not what the app does
-with the result, just that the call happened and whether it worked. A context
-manager so this logging lives here once, not duplicated at every call site.
-"""
+"""Logs the start/duration/outcome of one outbound backend call (LLM, vector
+store, metadata store) - a context manager so this lives here once, not per call site."""
 
 import time
 from collections.abc import Iterator

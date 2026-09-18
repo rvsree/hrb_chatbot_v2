@@ -5,10 +5,8 @@ from fastapi.responses import JSONResponse
 
 from src.hrb_chatbot.common.enums import LlmProvider, MetadataStore, VectorDB
 
-# Query()'s enum default (e.g. LlmProvider.OPENAI) is what makes /docs render these
-# as a dropdown of the allowed values instead of a free-text box - and what makes
-# FastAPI reject a typo with a 422 before check_all_backend_services() ever runs,
-# instead of the typo silently falling through to a default deep inside it.
+# Query()'s enum default is what makes /docs render a dropdown, and what
+# makes FastAPI reject a typo with a 422 before any check runs.
 PROVIDER_QUERY = Query(
     default=LlmProvider.OPENAI,
     description="Which LLM provider to check.",
@@ -36,13 +34,9 @@ VECTOR_PROVIDER_QUERY = Query(
 def json_error(
     status_code: int, message: str, code: str, headers: dict | None = None, **extra
 ) -> JSONResponse:
-    """Build an error response with a consistent shape: {"error": "...", "code": "...", ...extra}.
-    `code` is required, not optional-with-a-default - every call site must
-    pick one from common/error_codes.py, on purpose, rather than one being
-    silently forgotten. `message` can change wording freely; `code` is the
-    stable part a caller should actually branch on. `headers` becomes real
-    HTTP response headers (e.g. Retry-After) - kept separate from `extra`
-    so it can never accidentally leak into the JSON body instead."""
+    """Build a consistent error shape: {"error": ..., "code": ..., ...extra}.
+    `code` is required (from common/error_codes.py), never defaulted.
+    `headers` becomes real HTTP headers, kept separate so it can't leak into the body."""
     body = {"error": message, "code": code}
     body.update(extra)
     return JSONResponse(status_code=status_code, content=body, headers=headers)

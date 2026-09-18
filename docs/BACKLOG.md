@@ -202,6 +202,63 @@ up, rather than marking it done in place here.
   content-based (prompt-injection, PII) guardrails that remain Phase 7's
   hand-written work.
 
+## Access control (Phase 23, 2026-09-15)
+
+- **Real OAuth still not built.** `api/gateway/current_user.py` reads
+  unsigned `X-Employee-Id`/`X-Full-Name`/`X-Role` headers as-is - a
+  deliberate placeholder, trivially spoofable, not a security control.
+  `common/clients/auth_client/oauth_client.py` is an empty placeholder for
+  the real integration; only `get_current_user()`'s internals should need
+  to change when it lands.
+- **Uploader identity isn't persisted.** `DocumentRecord` has no
+  `uploaded_by`/`employee_id` field - the gateway knows who uploaded a
+  document (it's in `CurrentUser`) but that identity never reaches
+  `documents_service.create_document()`. Natural follow-up once real
+  audit trail matters, not required for the access-control gate itself.
+- **Rate limiting is still IP-keyed**, not by the identity the gateway now
+  resolves - `common/rate_limiting/rate_limiter.py` predates Phase 23.
+  Switching the key to `employee_id` (falling back to IP when absent)
+  would rate-limit per person instead of per network address.
+- **Retrieval is uniform across all three roles** - no per-document
+  visibility differences (e.g. a manager-only document) - deferred per
+  explicit request when this phase was scoped. Would build on the same
+  chunk metadata (`doc_type`/`department`) Phase 19 already added.
+
+## Dead code (Phase 22, found 2026-09-15 during comment cleanup)
+
+- **`PineconeClient.query()`/`.upsert()` and `ChromaClient`'s equivalents
+  look unused in the real pipeline.** Indexing (`vector_indexer.py`) and
+  retrieval (`retriever.py`) both go through LangChain's own vector store
+  objects (`langchain_vector_store.py`'s `get_vector_store()`) since Phase
+  17/Phase 4 - confirmed by grepping the whole `src/` tree for any other
+  caller of `.query(`/`.upsert(` and finding none. `delete()`/
+  `update_metadata()` are still real (used directly by
+  `documents_service.py`/`vector_indexer.py`'s supersede-flip), so this
+  isn't the whole client, just these two methods (and their
+  `BaseVectorDBClient` ABC requirement). Worth confirming and removing in
+  a dedicated phase, not fixed here - this was noticed while trimming an
+  unrelated docstring, not something this task set out to check.
+
+## Retrieval quality (Phase 20, found 2026-09-14 during live verification)
+
+- **Self-Query's `doc_classification` filter only matches exact strings,
+  but `doc_classification` is deliberately free text** (Phase 19's own
+  design - "not a fixed enum, real documents vary too much to hardcode a
+  closed list"). Confirmed live: querying "what's my 401k vesting
+  schedule" reliably makes Self-Query's LLM parse
+  `doc_classification="401k"` (it's the example in
+  `ai/rag_pipeline/query_retrieval/retriever.py`'s own
+  `METADATA_FIELD_INFO`), but a real indexed document's actual extracted
+  value was `"401(k) Savings Plan"` - an exact-string mismatch that
+  correctly-but-uselessly returns zero chunks, even though clearly
+  relevant chunks exist. `doc_type` (extraction picks from a short fixed
+  list: policy/regulatory/investment/benefits/other) doesn't have this
+  problem - confirmed by isolating it, `doc_type=benefits` alone matched
+  real chunks every time. Options for later: a `contain`/fuzzy comparator
+  instead of `$eq` for `doc_classification` specifically, or re-scoping it
+  toward a smaller controlled set the way `doc_type` already is. See
+  `docs/RAG-ROADMAP.md`'s Phase 20 entry for the full verification.
+
 ## Data handling
 
 - **PII / sensitive data.** The knowledge base is real HR benefits
@@ -269,3 +326,21 @@ explicit earlier decision to keep as-is for later, not a new finding.
   relative `data/` path ChromaDB/SQLite/uploads all write under) wasn't
   writable by the non-root container user - fixed by chowning `data/`
   specifically, not the whole image, before switching to that user.
+- **Spec-Driven Development (SDD) adopted 2026-09-14** - see `CLAUDE.md`'s
+  SDD section. Every phase picked up from here on needs a written, reviewed
+  spec (a `Spec:` sub-list in its `docs/RAG-ROADMAP.md` bullet, via
+  `/spec-new`) before implementation starts - this backlog is where planned
+  work is tracked, but an item moving from here into an active phase should
+  get a spec first, not go straight to code. No new `specs/`/`adr/` folder -
+  everything lives in the existing `docs/RAG-ROADMAP.md`/`docs/FAQ.md`
+  convention, plus new tooling under `.claude/` (skills, hooks, one
+  `implementer` subagent).
+- **Action item, deliberately not decided yet (2026-09-14): LangChain vs.
+  LlamaIndex, which does what, going forward.** Surfaced while researching
+  Phase 17 (moving indexing from LlamaIndex to LangChain's `index()`) -
+  the common real-world pattern is actually the opposite split ("LlamaIndex
+  for ingestion/indexing - its documented strength - LangChain for
+  orchestration"), which cuts against Phase 17's direction. User has asked
+  to revisit this later rather than resolve it now - Phase 17 proceeds as
+  already spec'd in the meantime. Whoever picks this up next should read
+  Phase 17's spec and its "not carried over" note in `CLAUDE.md` first.

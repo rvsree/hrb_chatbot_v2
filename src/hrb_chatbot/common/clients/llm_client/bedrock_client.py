@@ -1,10 +1,6 @@
-"""Bedrock client: talks to any model hosted on AWS Bedrock via the unified
-Converse API (one request/response shape per call, unlike the older
-InvokeModel API's per-model-family JSON shapes).
-
-Untested against a real AWS account - ask_with_tools()'s OpenAI<->Bedrock
-conversion has not been exercised against a live endpoint; treat as reviewed, not verified.
-"""
+"""Bedrock client - the unified Converse API (not the older per-model-family
+InvokeModel shapes). Untested against a real AWS account - reviewed, not
+verified; see ask_with_tools()'s OpenAI<->Bedrock conversion."""
 
 import boto3
 

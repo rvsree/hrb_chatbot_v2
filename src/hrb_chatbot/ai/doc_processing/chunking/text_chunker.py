@@ -1,10 +1,5 @@
-"""Extracts a PDF's text and splits it into chunks, using LangChain's own
-text splitters directly (workshop Module 2) instead of a hand-written one.
-
-Six plain functions, one per technique - no classes/interfaces, mirroring
-how the workshop's own demo.py is written. Each takes text (and chunk_size/
-chunk_overlap where that applies) and returns a list of chunk strings.
-"""
+"""Extracts PDF text and splits it into chunks via LangChain's own splitters
+(workshop Module 2) - six plain functions, one per technique, no classes."""
 
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_openai import OpenAIEmbeddings
@@ -33,13 +28,9 @@ WHOLE_DOCUMENT_MAX_LENGTH = DEFAULT_CHUNK_SIZE
 
 
 def extract_text_from_pdf(file_path: str) -> str:
-    """Return every page's plain text, plus any tables (extracted separately
-    via pdfplumber - see ai/doc_processing/tables/table_extractor.py, since
-    pypdf's extract_text() has no table awareness) appended as their own
-    markdown-formatted blocks. Tables are appended after all page text
-    rather than inlined at their exact original position - reconstructing
-    precise layout position isn't needed for chunking/embedding, only
-    keeping the table's row/column structure readable is."""
+    """Return every page's text plus any tables (via pdfplumber -
+    table_extractor.py, since pypdf has no table awareness) appended as
+    their own markdown blocks after the page text, not inlined in place."""
     reader = PdfReader(file_path)
     pages_text = [page.extract_text() or "" for page in reader.pages]
     text = "\n\n".join(pages_text)
@@ -107,9 +98,8 @@ def chunk_none(text: str) -> list[str]:
     return [stripped] if stripped else []
 
 
-# Every strategy name a caller can pass explicitly, mapped to its function.
-# "semantic" is never auto-selected (see decide_chunking_strategy below) but
-# is still selectable here by an explicit chunking_strategy request field.
+# Every strategy a caller can pass explicitly, mapped to its function -
+# "semantic" is explicit-only (see decide_chunking_strategy), never auto-selected.
 CHUNKING_STRATEGIES = {
     "fixed": chunk_fixed,
     "recursive": chunk_recursive,
@@ -121,19 +111,46 @@ CHUNKING_STRATEGIES = {
 
 
 def decide_chunking_strategy(text: str) -> str:
-    """Auto-pick a strategy when the caller didn't say which one to use.
-    Rules sourced directly from the workshop's own decision guidance
-    (modules/2_chunking/notes.md's Decision Matrix, and Module 1's "not
-    critical for short tickets" takeaway) - not invented thresholds.
-    "semantic" is deliberately never auto-selected here: the workshop ties
-    it to "when accuracy is critical," which isn't detectable from the text
-    alone, so it stays an explicit-only choice."""
-    if "#" in text and any(line.strip().startswith("#") for line in text.splitlines()):
+    """Auto-pick a strategy when none was given - rules from the workshop's
+    own Decision Matrix, not invented thresholds. "semantic" stays explicit-
+    only (its "accuracy critical" trigger isn't detectable from text alone)."""
+    stripped = text.strip()
+
+    # A line is a markdown heading only if "#" starts it after stripping
+    # leading whitespace - an incidental "#" mid-sentence doesn't count.
+    heading_lines = [line for line in stripped.splitlines() if line.strip().startswith("#")]
+    if heading_lines:
+        logger.info(
+            "chunking: auto-select rationale - %d markdown heading line(s) found -> 'markdown'",
+            len(heading_lines),
+        )
         return "markdown"
-    if "<h1" in text.lower() or "<h2" in text.lower() or "<h3" in text.lower():
+
+    lowered = stripped.lower()
+    html_heading_tags_found = [tag for tag in ("<h1", "<h2", "<h3") if tag in lowered]
+    if html_heading_tags_found:
+        logger.info(
+            "chunking: auto-select rationale - HTML heading tag(s) %s found -> 'html'",
+            html_heading_tags_found,
+        )
         return "html"
-    if len(text.strip()) <= WHOLE_DOCUMENT_MAX_LENGTH:
+
+    character_count = len(stripped)
+    if character_count <= WHOLE_DOCUMENT_MAX_LENGTH:
+        logger.info(
+            "chunking: auto-select rationale - %d character(s), at or under the %d-character "
+            "whole-document threshold -> 'none'",
+            character_count,
+            WHOLE_DOCUMENT_MAX_LENGTH,
+        )
         return "none"
+
+    logger.info(
+        "chunking: auto-select rationale - %d character(s), no markdown/HTML heading structure "
+        "found, over the %d-character whole-document threshold -> 'recursive' (default)",
+        character_count,
+        WHOLE_DOCUMENT_MAX_LENGTH,
+    )
     return "recursive"
 
 

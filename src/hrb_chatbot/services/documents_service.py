@@ -1,9 +1,5 @@
-"""Saves uploaded files to disk and records their metadata.
-
-Validation happens once here so single- and batch-upload share the same
-rules. Rejections are returned as data (status='rejected'), not raised -
-an unexpected failure becomes a 500, but a "wrong file type" is not one.
-"""
+"""Saves uploaded files to disk and records their metadata - validated once
+here so single/batch upload share the same rules; rejections are data, not raised."""
 
 import hashlib
 import json
@@ -13,8 +9,8 @@ from pathlib import Path
 
 from fastapi import UploadFile
 
-from src.hrb_chatbot.ai.doc_processing.indexing import vector_indexer
-from src.hrb_chatbot.ai.doc_processing.indexing.vector_indexer import COLLECTION_NAME
+from src.hrb_chatbot.ai.doc_processing import pipeline
+from src.hrb_chatbot.common.clients.db_client.langchain_vector_store import COLLECTION_NAME
 from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
 from src.hrb_chatbot.common.logging.logger import get_logger
@@ -30,9 +26,8 @@ UPLOAD_DIRECTORY = Path("data/uploads")
 
 
 def validate_file(upload: UploadFile, size: int) -> tuple[str, str] | None:
-    """Return (message, error_code) for why this file should be rejected, or
-    None if it's fine. error_code is the stable value from common/error_codes.py -
-    message can change wording freely without breaking a caller relying on it."""
+    """Return (message, error_code) for why this file is rejected, or None.
+    error_code is stable (common/error_codes.py); message can change freely."""
     filename = upload.filename or ""
 
     if upload.content_type != ALLOWED_CONTENT_TYPE and not filename.lower().endswith(".pdf"):
@@ -52,12 +47,8 @@ def validate_file(upload: UploadFile, size: int) -> tuple[str, str] | None:
 
 async def save_upload(upload: UploadFile, supersedes_document_id: str | None = None) -> DocumentUploadResult:
     """Validate, store, and record one uploaded file. Never raises.
-
-    `supersedes_document_id`, if given, only *records the intent* here - the
-    old document isn't flipped to is_current=false until this new one
-    successfully indexes (ai/doc_processing/indexing/vector_indexer.py), so
-    there's never a window where neither version's content is retrievable.
-    """
+    `supersedes_document_id` only records intent - the flip happens later,
+    once this new upload successfully indexes."""
     try:
         content = await upload.read()
     except Exception as error:
@@ -83,11 +74,30 @@ async def save_upload(upload: UploadFile, supersedes_document_id: str | None = N
             error_code=code,
         )
 
-    # content_hash is still recorded on the document row (useful for manual
-    # lookup/audit), but no idempotency/dedup check is done against it -
-    # every upload always creates a new document, even if identical content
-    # was uploaded before.
+    # Same bytes = same document, regardless of filename - unlike an
+    # Idempotency-Key (a request-retry cache), this catches ANY upload of identical content, any time.
     content_hash = hashlib.sha256(content).hexdigest()
+    existing = await get_db_gateway().metadata_store().find_by_content_hash(content_hash)
+    if existing is not None:
+        logger.info(
+            "Upload %r matches existing document %s (%s) by content - no new document created",
+            upload.filename,
+            existing["id"],
+            existing["filename"],
+        )
+        return DocumentUploadResult(
+            filename=upload.filename,
+            document_id=existing["id"],
+            status="duplicate",
+            error=None,
+            message=(
+                f"Identical content already uploaded as document {existing['id']} "
+                f"({existing['filename']!r}), version {existing['document_version']}. "
+                "No new document was created - use that document_id to re-index if needed."
+            ),
+            file_size_bytes=existing["file_size_bytes"],
+            document_version=existing["document_version"],
+        )
 
     if supersedes_document_id:
         target = await get_db_gateway().metadata_store().get_document(supersedes_document_id)
@@ -127,23 +137,44 @@ async def save_upload(upload: UploadFile, supersedes_document_id: str | None = N
         )
 
     logger.info("Stored upload %r as document %s", upload.filename, document_id)
+
+    # Phase 26: index immediately - chunk, embed, write to the vector
+    # store - as part of the same upload call, not a separate step.
+    index_outcome = await _index_now(document_id, file_path)
+
     return DocumentUploadResult(
         filename=upload.filename,
         document_id=document_id,
         status="uploaded",
-        error=None,
+        error=index_outcome.get("error"),
+        error_code=index_outcome.get("error_code"),
         file_size_bytes=size,
-        document_version=1,
+        # 0 if indexing failed - matches what the row actually holds then
+        # (create_document() inserts 0; only a successful index moves it to 1+).
+        document_version=index_outcome.get("document_version", 0),
+        action=index_outcome.get("action"),
+        chunks_indexed=index_outcome.get("chunks_indexed"),
+        chunks_removed=index_outcome.get("chunks_removed"),
     )
+
+
+async def _index_now(document_id: str, file_path) -> dict:
+    """Chunk/embed/index a just-uploaded file with default settings. Never
+    raises - a failure here still leaves the file uploaded, just not
+    indexed (status becomes 'failed' on the document row)."""
+    try:
+        return await pipeline.index_document(document_id, str(file_path))
+    except Exception as error:
+        logger.error("Indexing failed for document %s: %s: %s", document_id, type(error).__name__, error)
+        await get_db_gateway().metadata_store().update_status(document_id, "failed", str(error))
+        return {"error": "Upload succeeded, but indexing failed.", "error_code": error_codes.INDEXING_FAILED}
 
 
 async def save_uploads(
     uploads: list[UploadFile], supersedes_document_id: str | None = None
 ) -> list[DocumentUploadResult]:
     """Validate, store, and record every uploaded file - one result per file.
-    `supersedes_document_id` only applies when uploading exactly one file -
-    the route rejects it (422) on a batch, where it would be ambiguous which
-    file is meant to supersede it."""
+    `supersedes_document_id` only applies to a single-file upload (422 on a batch)."""
     # One at a time, not in parallel (asyncio.gather would do that) - simpler
     # to follow, and file uploads aren't the bottleneck here.
     results = []
@@ -179,18 +210,9 @@ async def get_document(document_id: str) -> dict | None:
 
 
 async def delete_document(document_id: str) -> dict | None:
-    """Delete one document completely: its vectors (if any), its metadata row,
-    and its uploaded file on disk. Returns None if the id is unknown (the
-    route turns that into a 404) - otherwise a summary of what was removed.
-
-    Order matters for safety: vectors are deleted first, while the metadata
-    row (and its chunk_ids - the only record of which vector ids to delete)
-    still exists. If vector deletion fails partway, a retry of this same
-    call can still find chunk_ids and finish the job. Only once vectors are
-    confirmed gone is the metadata row removed - deleting metadata first
-    would lose the one piece of information needed to find the orphaned
-    vectors afterward.
-    """
+    """Delete one document: vectors, metadata row, uploaded file. Returns
+    None if unknown (route -> 404). Vectors go first, while chunk_ids still
+    exists in metadata - a failed retry can still find them; metadata is removed last."""
     gateway = get_db_gateway()
     metadata_store = gateway.metadata_store()
     document = await metadata_store.get_document(document_id)
@@ -203,11 +225,9 @@ async def delete_document(document_id: str) -> dict | None:
 
     if chunk_ids:
         vector_store = gateway.vector_store(provider=document.get("vector_db"))
-        # storage_chunk_ids(), not chunk_ids directly - Pinecone stores these
-        # under a different (prefixed) id than the plain one this project
-        # tracks; see its docstring for why that matters here.
-        storage_ids = vector_indexer.storage_chunk_ids(vector_store.PROVIDER_NAME, document_id, chunk_ids)
-        vector_store.delete(collection_name=COLLECTION_NAME, ids=storage_ids)
+        # chunk_ids used directly - the Pinecone id-prefixing this once
+        # needed was LlamaIndex-specific; Phase 17's index() stores our own id as-is.
+        vector_store.delete(collection_name=COLLECTION_NAME, ids=chunk_ids)
         logger.info("Deleted %d vector(s) for document %s", len(chunk_ids), document_id)
 
     await metadata_store.delete_document(document_id)
@@ -217,3 +237,19 @@ async def delete_document(document_id: str) -> dict | None:
 
     logger.info("Deleted document %s (%r) - %d chunk(s) removed", document_id, document["filename"], len(chunk_ids))
     return {"document_id": document_id, "filename": document["filename"], "chunks_removed": len(chunk_ids)}
+
+
+async def delete_all_documents() -> dict:
+    """Delete every document: vectors, metadata rows, uploaded files - same
+    full delete as delete_document(), just for all of them (Phase 27)."""
+    documents = await list_documents()
+    documents_deleted = 0
+    chunks_removed = 0
+    for document in documents:
+        result = await delete_document(document["id"])
+        if result is not None:  # already gone by the time we got here - skip, don't crash the batch
+            documents_deleted += 1
+            chunks_removed += result["chunks_removed"]
+
+    logger.info("Deleted all %d document(s) - %d chunk(s) removed in total", documents_deleted, chunks_removed)
+    return {"documents_deleted": documents_deleted, "chunks_removed": chunks_removed}

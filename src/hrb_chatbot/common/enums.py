@@ -1,22 +1,6 @@
-"""The fixed, small sets of valid values for "which backend do you want" fields.
-
-Before this module existed, a field like `vector_db` was just a `str`, and every
-layer that cared re-typed the same two or three valid values by hand: once in a
-Field(description=...), again as the hardcoded default ("chromadb") in three or
-four different function signatures, and again in an if/elif chain that checked it.
-A typo in any of those places either silently fell through to a default (unnoticed)
-or only blew up deep in the call stack, well after the request had already started
-doing real work.
-
-A Python Enum fixes both problems, the same way a Java enum does: FastAPI rejects
-an unknown value with a clear 422 right at the API boundary, before any work starts,
-and the accepted values live in exactly one place - here - instead of being retyped
-everywhere they're used.
-
-These all subclass `str` (via `StrEnum`), so a member such as `VectorDB.CHROMADB`
-can be compared to, and JSON-serialized as, the plain string "chromadb" - no extra
-`.value` unwrapping needed at most call sites.
-"""
+"""Fixed value sets for "which backend" fields, as StrEnum (like a Java enum)
+- FastAPI rejects an unknown value with a 422 at the boundary, and each
+member compares/serializes as its plain string, no `.value` needed."""
 
 from enum import StrEnum
 
@@ -42,3 +26,32 @@ class LlmProvider(StrEnum):
     ANTHROPIC = "anthropic"
     OPENROUTER = "openrouter"
     BEDROCK = "bedrock"
+
+
+class ChunkingStrategy(StrEnum):
+    """How to split text into chunks - see text_chunker.CHUNKING_STRATEGIES
+    (must keep matching) and decide_chunking_strategy()'s auto-selected default."""
+
+    FIXED = "fixed"
+    RECURSIVE = "recursive"
+    SEMANTIC = "semantic"
+    MARKDOWN = "markdown"
+    HTML = "html"
+    NONE = "none"
+
+
+class SearchStrategy(StrEnum):
+    """Which retrieval technique to run a query with - see
+    retriever.SEARCH_STRATEGIES (the dict these values must keep matching)."""
+
+    SIMILARITY = "similarity"
+    MMR = "mmr"
+
+
+class Role(StrEnum):
+    """Who's calling the API, for the gateway's role-based access check -
+    see api/gateway/rbac.py. HR_SUPPORT uploads documents; all three can retrieve."""
+
+    EMPLOYEE = "employee"
+    MANAGER = "manager"
+    HR_SUPPORT = "hr_support"

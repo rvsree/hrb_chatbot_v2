@@ -1,9 +1,5 @@
-"""Loads the .env file and provides the helper every client uses to read it.
-
-Loads with override=True so .env always wins over a stale value already set
-in the shell/Windows environment (python-dotenv's default does NOT replace
-it, which otherwise causes a baffling "why is my new key not working" bug).
-"""
+"""Loads .env with override=True - beats a stale shell/Windows env value
+(python-dotenv's default does NOT replace it, a real "wrong key" bug)."""
 
 import os
 
@@ -11,10 +7,8 @@ from dotenv import dotenv_values, find_dotenv, load_dotenv
 
 
 def load_env_file_and_report_overrides() -> list[str]:
-    """Load .env so its values win, and return the names of any it replaced.
-
-    Runs once on import. Returned for a health report only - values are secrets, never stored or logged.
-    """
+    """Load .env so its values win, returning the names of any it replaced -
+    health-report only, values are secrets and never stored/logged."""
     env_file_path = find_dotenv(usecwd=True)
 
     if not env_file_path:
@@ -45,8 +39,8 @@ SETTINGS_TAKEN_FROM_ENV_FILE = load_env_file_and_report_overrides()
 
 
 def read_setting(passed_in_value: str | None, env_variable_name: str, default_value=None):
-    """Work out which value to use for one setting, checking passed-in value,
-    then .env/environment, then default - `if value:` treats an empty-string .env line as unset, not as a real value that beats the default."""
+    """Work out which value to use: passed-in value, then .env/environment,
+    then default - `if value:` treats an empty-string .env line as unset."""
     if passed_in_value:
         return passed_in_value
 
@@ -60,9 +54,20 @@ def read_setting(passed_in_value: str | None, env_variable_name: str, default_va
 def read_url_setting(
     passed_in_value: str | None, env_variable_name: str, default_value: str
 ) -> str:
-    """Same as read_setting, but also strips any trailing "/" from the URL.
-
-    Avoids a doubled "//" when callers build urls as base_url + "/search".
-    """
+    """Same as read_setting, but also strips a trailing "/" - avoids a
+    doubled "//" when callers build urls as base_url + "/search"."""
     url = read_setting(passed_in_value, env_variable_name, default_value)
     return url.rstrip("/")
+
+
+def get_active_vector_db(override: str | None = None) -> str:
+    """Which vector store to use - override wins, else .env's
+    ACTIVE_VECTOR_DB, else chromadb. One place, not repeated per call site."""
+    return read_setting(override, "ACTIVE_VECTOR_DB", "chromadb")
+
+
+def get_active_llm_provider(override: str | None = None) -> str:
+    """Which LLM provider powers embedding/retrieval-time reasoning -
+    override wins, else .env's ACTIVE_LLM_PROVIDER, else openai. Not the
+    final answer's model, which stays a separate per-call override."""
+    return read_setting(override, "ACTIVE_LLM_PROVIDER", "openai")

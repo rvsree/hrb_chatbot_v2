@@ -25,9 +25,8 @@ CREATE TABLE IF NOT EXISTS documents (
 )
 """
 
-# Each column below was added after the table already existed. Postgres
-# supports ADD COLUMN IF NOT EXISTS directly, unlike SQLite, so no try/except
-# is needed here.
+# Columns added after the table already existed - Postgres's ADD COLUMN IF
+# NOT EXISTS means no try/except needed (unlike sqlite_client.py).
 ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS chunk_ids TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS document_version INTEGER NOT NULL DEFAULT 1",
@@ -47,6 +46,7 @@ ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS department TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_type TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS purpose TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_classification TEXT",
 ]
 
 # Speeds up find_by_content_hash() - one lookup per upload, worth an index.
@@ -136,11 +136,14 @@ class PostgresClient(BaseMetadataClient):
         content_hash: str,
         supersedes: str | None,
     ) -> None:
+        # document_version starts at 0, not 1 - "no successfully indexed
+        # version yet". record_successful_index() always does version + 1,
+        # so the first real index lands on 1.
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO documents (id, filename, file_path, status, error_message, "
                 "created_at, updated_at, document_version, file_size_bytes, content_hash, "
-                "is_current, supersedes) VALUES (%s, %s, %s, 'uploaded', NULL, now(), now(), 1, %s, %s, true, %s)",
+                "is_current, supersedes) VALUES (%s, %s, %s, 'uploaded', NULL, now(), now(), 0, %s, %s, true, %s)",
                 (document_id, filename, file_path, file_size_bytes, content_hash, supersedes),
             )
             conn.commit()
@@ -284,13 +287,19 @@ class PostgresClient(BaseMetadataClient):
             return await asyncio.to_thread(self._mark_superseded_sync, document_id, superseded_by)
 
     def _record_document_metadata_sync(
-        self, document_id: str, owner: str | None, department: str | None, doc_type: str | None, purpose: str | None
+        self,
+        document_id: str,
+        owner: str | None,
+        department: str | None,
+        doc_type: str | None,
+        purpose: str | None,
+        doc_classification: str | None,
     ) -> None:
         with self._connect() as conn:
             conn.execute(
                 "UPDATE documents SET owner = %s, department = %s, doc_type = %s, purpose = %s, "
-                "updated_at = now() WHERE id = %s",
-                (owner, department, doc_type, purpose, document_id),
+                "doc_classification = %s, updated_at = now() WHERE id = %s",
+                (owner, department, doc_type, purpose, doc_classification, document_id),
             )
             conn.commit()
 
@@ -301,11 +310,18 @@ class PostgresClient(BaseMetadataClient):
         department: str | None,
         doc_type: str | None,
         purpose: str | None,
+        doc_classification: str | None,
     ) -> None:
         await self._ensure_table()
         with log_backend_call(logger, "postgres", "metadata.record_document_metadata", document_id=document_id):
             await asyncio.to_thread(
-                self._record_document_metadata_sync, document_id, owner, department, doc_type, purpose
+                self._record_document_metadata_sync,
+                document_id,
+                owner,
+                department,
+                doc_type,
+                purpose,
+                doc_classification,
             )
 
     async def record_successful_index(
@@ -373,9 +389,8 @@ class PostgresClient(BaseMetadataClient):
 
         def make_row(values):
             row = dict(zip(columns, values, strict=True))
-            # last_indexed_at was missed here when it was added - a real bug,
-            # not a new field: DocumentRecord expects a string, and this left
-            # a raw datetime object leaking through on Postgres specifically.
+            # last_indexed_at was missed here when added - a real bug: it
+            # left a raw datetime leaking through instead of a string.
             for key in ("created_at", "updated_at", "last_indexed_at"):
                 if row.get(key) is not None:
                     row[key] = row[key].isoformat()

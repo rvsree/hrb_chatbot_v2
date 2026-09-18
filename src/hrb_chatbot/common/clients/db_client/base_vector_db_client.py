@@ -1,10 +1,5 @@
-"""The shared interface every vector database client implements.
-
-ChromaDB, Pinecone, etc. have different client libraries; this defines the
-four operations the RAG pipeline needs so calling code can use any backend
-interchangeably. Admin-only operations like list_collections/delete_collection
-are deliberately left out to keep the required contract small.
-"""
+"""Shared interface every vector database client implements - ChromaDB,
+Pinecone, etc. behind four backend-agnostic operations."""
 
 from abc import ABC, abstractmethod
 
@@ -37,9 +32,8 @@ class BaseVectorDBClient(ABC):
         top_k: int = 5,
         where: dict | None = None,
     ) -> dict:
-        """Return the top_k chunks closest to query_embedding. `where` is an optional
-        metadata filter; every backend must support at least equality filtering on it,
-        since the RAG pipeline's access-control and search-filter steps depend on it."""
+        """Return the top_k chunks closest to query_embedding. `where` is an
+        optional metadata filter every backend must support (at least equality)."""
         raise NotImplementedError
 
     @abstractmethod
@@ -49,11 +43,9 @@ class BaseVectorDBClient(ABC):
 
     @abstractmethod
     def update_metadata(self, collection_name: str, ids: list[str], metadatas: list[dict]) -> None:
-        """Update only the metadata on existing chunks, without re-supplying
-        embeddings/documents - used to flip is_current=false on a superseded
-        document's chunks without a wasted re-embed. `metadatas[i]` REPLACES
-        the full metadata dict for `ids[i]`, not a merge - callers must pass
-        every field they want kept, not just the ones changing."""
+        """Update only metadata on existing chunks, no re-embed. `metadatas[i]`
+        REPLACES the full dict for `ids[i]`, not a merge - pass every field
+        to keep, not just the ones changing."""
         raise NotImplementedError
 
     @abstractmethod

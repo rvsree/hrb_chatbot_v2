@@ -1,11 +1,6 @@
-"""SQLite client - stores one row per uploaded document.
-
-Uses aiosqlite, not stdlib sqlite3, because FastAPI's route handlers here are
-async and a synchronous sqlite3 call would block the whole event loop. The
-documents table is created lazily on first real use, not in __init__, so
-importing/constructing this class stays instant and touches nothing - only
-an actual call (e.g. health_check()) opens the file.
-"""
+"""SQLite client - one row per uploaded document. Uses aiosqlite (not stdlib
+sqlite3) since a sync call would block the async event loop; the table is
+created lazily on first real use, not in __init__."""
 
 import json
 import sqlite3
@@ -32,10 +27,8 @@ CREATE TABLE IF NOT EXISTS documents (
 )
 """
 
-# Each column below was added after the table already existed. SQLite has no
-# ADD COLUMN IF NOT EXISTS, so the duplicate-column error from re-running any
-# of these against a database that already has them is caught and ignored -
-# see _ensure_table() below.
+# Columns added after the table already existed - SQLite has no ADD COLUMN
+# IF NOT EXISTS, so the duplicate-column error is caught and ignored below.
 ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN chunk_ids TEXT",
     "ALTER TABLE documents ADD COLUMN document_version INTEGER NOT NULL DEFAULT 1",
@@ -55,6 +48,7 @@ ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN department TEXT",
     "ALTER TABLE documents ADD COLUMN doc_type TEXT",
     "ALTER TABLE documents ADD COLUMN purpose TEXT",
+    "ALTER TABLE documents ADD COLUMN doc_classification TEXT",
 ]
 
 # Speeds up find_by_content_hash() - one lookup per upload, worth an index.
@@ -62,10 +56,8 @@ CREATE_CONTENT_HASH_INDEX = (
     "CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash)"
 )
 
-# Normalized chunk tracking - one row per chunk, not a JSON blob on
-# documents.chunk_ids - so "which chunks were created when" and "which
-# chunks are still current" are real, indexable SQL queries, not
-# application-code JSON parsing. See base_metadata_client.py's module docstring.
+# One row per chunk, not a JSON blob on documents.chunk_ids - makes "which
+# chunks are current" a real indexable SQL query, not app-code JSON parsing.
 CREATE_CHUNKS_TABLE = """
 CREATE TABLE IF NOT EXISTS chunks (
     chunk_id TEXT PRIMARY KEY,
@@ -125,10 +117,13 @@ class SQLiteClient(BaseMetadataClient):
 
         with log_backend_call(logger, "sqlite", "metadata.create_document", document_id=document_id):
             async with aiosqlite.connect(self.db_path) as db:
+                # document_version starts at 0, not 1 - "no successfully
+                # indexed version yet". record_successful_index() below
+                # always does version + 1, so the first real index lands on 1.
                 await db.execute(
                     "INSERT INTO documents (id, filename, file_path, status, error_message, "
                     "created_at, updated_at, document_version, file_size_bytes, content_hash, "
-                    "is_current, supersedes) VALUES (?, ?, ?, 'uploaded', NULL, ?, ?, 1, ?, ?, 1, ?)",
+                    "is_current, supersedes) VALUES (?, ?, ?, 'uploaded', NULL, ?, ?, 0, ?, ?, 1, ?)",
                     (document_id, filename, file_path, now, now, file_size_bytes, content_hash, supersedes),
                 )
                 await db.commit()
@@ -259,6 +254,7 @@ class SQLiteClient(BaseMetadataClient):
         department: str | None,
         doc_type: str | None,
         purpose: str | None,
+        doc_classification: str | None,
     ) -> None:
         await self._ensure_table()
         now = datetime.now(UTC).isoformat()
@@ -267,8 +263,8 @@ class SQLiteClient(BaseMetadataClient):
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute(
                     "UPDATE documents SET owner = ?, department = ?, doc_type = ?, purpose = ?, "
-                    "updated_at = ? WHERE id = ?",
-                    (owner, department, doc_type, purpose, now, document_id),
+                    "doc_classification = ?, updated_at = ? WHERE id = ?",
+                    (owner, department, doc_type, purpose, doc_classification, now, document_id),
                 )
                 await db.commit()
 

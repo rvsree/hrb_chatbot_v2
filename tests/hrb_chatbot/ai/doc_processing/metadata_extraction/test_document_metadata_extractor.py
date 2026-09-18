@@ -12,7 +12,8 @@ from tests.conftest import FakeChatClient, FakeClientGateway
 def test_clean_json_response_is_parsed_correctly(monkeypatch):
     answer = (
         '{"owner": "Jane Smith", "department": "HR", '
-        '"doc_type": "policy", "purpose": "Describes paid time off."}'
+        '"doc_type": "policy", "purpose": "Describes paid time off.", '
+        '"doc_classification": "leave policy"}'
     )
     monkeypatch.setattr(extractor, "get_client_gateway", lambda: FakeClientGateway(chat_client=FakeChatClient(answer=answer)))
 
@@ -23,6 +24,7 @@ def test_clean_json_response_is_parsed_correctly(monkeypatch):
         "department": "HR",
         "doc_type": "policy",
         "purpose": "Describes paid time off.",
+        "doc_classification": "leave policy",
     }
 
 
