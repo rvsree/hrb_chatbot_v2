@@ -16,7 +16,7 @@ should follow:
 | Section | Present? | Note |
 |---|---|---|
 | Context | | |
-| Data/API contracts | | Are the actual Pydantic model names given, not just "a request model"? |
+| Data/API contracts | | If this phase touches an endpoint shape, does it point at a **Finalized** section of `docs/endpoint-request-response-contracts.md` rather than re-deriving the shape inline? A section still marked "Proposed, awaiting confirmation" is NEEDS-WORK - it isn't agreed yet. Are the actual Pydantic model names given too, not just "a request model"? |
 | User-visible behavior | | |
 | Failure modes | | Does it name real `error_codes.py` codes, not just "an error"? |
 | Retrieval quality criteria | | Only required if the phase touches chunking/indexing/retrieval - flag as N/A otherwise, don't require it |
@@ -24,6 +24,10 @@ should follow:
 | Open questions | | An empty list here is fine; a missing section is not |
 
 Also check:
+- Does the spec's endpoint shape actually match what's written in
+  `docs/endpoint-request-response-contracts.md`, word for word? A spec that
+  paraphrases or drifts from that file is a bug in the spec, not a stylistic
+  choice - flag it.
 - Does anything in "Data/API contracts" conflict with an existing model in
   `src/hrb_chatbot/models/`? Flag it - don't resolve it.
 - Does anything in "User-visible behavior" already exist? Flag possible

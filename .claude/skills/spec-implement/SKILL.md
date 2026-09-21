@@ -21,7 +21,10 @@ Preconditions - stop and report if either is missing, don't proceed anyway:
 ## Steps
 
 1. Re-read the spec's "Data/API contracts", "User-visible behavior", and
-   "Failure modes" sections - these are the acceptance criteria.
+   "Failure modes" sections - these are the acceptance criteria. If "Data/API
+   contracts" points at `docs/endpoint-request-response-contracts.md`, read
+   that section too and implement the wire shape exactly as written there -
+   it is the actual source of truth, not the spec's summary of it.
 2. Implement in the smallest coherent slice that satisfies them, following
    `docs/CODING-STANDARDS.md` (or invoke `/coding-standards` explicitly on
    each new/changed file).

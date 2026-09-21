@@ -18,21 +18,37 @@ stays both the plan and the history in one file, matching how every phase in
 it already works - a spec is just that same bullet, written earlier in the
 phase's lifecycle instead of only after the fact.
 
+**One deliberate exception, added 2026-09-20:** a phase touching any
+endpoint's request/response shape gets that shape confirmed in
+`docs/endpoint-request-response-contracts.md` *first*, iterated on there
+directly with the user until every sub-object is marked **Finalized**,
+*before* this phase's own `**Spec:**` block is written. That file is a
+second source of truth on purpose, not a drift - endpoint shapes get
+renegotiated over many turns before a phase number even exists, and folding
+that back-and-forth into one phase's bullet made it unreadable. The phase's
+own spec then just points at it (see Phase 45's entry for the pattern).
+
 ## Steps
 
 1. Find the target phase's `- [ ]` bullet in `docs/RAG-ROADMAP.md`'s
    `## Phases` section (or, if promoting a `docs/BACKLOG.md` item, add a new
    `- [ ]` bullet at the end of that section using the same
    `**Phase N (status) — Title.**` opening format every other bullet uses).
-2. Append a nested `**Spec:**` sub-list to that bullet, using this template -
+2. If this phase touches any endpoint's request/response shape, confirm it
+   in `docs/endpoint-request-response-contracts.md` first (add a new section
+   marked "Proposed, awaiting confirmation", flip to "Finalized" once the
+   user agrees) - do this before step 3, not after.
+3. Append a nested `**Spec:**` sub-list to that bullet, using this template -
    omit a line if it's genuinely not applicable, but say so explicitly
    ("N/A - ...") rather than leaving it out silently:
 
    ```
    - **Spec:**
      - **Context:** why this phase, what triggered it.
-     - **Data/API contracts:** request/response shapes this phase adds or
-       changes - name the actual Pydantic model(s) in `src/hrb_chatbot/models/`.
+     - **Data/API contracts:** point at the relevant, now-Finalized section
+       of `docs/endpoint-request-response-contracts.md` - name the actual
+       Pydantic model(s) in `src/hrb_chatbot/models/` too, but the wire
+       shape itself lives in that file, not repeated here.
      - **User-visible behavior:** what a caller can do after this phase that
        they couldn't before.
      - **Failure modes:** what's expected to go wrong and what the endpoint
@@ -45,10 +61,10 @@ phase's lifecycle instead of only after the fact.
        implementation.
    ```
 
-3. Set that phase's checkbox to `- [ ]` (not started) if it isn't already,
+4. Set that phase's checkbox to `- [ ]` (not started) if it isn't already,
    and leave the "Status at a glance" table row's Status column as
    `📋 Planned` (or add the row if it's a newly promoted BACKLOG item).
-4. Do not write any implementation code in this step. Report the spec back
+5. Do not write any implementation code in this step. Report the spec back
    to the user for review before anything in `src/` changes - matches the
    "one task at a time" rule in `CLAUDE.md`.
 

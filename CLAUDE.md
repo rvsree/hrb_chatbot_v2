@@ -123,6 +123,20 @@ the "Status at a glance" table's `Spec` column rather than reconstructed after
 the fact - their detailed write-ups in `## Phases` already serve as the
 historical record.
 
+**One deliberate exception to "no separate file," added 2026-09-20:**
+[docs/endpoint-request-response-contracts.md](docs/endpoint-request-response-contracts.md)
+holds every endpoint's finalized request/response/error shape, confirmed
+there directly with the user *before* a phase's own Spec block is written,
+not folded into a phase's bullet. Endpoint shapes get renegotiated over many
+turns before a phase number even exists (Phase 45's identity redesign is
+the example that forced this) - cramming that back-and-forth into one
+phase's bullet made both hard to read. A phase's own `**Spec:**` block
+points at the relevant section of that file instead of re-deriving the wire
+shape inline; `.claude/skills/spec-new/SKILL.md`,
+`spec-review/SKILL.md`, and `spec-implement/SKILL.md` all reference it. This
+is a recorded exception, not a drift back toward parallel spec/ADR folders -
+everything else still lives in `docs/RAG-ROADMAP.md`/`docs/FAQ.md`.
+
 **Two working norms that apply everywhere, not just to SDD:**
 - **One task at a time.** No multi-file autonomous changes across unrelated
   concerns. Finish one phase/task, report, wait for review.
