@@ -1,4 +1,6 @@
-"""Request/response contracts for the document upload API.
+"""Request/response contracts for the document upload API (Phase 45: nested
+sub-objects, identity via payload not headers - see
+docs/endpoint-request-response-contracts.md, the source of truth for these shapes).
 
 Per-file results, not one status for the whole batch: one bad file in a
 batch shouldn't fail the good ones - each gets its own status and reason.
@@ -7,12 +9,104 @@ batch shouldn't fail the good ones - each gets its own status and reason.
 from pydantic import BaseModel, Field
 
 from src.hrb_chatbot.common.config.settings import read_setting
+from src.hrb_chatbot.common.enums import ChunkingStrategy
+from src.hrb_chatbot.models.common import UserProfile
 
 # A benefits PDF is a handful of pages, not a data dump - 20MB is generous
 # headroom over anything in resources/kb_docs/ today, not an arbitrary number.
 # Server-side policy, not payload-overridable - see .env's comment on this var.
 MAX_FILE_SIZE_BYTES = int(read_setting(None, "MAX_UPLOAD_FILE_SIZE_BYTES", 20 * 1024 * 1024))
 ALLOWED_CONTENT_TYPE = "application/pdf"
+
+# The raw `payload` form field's own length bound - see the contracts doc.
+PAYLOAD_MAX_LENGTH = 20000
+
+# Phase 46: a real document is always a real PDF, far larger than this -
+# every test-generated file across this project's suite is a short fake
+# string like "%PDF-1.4 fake content <uuid>". A structural signal for
+# test-noise cleanup, not a guess (employee_id/filename aren't safe -
+# a real manual test could reuse either).
+TEST_NOISE_MAX_FILE_SIZE_BYTES = int(read_setting(None, "TEST_NOISE_MAX_FILE_SIZE_BYTES", 1024))
+
+
+class ChunkInfoInput(BaseModel):
+    chunking_strategy: ChunkingStrategy | None = Field(
+        None, description="Override auto-selected chunking - applies to every file in this batch."
+    )
+    chunk_size: int | None = Field(None, ge=1, description="Override CHUNK_DEFAULT_SIZE for this batch.")
+    chunk_overlap: int | None = Field(None, ge=0, description="Override CHUNK_DEFAULT_OVERLAP for this batch.")
+
+
+class DocumentMetadataInput(BaseModel):
+    """Caller-supplied document metadata - overrides the LLM extraction
+    step's own guess for whatever field is sent, field left null still
+    gets filled in by extraction."""
+
+    supersedes_document_id: str | None = Field(
+        None,
+        max_length=100,
+        description="Marks this as a new version of an existing document (single-file uploads only).",
+    )
+    doc_type: str | None = Field(None, max_length=100)
+    department: str | None = Field(None, max_length=100)
+    doc_classification: str | None = Field(None, max_length=100)
+    owner: str | None = Field(None, max_length=200)
+    purpose: str | None = Field(None, max_length=500)
+    effective_date: str | None = Field(None, max_length=100)
+    audience: str | None = Field(None, max_length=200)
+    confidentiality_level: str | None = Field(None, max_length=100)
+
+
+class UploadDocumentsPayload(BaseModel):
+    """Parsed from the `payload` multipart form field (a JSON string, not a
+    Form()-typed field - a file upload can't be pure JSON, but this
+    non-file part can)."""
+
+    user_profile: UserProfile | None = None
+    chunk_info: ChunkInfoInput | None = None
+    document_metadata: DocumentMetadataInput | None = None
+
+
+class ChunkInfoResult(BaseModel):
+    chunking_strategy: str | None = None
+    chunk_size: int | None = None
+    chunk_overlap: int | None = None
+    action: str | None = Field(
+        None, description="'insert' or 'update' - which indexing outcome this was. Null for 'duplicate'/'rejected'."
+    )
+    chunks_indexed: int | None = Field(None, description="How many chunks were written. Null if not indexed.")
+    chunks_removed: int | None = Field(None, description="Stale chunks removed by this index. Null if not indexed.")
+
+
+class DocumentMetadataResult(BaseModel):
+    doc_type: str | None = Field(
+        None, description="e.g. 'policy', 'regulatory', 'investment' - caller-supplied, or the "
+        "extraction step's best guess, not a controlled vocabulary."
+    )
+    department: str | None = None
+    doc_classification: str | None = Field(
+        None,
+        description="The specific topic this document covers, in the document's own terms (e.g. "
+        "'401k') - caller-supplied, or the extraction step's best guess.",
+    )
+    owner: str | None = None
+    purpose: str | None = None
+    effective_date: str | None = None
+    audience: str | None = None
+    confidentiality_level: str | None = None
+
+
+class VersioningInfo(BaseModel):
+    document_version: int | None = Field(
+        None, description="0 until the first successful index, then 1 - increments on each re-index."
+    )
+    is_current: bool | None = Field(
+        None,
+        description="False once a newer upload has explicitly superseded this document - its chunks "
+        "are excluded from retrieval by default, though not deleted.",
+    )
+    supersedes: str | None = Field(None, description="The document_id this one explicitly replaced, if any.")
+    superseded_by: str | None = Field(None, description="The document_id that replaced this one, if any.")
 
 
 class DocumentUploadResult(BaseModel):
@@ -33,6 +127,10 @@ class DocumentUploadResult(BaseModel):
             "uploaded before (no new document created - see message), 'rejected' if invalid."
         ),
     )
+    chunk_info: ChunkInfoResult | None = None
+    document_metadata: DocumentMetadataResult | None = None
+    versioning_info: VersioningInfo | None = None
+    uploaded_by: str | None = Field(None, description="The caller's employee_id, from user_profile - audit only.")
     error: str | None = Field(None, description="Why this file was rejected, if it was.")
     error_code: str | None = Field(
         None,
@@ -49,17 +147,6 @@ class DocumentUploadResult(BaseModel):
         None, description="The file's size in bytes - present for 'uploaded' and 'duplicate', null "
         "for 'rejected'."
     )
-    document_version: int | None = Field(
-        None, description="1 after a fresh upload's first successful index (0 if indexing failed), "
-        "or the existing document's current version on a 'duplicate' match - null if rejected. "
-        "Increments on each subsequent successful re-index, see DocumentRecord.document_version."
-    )
-    action: str | None = Field(
-        None, description="'insert' or 'update' - Phase 26: upload now indexes immediately, "
-        "so this reports the indexing outcome too. Null for 'duplicate'/'rejected'."
-    )
-    chunks_indexed: int | None = Field(None, description="How many chunks were written. Null if not indexed.")
-    chunks_removed: int | None = Field(None, description="Stale chunks removed by this index. Null if not indexed.")
 
 
 class DocumentUploadResponse(BaseModel):
@@ -84,92 +171,67 @@ class DocumentRecord(BaseModel):
     error_message: str | None = None
     created_at: str
     updated_at: str
-    chunk_ids: list[str] | None = Field(
-        None,
-        description=(
-            "Vector-store ids this document's chunks were written under on its "
-            "last successful index, or null if it has never been indexed."
-        ),
-    )
-    document_version: int = Field(
-        0, description="0 until the first successful index, then 1 - increments by 1 on each "
-        "subsequent successful re-index."
-    )
-    file_size_bytes: int = Field(0, description="The uploaded file's size in bytes.")
-    chunk_count: int = Field(
-        0, description="How many chunks this document currently has - len(chunk_ids), kept as its "
-        "own column so a list view doesn't need to parse the full chunk_ids array just to count."
-    )
-    embedding_model: str | None = Field(
-        None, description="Which embedding model produced the current chunks, or null if never indexed."
-    )
-    embedding_dimension: int | None = Field(
-        None,
-        description=(
-            "The vector length that model produced (e.g. 1536 for text-embedding-3-small, 3072 for "
-            "text-embedding-3-large) - the actual length of a real embedding this document's chunks "
-            "were written with, not looked up from a hardcoded model name table. Mixing dimensions "
-            "within one vector-store collection breaks it, so this is what to check before reusing "
-            "a vector_db override across documents."
-        ),
-    )
-    vector_db: str | None = Field(
-        None, description="Which vector store this document's chunks currently live in, or null if "
-        "never indexed."
-    )
-    chunk_size: int | None = Field(None, description="The chunk size used for the current index.")
-    chunk_overlap: int | None = Field(None, description="The chunk overlap used for the current index.")
     last_indexed_at: str | None = Field(
         None,
-        description=(
-            "When the most recent *successful* index finished - unlike updated_at, this doesn't "
-            "move on a failed index attempt, so it always answers \"how fresh is what's actually "
-            "searchable for this document\"."
-        ),
+        description="When the most recent *successful* index finished - unlike updated_at, this "
+        "doesn't move on a failed index attempt.",
     )
-    is_current: bool = Field(
-        True,
-        description=(
-            "False once a newer upload has explicitly superseded this document (see supersedes/"
-            "superseded_by) - its chunks are excluded from retrieval by default, though not deleted."
-        ),
+    chunk_ids: list[str] | None = Field(
+        None, description="Vector-store ids this document's chunks were written under, or null if never indexed."
     )
-    supersedes: str | None = Field(
-        None, description="The document_id this one explicitly replaced, if any - set at upload time."
+    chunk_count: int = Field(0, description="How many chunks this document currently has.")
+    file_size_bytes: int = Field(0, description="The uploaded file's size in bytes.")
+    embedding_model: str | None = Field(None, description="Which embedding model produced the current chunks.")
+    embedding_dimension: int | None = Field(
+        None, description="The vector length that model produced - the actual length of a real "
+        "embedding this document's chunks were written with."
     )
-    superseded_by: str | None = Field(
-        None, description="The document_id that replaced this one, if any - set once that document "
-        "successfully indexes, not immediately when it's uploaded."
-    )
-    owner: str | None = Field(
-        None, description="Who owns this document, if the LLM extraction step could determine it - "
-        "null if never indexed, or if extraction couldn't tell."
-    )
-    department: str | None = Field(None, description="Which department this document belongs to, if determinable.")
-    doc_type: str | None = Field(
-        None, description="e.g. 'policy', 'regulatory', 'investment' - the extraction step's best guess, "
-        "not a controlled vocabulary."
-    )
-    purpose: str | None = Field(None, description="A short statement of the document's scope/purpose, if determinable.")
-    doc_classification: str | None = Field(
-        None,
-        description=(
-            "The specific topic this document covers, in the document's own terms (e.g. '401k', "
-            "'health benefits', 'leave policy') - the extraction step's best guess, not a controlled "
-            "vocabulary, same shape as doc_type."
-        ),
-    )
-    effective_date: str | None = Field(
-        None,
-        description="When the document states it takes effect, in its own words - not a parsed/"
-        "validated date, same best-effort-string contract as the other extraction fields.",
-    )
-    audience: str | None = Field(
-        None, description="Which employee group this document applies to, if determinable."
-    )
-    confidentiality_level: str | None = Field(
-        None, description="The document's own stated sensitivity (e.g. 'Internal', 'Confidential'), if it states one."
-    )
+    vector_db: str | None = Field(None, description="Which vector store this document's chunks currently live in.")
+    uploaded_by: str | None = Field(None, description="The caller's employee_id from upload time - audit only.")
+    chunk_info: ChunkInfoResult | None = None
+    document_metadata: DocumentMetadataResult | None = None
+    versioning_info: VersioningInfo | None = None
+
+    @classmethod
+    def from_row(cls, document: dict) -> "DocumentRecord":
+        """Map a flat metadata-store row into this nested shape - the one
+        place that translation happens, not repeated at each call site."""
+        return cls(
+            id=document["id"],
+            filename=document["filename"],
+            file_path=document["file_path"],
+            status=document["status"],
+            error_message=document.get("error_message"),
+            created_at=document["created_at"],
+            updated_at=document["updated_at"],
+            last_indexed_at=document.get("last_indexed_at"),
+            chunk_ids=document.get("chunk_ids"),
+            chunk_count=document.get("chunk_count", 0),
+            file_size_bytes=document.get("file_size_bytes", 0),
+            embedding_model=document.get("embedding_model"),
+            embedding_dimension=document.get("embedding_dimension"),
+            vector_db=document.get("vector_db"),
+            uploaded_by=document.get("uploaded_by"),
+            chunk_info=ChunkInfoResult(
+                chunk_size=document.get("chunk_size"), chunk_overlap=document.get("chunk_overlap")
+            ),
+            document_metadata=DocumentMetadataResult(
+                doc_type=document.get("doc_type"),
+                department=document.get("department"),
+                doc_classification=document.get("doc_classification"),
+                owner=document.get("owner"),
+                purpose=document.get("purpose"),
+                effective_date=document.get("effective_date"),
+                audience=document.get("audience"),
+                confidentiality_level=document.get("confidentiality_level"),
+            ),
+            versioning_info=VersioningInfo(
+                document_version=document.get("document_version"),
+                is_current=document.get("is_current"),
+                supersedes=document.get("supersedes"),
+                superseded_by=document.get("superseded_by"),
+            ),
+        )
 
 
 class DocumentListResponse(BaseModel):
@@ -190,6 +252,7 @@ class DocumentDeleteResponse(BaseModel):
         ..., description="How many vectors were deleted from the vector store. 0 if the document "
         "had never been indexed."
     )
+    deleted_by: str | None = Field(None, description="The caller's employee_id for this delete - audit only.")
 
 
 class DocumentDeleteAllResponse(BaseModel):
@@ -198,5 +261,22 @@ class DocumentDeleteAllResponse(BaseModel):
 
     documents_deleted: int = Field(..., description="How many documents were deleted.")
     chunks_removed: int = Field(..., description="Total vectors deleted across all documents.")
+    deleted_by: str | None = Field(None, description="The caller's employee_id for this delete - audit only.")
 
 
+class TestNoiseDocument(BaseModel):
+    """One document that matches the test-noise size threshold (Phase 46)."""
+
+    id: str
+    filename: str
+    file_size_bytes: int
+    created_at: str
+
+
+class TestNoisePreviewResponse(BaseModel):
+    """What GET .../documents/cleanup/preview returns - deletes nothing,
+    just shows what DELETE .../documents/cleanup would remove."""
+
+    count: int = Field(..., description="How many documents are below the size threshold.")
+    threshold_bytes: int = Field(..., description="file_size_bytes below this counts as test noise.")
+    documents: list[TestNoiseDocument]

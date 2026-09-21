@@ -52,6 +52,9 @@ ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN effective_date TEXT",
     "ALTER TABLE documents ADD COLUMN audience TEXT",
     "ALTER TABLE documents ADD COLUMN confidentiality_level TEXT",
+    # Phase 45: the caller's employee_id, from the request payload's
+    # user_profile - an audit trail, not part of the RBAC decision.
+    "ALTER TABLE documents ADD COLUMN uploaded_by TEXT",
 ]
 
 # Speeds up find_by_content_hash() - one lookup per upload, worth an index.
@@ -114,6 +117,7 @@ class SQLiteClient(BaseMetadataClient):
         file_size_bytes: int,
         content_hash: str,
         supersedes: str | None = None,
+        uploaded_by: str | None = None,
     ) -> None:
         await self._ensure_table()
         now = datetime.now(UTC).isoformat()
@@ -126,8 +130,18 @@ class SQLiteClient(BaseMetadataClient):
                 await db.execute(
                     "INSERT INTO documents (id, filename, file_path, status, error_message, "
                     "created_at, updated_at, document_version, file_size_bytes, content_hash, "
-                    "is_current, supersedes) VALUES (?, ?, ?, 'uploaded', NULL, ?, ?, 0, ?, ?, 1, ?)",
-                    (document_id, filename, file_path, now, now, file_size_bytes, content_hash, supersedes),
+                    "is_current, supersedes, uploaded_by) VALUES (?, ?, ?, 'uploaded', NULL, ?, ?, 0, ?, ?, 1, ?, ?)",
+                    (
+                        document_id,
+                        filename,
+                        file_path,
+                        now,
+                        now,
+                        file_size_bytes,
+                        content_hash,
+                        supersedes,
+                        uploaded_by,
+                    ),
                 )
                 await db.commit()
 

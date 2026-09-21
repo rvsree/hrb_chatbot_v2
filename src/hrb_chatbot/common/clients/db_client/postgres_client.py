@@ -50,6 +50,7 @@ ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS effective_date TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS audience TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS confidentiality_level TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS uploaded_by TEXT",
 ]
 
 # Speeds up find_by_content_hash() - one lookup per upload, worth an index.
@@ -138,6 +139,7 @@ class PostgresClient(BaseMetadataClient):
         file_size_bytes: int,
         content_hash: str,
         supersedes: str | None,
+        uploaded_by: str | None,
     ) -> None:
         # document_version starts at 0, not 1 - "no successfully indexed
         # version yet". record_successful_index() always does version + 1,
@@ -146,8 +148,9 @@ class PostgresClient(BaseMetadataClient):
             conn.execute(
                 "INSERT INTO documents (id, filename, file_path, status, error_message, "
                 "created_at, updated_at, document_version, file_size_bytes, content_hash, "
-                "is_current, supersedes) VALUES (%s, %s, %s, 'uploaded', NULL, now(), now(), 0, %s, %s, true, %s)",
-                (document_id, filename, file_path, file_size_bytes, content_hash, supersedes),
+                "is_current, supersedes, uploaded_by) "
+                "VALUES (%s, %s, %s, 'uploaded', NULL, now(), now(), 0, %s, %s, true, %s, %s)",
+                (document_id, filename, file_path, file_size_bytes, content_hash, supersedes, uploaded_by),
             )
             conn.commit()
 
@@ -173,6 +176,7 @@ class PostgresClient(BaseMetadataClient):
         file_size_bytes: int,
         content_hash: str,
         supersedes: str | None = None,
+        uploaded_by: str | None = None,
     ) -> None:
         await self._ensure_table()
         with log_backend_call(logger, "postgres", "metadata.create_document", document_id=document_id):
@@ -184,6 +188,7 @@ class PostgresClient(BaseMetadataClient):
                 file_size_bytes,
                 content_hash,
                 supersedes,
+                uploaded_by,
             )
 
     def _update_status_sync(self, document_id: str, status: str, error_message: str | None) -> None:

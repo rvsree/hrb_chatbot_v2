@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import UploadFile
 
 from src.hrb_chatbot.ai.doc_processing import pipeline
+from src.hrb_chatbot.ai.doc_processing.indexing.vector_indexer import storage_chunk_ids
 from src.hrb_chatbot.common.clients.db_client.langchain_vector_store import COLLECTION_NAME
 from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
@@ -17,7 +18,11 @@ from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.models.documents import (
     ALLOWED_CONTENT_TYPE,
     MAX_FILE_SIZE_BYTES,
+    ChunkInfoResult,
+    DocumentMetadataInput,
+    DocumentMetadataResult,
     DocumentUploadResult,
+    VersioningInfo,
 )
 
 logger = get_logger("documents_service")
@@ -51,10 +56,14 @@ async def save_upload(
     chunking_strategy: str | None = None,
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
+    document_metadata_override: DocumentMetadataInput | None = None,
+    uploaded_by: str | None = None,
 ) -> DocumentUploadResult:
     """Validate, store, and record one uploaded file. Never raises.
     `supersedes_document_id` only records intent - the flip happens later,
-    once this new upload successfully indexes."""
+    once this new upload successfully indexes. `uploaded_by` is the
+    caller's employee_id (from the request payload's user_profile) - an
+    audit field only, not part of any access-control decision."""
     try:
         content = await upload.read()
     except Exception as error:
@@ -102,7 +111,7 @@ async def save_upload(
                 "No new document was created - use that document_id to re-index if needed."
             ),
             file_size_bytes=existing["file_size_bytes"],
-            document_version=existing["document_version"],
+            versioning_info=VersioningInfo(document_version=existing["document_version"]),
         )
 
     if supersedes_document_id:
@@ -128,7 +137,13 @@ async def save_upload(
         file_path.write_bytes(content)
 
         await get_db_gateway().metadata_store().create_document(
-            document_id, upload.filename, str(file_path), size, content_hash, supersedes=supersedes_document_id
+            document_id,
+            upload.filename,
+            str(file_path),
+            size,
+            content_hash,
+            supersedes=supersedes_document_id,
+            uploaded_by=uploaded_by,
         )
     except Exception as error:
         # A real, unexpected failure - logged with the id for traceability, but
@@ -149,7 +164,9 @@ async def save_upload(
     index_outcome = await _index_now(
         document_id, file_path,
         chunking_strategy=chunking_strategy, chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+        document_metadata_override=document_metadata_override,
     )
+    document_metadata = index_outcome.get("document_metadata") or {}
 
     return DocumentUploadResult(
         filename=upload.filename,
@@ -158,12 +175,19 @@ async def save_upload(
         error=index_outcome.get("error"),
         error_code=index_outcome.get("error_code"),
         file_size_bytes=size,
+        uploaded_by=uploaded_by,
+        chunk_info=ChunkInfoResult(
+            chunking_strategy=index_outcome.get("chunking_strategy"),
+            chunk_size=index_outcome.get("chunk_size"),
+            chunk_overlap=index_outcome.get("chunk_overlap"),
+            action=index_outcome.get("action"),
+            chunks_indexed=index_outcome.get("chunks_indexed"),
+            chunks_removed=index_outcome.get("chunks_removed"),
+        ),
+        document_metadata=DocumentMetadataResult(**document_metadata) if document_metadata else None,
         # 0 if indexing failed - matches what the row actually holds then
         # (create_document() inserts 0; only a successful index moves it to 1+).
-        document_version=index_outcome.get("document_version", 0),
-        action=index_outcome.get("action"),
-        chunks_indexed=index_outcome.get("chunks_indexed"),
-        chunks_removed=index_outcome.get("chunks_removed"),
+        versioning_info=VersioningInfo(document_version=index_outcome.get("document_version", 0)),
     )
 
 
@@ -173,11 +197,19 @@ async def _index_now(
     chunking_strategy: str | None = None,
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
+    document_metadata_override: DocumentMetadataInput | None = None,
 ) -> dict:
     """Chunk/embed/index a just-uploaded file - chunking_strategy/chunk_size/
     chunk_overlap default to .env's CHUNK_DEFAULT_* when not given. Never
     raises - a failure here still leaves the file uploaded, just not
     indexed (status becomes 'failed' on the document row)."""
+    # exclude supersedes_document_id - that's handled separately, at
+    # create_document() time, not part of the extraction-overridable set.
+    override_dict = (
+        document_metadata_override.model_dump(exclude={"supersedes_document_id"})
+        if document_metadata_override
+        else None
+    )
     try:
         return await pipeline.index_document(
             document_id,
@@ -185,6 +217,7 @@ async def _index_now(
             chunking_strategy=chunking_strategy,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+            document_metadata_override=override_dict,
         )
     except Exception as error:
         logger.error("Indexing failed for document %s: %s: %s", document_id, type(error).__name__, error)
@@ -198,10 +231,13 @@ async def save_uploads(
     chunking_strategy: str | None = None,
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
+    document_metadata_override: DocumentMetadataInput | None = None,
+    uploaded_by: str | None = None,
 ) -> list[DocumentUploadResult]:
     """Validate, store, and record every uploaded file - one result per file.
     `supersedes_document_id` only applies to a single-file upload (422 on a batch);
-    chunking_strategy/chunk_size/chunk_overlap apply to every file in the batch."""
+    chunking_strategy/chunk_size/chunk_overlap/document_metadata_override apply
+    to every file in the batch."""
     # One at a time, not in parallel (asyncio.gather would do that) - simpler
     # to follow, and file uploads aren't the bottleneck here.
     results = []
@@ -212,6 +248,8 @@ async def save_uploads(
             chunking_strategy=chunking_strategy,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+            document_metadata_override=document_metadata_override,
+            uploaded_by=uploaded_by,
         )
         results.append(result)
     return results
@@ -242,10 +280,12 @@ async def get_document(document_id: str) -> dict | None:
     return _parse_chunk_ids(document)
 
 
-async def delete_document(document_id: str) -> dict | None:
+async def delete_document(document_id: str, deleted_by: str | None = None) -> dict | None:
     """Delete one document: vectors, metadata row, uploaded file. Returns
     None if unknown (route -> 404). Vectors go first, while chunk_ids still
-    exists in metadata - a failed retry can still find them; metadata is removed last."""
+    exists in metadata - a failed retry can still find them; metadata is
+    removed last. `deleted_by` is the caller's employee_id, pass-through
+    only (not stored - the row itself is gone)."""
     gateway = get_db_gateway()
     metadata_store = gateway.metadata_store()
     document = await metadata_store.get_document(document_id)
@@ -258,9 +298,12 @@ async def delete_document(document_id: str) -> dict | None:
 
     if chunk_ids:
         vector_store = gateway.vector_store(provider=document.get("vector_db"))
-        # chunk_ids used directly - the Pinecone id-prefixing this once
-        # needed was LlamaIndex-specific; Phase 17's index() stores our own id as-is.
-        vector_store.delete(collection_name=COLLECTION_NAME, ids=chunk_ids)
+        # Phase 44 restored LlamaIndex indexing, which prefixes Pinecone ids
+        # again - storage_chunk_ids() is a no-op for Chroma, real for Pinecone.
+        vector_store.delete(
+            collection_name=COLLECTION_NAME,
+            ids=storage_chunk_ids(vector_store.PROVIDER_NAME, document_id, chunk_ids),
+        )
         logger.info("Deleted %d vector(s) for document %s", len(chunk_ids), document_id)
 
     await metadata_store.delete_document(document_id)
@@ -269,20 +312,58 @@ async def delete_document(document_id: str) -> dict | None:
     shutil.rmtree(document_directory, ignore_errors=True)
 
     logger.info("Deleted document %s (%r) - %d chunk(s) removed", document_id, document["filename"], len(chunk_ids))
-    return {"document_id": document_id, "filename": document["filename"], "chunks_removed": len(chunk_ids)}
+    return {
+        "document_id": document_id,
+        "filename": document["filename"],
+        "chunks_removed": len(chunk_ids),
+        "deleted_by": deleted_by,
+    }
 
 
-async def delete_all_documents() -> dict:
+async def delete_all_documents(deleted_by: str | None = None) -> dict:
     """Delete every document: vectors, metadata rows, uploaded files - same
     full delete as delete_document(), just for all of them (Phase 27)."""
     documents = await list_documents()
     documents_deleted = 0
     chunks_removed = 0
     for document in documents:
-        result = await delete_document(document["id"])
+        result = await delete_document(document["id"], deleted_by=deleted_by)
         if result is not None:  # already gone by the time we got here - skip, don't crash the batch
             documents_deleted += 1
             chunks_removed += result["chunks_removed"]
 
     logger.info("Deleted all %d document(s) - %d chunk(s) removed in total", documents_deleted, chunks_removed)
-    return {"documents_deleted": documents_deleted, "chunks_removed": chunks_removed}
+    return {"documents_deleted": documents_deleted, "chunks_removed": chunks_removed, "deleted_by": deleted_by}
+
+
+async def _find_test_noise_documents(max_file_size_bytes: int) -> list[dict]:
+    documents = await list_documents()
+    return [document for document in documents if (document.get("file_size_bytes") or 0) < max_file_size_bytes]
+
+
+async def list_test_noise_documents(max_file_size_bytes: int) -> list[dict]:
+    """Preview only - which documents would delete_test_noise_documents()
+    remove, without removing anything (Phase 46)."""
+    return await _find_test_noise_documents(max_file_size_bytes)
+
+
+async def delete_test_noise_documents(max_file_size_bytes: int, deleted_by: str | None = None) -> dict:
+    """Delete every document below max_file_size_bytes - same full-delete
+    semantics as delete_document(), just scoped to the test-noise subset
+    instead of everything (Phase 46)."""
+    documents = await _find_test_noise_documents(max_file_size_bytes)
+    documents_deleted = 0
+    chunks_removed = 0
+    for document in documents:
+        result = await delete_document(document["id"], deleted_by=deleted_by)
+        if result is not None:
+            documents_deleted += 1
+            chunks_removed += result["chunks_removed"]
+
+    logger.info(
+        "Deleted %d test-noise document(s) (< %d bytes) - %d chunk(s) removed in total",
+        documents_deleted,
+        max_file_size_bytes,
+        chunks_removed,
+    )
+    return {"documents_deleted": documents_deleted, "chunks_removed": chunks_removed, "deleted_by": deleted_by}

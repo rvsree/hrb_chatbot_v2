@@ -4,10 +4,34 @@ API key, so these fakes match the real clients' method signatures exactly.
 `monkeypatch` (pytest) swaps a function/attribute for one test, then
 restores it automatically - like Mockito, but on Python's module names."""
 
+import os
+from pathlib import Path
+
 from langchain_core.embeddings import Embeddings
 
+# Phase 46 (corrected - the first version of this fix was reviewed and
+# found NOT to work): base_metadata_client.py/base_vector_db_client.py
+# below have zero dependency on settings.py (confirmed - they only import
+# `abc`), so settings.py's own load_dotenv(..., override=True) was never
+# actually triggered by this file until something else (db_gateway.py,
+# imported later during test collection) imported it for the first time -
+# at which point .env's real SQLITE_DB_PATH silently stomped the override
+# below back to the real dev DB path. Reproduced live: the dev DB's
+# document count changed after a real pytest run, the "isolated" test DB
+# had no documents table at all - the fix was a no-op.
+#
+# Correct fix: import settings.py explicitly, right here, so its one-time
+# load_dotenv(override=True) fires during *this* module's own load - then
+# the override below runs after that, not racing to run before it. Python
+# caches modules (sys.modules), so db_gateway.py's later `import settings`
+# reuses this same already-loaded module and does not call load_dotenv() again.
+from src.hrb_chatbot.common.config import settings  # noqa: F401
 from src.hrb_chatbot.common.clients.db_client.base_metadata_client import BaseMetadataClient
 from src.hrb_chatbot.common.clients.db_client.base_vector_db_client import BaseVectorDBClient
+
+_TEST_SQLITE_DB_PATH = "data/test_sqlite_db.sqlite3"
+os.environ["SQLITE_DB_PATH"] = _TEST_SQLITE_DB_PATH
+Path(_TEST_SQLITE_DB_PATH).unlink(missing_ok=True)
 
 
 class FakeEmbeddings(Embeddings):
@@ -186,7 +210,14 @@ class FakeMetadataStore(BaseMetadataClient):
         self.documents: dict[str, dict] = {}
 
     async def create_document(
-        self, document_id, filename, file_path, file_size_bytes=0, content_hash="", supersedes=None
+        self,
+        document_id,
+        filename,
+        file_path,
+        file_size_bytes=0,
+        content_hash="",
+        supersedes=None,
+        uploaded_by=None,
     ):
         self.documents[document_id] = {
             "id": document_id,
@@ -213,6 +244,7 @@ class FakeMetadataStore(BaseMetadataClient):
             "doc_type": None,
             "purpose": None,
             "doc_classification": None,
+            "uploaded_by": uploaded_by,
         }
 
     async def find_by_content_hash(self, content_hash):

@@ -96,8 +96,8 @@ def reset_rate_limiter() -> None:
 
 
 def enforce_rate_limit(request: Request) -> None:
-    """FastAPI dependency - add `Depends(enforce_rate_limit)` to any route
-    that should be rate-limited. Keys on the caller's IP, or "unknown" if request.client is unset."""
+    """Call directly from a route body to rate-limit it. Keys on the
+    caller's IP, or "unknown" if request.client is unset."""
     if request.client:
         client_key = request.client.host
     else:

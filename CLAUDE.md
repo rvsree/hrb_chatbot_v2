@@ -44,13 +44,13 @@ No test needs a real API key, network call, or costs money - `tests/conftest.py`
 
 ### Request flow
 
-`main.py` (FastAPI app + global exception handlers) -> **gateway** (`api/gateway/`, Phase 23 - role-based access, wired as `dependencies=[...]` at `app.include_router(...)` level, not inside individual routes) -> `api/**/routes_*.py` (routers, one per resource, Pydantic request/response models only - see `models/`) -> `services/*.py` (thin orchestration layer, exists so routers never import `ai/` directly) -> `ai/**/pipeline.py` (the actual RAG logic) -> `common/clients/**` (one class per external backend, behind a gateway).
+`main.py` (FastAPI app + global exception handlers) -> **gateway** (`api/gateway/`, Phase 23 - role-based access, wired as `dependencies=[...]` at `app.include_router(...)` level, not inside individual routes) -> `api/**/*.py` (routers, one per resource, Pydantic request/response models only - see `models/`; `routes_health.py` keeps the old `routes_*.py` naming, but ingestion/retrieval are `ingest_document.py`/`retrieve_document.py` - named for the resource, not prefixed) -> `services/*.py` (thin orchestration layer, exists so routers never import `ai/` directly) -> `ai/**/pipeline.py` (the actual RAG logic) -> `common/clients/**` (one class per external backend, behind a gateway).
 
 There are **two separate pipelines** under `ai/`, easy to confuse by name:
-- `ai/doc_processing/pipeline.py` - **ingestion**: extract PDF text -> chunk -> embed -> index. Driven by `POST /v1/rag-ingestion/documents/{id}/index`. Gateway-restricted to `HR_SUPPORT` only.
-- `ai/rag_pipeline/pipeline.py` - **query**: decompose -> retrieve -> generate. Driven by `POST /v1/rag-retrieval/query`. Gateway-open to `EMPLOYEE`/`MANAGER`/`HR_SUPPORT`, uniformly.
+- `ai/doc_processing/pipeline.py` - **ingestion**: extract PDF text -> chunk -> embed -> index, all in one call. Driven by `POST /v1/rag/ingest-document/documents` (`api/rag/ingest_document.py`). Gateway-restricted to `HR_SUPPORT` only.
+- `ai/rag_pipeline/pipeline.py` - **query**: decompose -> retrieve -> generate. Driven by `POST /v1/rag/retrieve-document/query` (`api/rag/retrieve_document.py`). Gateway-open to `EMPLOYEE`/`MANAGER`/`HR_SUPPORT`, uniformly.
 
-**Gateway identity is a placeholder, not real auth** - `api/gateway/current_user.py` reads three unsigned request headers (`X-Employee-Id`/`X-Full-Name`/`X-Role`) as-is; real OAuth is deferred (empty placeholder: `common/clients/auth_client/oauth_client.py`), and only `get_current_user()`'s internals need to change when it lands - `api/gateway/rbac.py`'s `require_role()` and every route stay untouched.
+**Gateway identity is a placeholder, not real auth** - `api/gateway/user_profile.py`'s `resolve_user_from_profile()` reads an unsigned, caller-supplied `user_profile` sub-object (`employee_id`/`full_name`/`role`) straight from the JSON request body, on every endpoint including `GET`/`DELETE` (Phase 45 - non-standard HTTP, a deliberate choice so there's one identity mechanism everywhere, not several) - not headers, not query params, both tried and rejected during that phase. `api/gateway/rbac.py`'s `check_role(userProfile, *roles)` takes an already-resolved `UserProfile`, decoupled from how identity was obtained. Real OAuth is deferred (empty placeholder: `common/clients/auth_client/oauth_client.py`); only `resolve_user_from_profile()`'s internals need to change when it lands - `check_role()` and every route stay untouched. Since `role` is self-asserted in the same request it gates, RBAC today is a formality, not a real control - accepted deliberately, see `docs/endpoint-request-response-contracts.md`.
 
 `ai/agents/`, `ai/pre_processing/` (guardrails, query decomposition, search filtering), `ai/rag_pipeline/helper/access_control.py`, `ai/rag_pipeline/tools/`, and `common/observability/` are empty placeholder files (0 bytes) - scaffolding for future phases per the roadmap, not dead code to clean up.
 
@@ -58,12 +58,16 @@ There are **two separate pipelines** under `ai/`, easy to confuse by name:
 
 This mirrored the workshop's own module structure originally - not an
 accident. **Indexing moved off LlamaIndex onto LangChain in Phase 17**
-(2026-09-14) - a deliberate, recorded exception, not a quiet drift; see
-`docs/FAQ.md`'s "Why indexing moved off LlamaIndex" entry for the real
-reason (LangChain's `index()` gives real skip-if-unchanged + cleanup for
-free) and the honest tradeoff it accepted. Don't further "consolidate"
-chunking or retrieval onto a different library without the same kind of
-recorded reason:
+(2026-09-14); see `docs/FAQ.md`'s "Why indexing moved off LlamaIndex" entry
+for the reason given at the time (LangChain's `index()` gives real
+skip-if-unchanged + cleanup for free). **This was never actually settled -
+the user's standing preference, restated 2026-09-19, is the course's own
+LlamaIndex-based indexing approach** (`VectorStoreIndex`, per the original
+Phase 3 implementation at commit `b5870b9`, before Phase 17 replaced it).
+Phase 44 is reverting indexing back onto LlamaIndex for this reason - see
+`docs/RAG-ROADMAP.md`. Don't further "consolidate" chunking or retrieval
+onto a different library without a recorded reason confirmed with the user,
+not just asserted:
 - **Chunking** (`ai/doc_processing/chunking/text_chunker.py`) - LangChain's own splitters, 6 selectable strategies via a `CHUNKING_STRATEGIES` dict (name -> function), auto-selected by `decide_chunking_strategy()` when not given explicitly.
 - **Indexing** (`ai/doc_processing/indexing/vector_indexer.py`) - LangChain's own `index()` + `SQLRecordManager` (Phase 17) for the actual vector write, via the shared builder in `common/clients/db_client/langchain_vector_store.py`; everything around it (which document supersedes which, `is_current` flips) stays this project's own logic - `SQLRecordManager` has no concept of one document replacing a different one.
 - **Search/retrieval** (`ai/rag_pipeline/query_retrieval/retriever.py`) - raw LangChain (`langchain_chroma`/`langchain_pinecone`), two plain functions (similarity, MMR) via a `SEARCH_STRATEGIES` dict, no classes - matches the workshop demo's own style. Phase 20 layers LangChain's own `MultiQueryRetriever`/`SelfQueryRetriever` classes on top of either (`RagQueryRequest.use_multi_query`/`use_self_query`) - these two are genuine LangChain classes, not hand-written, since the retrieval-rewriting/filter-parsing logic they implement isn't something this project's own code needs to reinvent. Both need a real LangChain `BaseChatModel`; see `common/clients/llm_client/langchain_chat_model.py`'s `GatewayChatModel` (a small adapter over this project's own multi-provider `ask()` clients, not one of LangChain's own per-provider packages - `docs/RAG-ROADMAP.md`'s Phase 20 entry has the real dependency conflict that ruled those out).

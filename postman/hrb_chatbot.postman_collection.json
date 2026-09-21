@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "HRB Chatbot API",
-    "description": "There are only 8 real endpoints. Each top-level folder below is one endpoint (folder 3 covers two - list/get and delete share the same resource path); the requests inside it are that endpoint's happy path plus its edge cases, in that order.\n\n0. GET /ping — is the process up (no provider calls; what an automated probe should use)\n1. GET /health — is the service and its backends up (real provider calls; a by-hand diagnostic)\n2. POST /v1/rag-ingestion/documents — upload a PDF (identical content re-uploaded is detected and not duplicated - see folder note)\n3. GET /v1/rag-ingestion/documents[/{id}] — list or fetch documents; DELETE /v1/rag-ingestion/documents/{id} — full delete (vectors + metadata + file)\n4. POST /v1/rag-ingestion/documents/{id}/index — chunk, embed, and index one (same endpoint handles both first-time insert and re-index update)\n5. POST /v1/rag-retrieval/query — ask a question against indexed content; real retrieval + grounded generation (MVP), not a stub\n\nSetup: set `base_url` (local: http://127.0.0.1:8093, or the deployed App Runner URL). Run folder 2's first request once, then copy `results[0].document_id` from the response into the `document_id` variable — folders 3 and 4 need it.\n\nFile uploads (folder 2): the `kb_docs_dir` variable holds the absolute path to resources/kb_docs/ on disk - Postman can't use a relative path there the way curl can, because it has no concept of \"run from the repo root\". Update that one variable if this repo lives somewhere else on your machine. If a file field still shows empty/red after that, click it and re-browse to the PDF by hand - that's a normal Postman re-attach, not a bug.",
+    "description": "There are only 8 real endpoints. Each top-level folder below is one endpoint (folder 3 covers two - list/get and delete share the same resource path); the requests inside it are that endpoint's happy path plus its edge cases, in that order.\n\n0. GET /ping — is the process up (no provider calls; what an automated probe should use)\n1. GET /health — is the service and its backends up (real provider calls; a by-hand diagnostic)\n2. POST /v1/genai-rag/ingest-document/documents — upload a PDF (identical content re-uploaded is detected and not duplicated - see folder note)\n3. GET /v1/genai-rag/ingest-document/documents[/{id}] — list or fetch documents; DELETE /v1/genai-rag/ingest-document/documents/{id} — full delete (vectors + metadata + file)\n4. DELETE /v1/genai-rag/ingest-document/documents — delete every document completely (vectors + metadata + file), not just one\n5. POST /v1/genai-rag/retrieve-document/query — ask a question against indexed content; real retrieval + grounded generation (MVP), not a stub\n\nSetup: set `base_url` (local: http://127.0.0.1:8093, or the deployed App Runner URL). Run folder 2's first request once, then copy `results[0].document_id` from the response into the `document_id` variable — folder 3 needs it (delete-all in folder 3 does not).\n\nFile uploads (folder 2): the `kb_docs_dir` variable holds the absolute path to resources/kb_docs/ on disk - Postman can't use a relative path there the way curl can, because it has no concept of \"run from the repo root\". Update that one variable if this repo lives somewhere else on your machine. If a file field still shows empty/red after that, click it and re-browse to the PDF by hand - that's a normal Postman re-attach, not a bug.\n\nIdentity (Phase 45, 2026-09-20): every endpoint that does RBAC takes identity as JSON, not headers - `X-Employee-Id`/`X-Full-Name`/`X-Role` headers are gone entirely. POST /documents carries it in the `payload` form field's `user_profile` sub-object (JSON string, alongside `files`); every other endpoint (including GET/DELETE - a deliberate, non-standard-HTTP choice, see docs/endpoint-request-response-contracts.md) carries it as a plain JSON body: `{\"user_profile\": {...}}`. This is unsigned and trivially spoofable, same placeholder status headers had - just a different transport.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -296,20 +296,21 @@
       "name": "RAG Ingestion",
       "item": [
         {
-          "name": "Upload — POST /v1/rag-ingestion/documents",
+          "name": "Upload — POST /v1/genai-rag/ingest-document/documents",
           "item": [
             {
               "name": "Single PDF",
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-ingestion/documents",
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-ingestion",
+                    "rag",
+                    "ingest-document",
                     "documents"
                   ]
                 },
@@ -320,10 +321,15 @@
                       "key": "files",
                       "type": "file",
                       "src": "{{kb_docs_dir}}/JPMC Healthcare Benefits.pdf"
+                    },
+                    {
+                      "key": "payload",
+                      "type": "text",
+                      "value": "{\"user_profile\": {\"employee_id\": \"E00001\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}}"
                     }
                   ]
                 },
-                "description": "Uploads one PDF and indexes it immediately in the same call (Phase 26 - chunk, embed, write to the vector store, all in one request, no separate /index step). On success, this request's Tests script auto-saves results[0].document_id into the document_id collection variable - the List/Get/Delete folder picks it up automatically. results[0] now also reports the indexing outcome: action (insert/update), chunks_indexed, chunks_removed."
+                "description": "Uploads one PDF and indexes it immediately in the same call (Phase 26 - chunk, embed, write to the vector store, all in one request, no separate /index step). On success, this request's Tests script auto-saves results[0].document_id into the document_id collection variable - the List/Get/Delete folder picks it up automatically. results[0].chunk_info now reports the indexing outcome: action (insert/update), chunks_indexed, chunks_removed (Phase 45). `payload` is one JSON-string form field (not flat form fields) - see the collection description."
               },
               "event": [
                 {
@@ -347,13 +353,14 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-ingestion/documents",
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-ingestion",
+                    "rag",
+                    "ingest-document",
                     "documents"
                   ]
                 },
@@ -364,6 +371,11 @@
                       "key": "files",
                       "type": "file",
                       "src": "{{kb_docs_dir}}/JPMC Healthcare Benefits.pdf"
+                    },
+                    {
+                      "key": "payload",
+                      "type": "text",
+                      "value": "{\"user_profile\": {\"employee_id\": \"E00001\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}}"
                     }
                   ]
                 },
@@ -375,13 +387,14 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-ingestion/documents",
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-ingestion",
+                    "rag",
+                    "ingest-document",
                     "documents"
                   ]
                 },
@@ -397,6 +410,11 @@
                       "key": "files",
                       "type": "file",
                       "src": "{{kb_docs_dir}}/JPMC Guild Tuition Assistance.pdf"
+                    },
+                    {
+                      "key": "payload",
+                      "type": "text",
+                      "value": "{\"user_profile\": {\"employee_id\": \"E00001\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}}"
                     }
                   ]
                 }
@@ -407,13 +425,14 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-ingestion/documents",
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-ingestion",
+                    "rag",
+                    "ingest-document",
                     "documents"
                   ]
                 },
@@ -429,6 +448,11 @@
                       "key": "files",
                       "type": "text",
                       "value": "In Postman, replace this row with a File field pointing at any non-PDF (e.g. a .txt)."
+                    },
+                    {
+                      "key": "payload",
+                      "type": "text",
+                      "value": "{\"user_profile\": {\"employee_id\": \"E00001\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}}"
                     }
                   ]
                 },
@@ -440,20 +464,28 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-ingestion/documents",
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-ingestion",
+                    "rag",
+                    "ingest-document",
                     "documents"
                   ]
                 },
                 "body": {
                   "mode": "formdata",
-                  "formdata": []
-                }
+                  "formdata": [
+                    {
+                      "key": "payload",
+                      "type": "text",
+                      "value": "{\"user_profile\": {\"employee_id\": \"E00001\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}}"
+                    }
+                  ]
+                },
+                "description": "payload is still required here (identity is resolved before the file-count check) - this tests the missing-files 422, not a missing-identity 401."
               }
             },
             {
@@ -461,13 +493,14 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-ingestion/documents",
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-ingestion",
+                    "rag",
+                    "ingest-document",
                     "documents"
                   ]
                 },
@@ -480,52 +513,109 @@
                       "src": "{{kb_docs_dir}}/JPMC Guild Tuition Assistance.pdf"
                     },
                     {
-                      "key": "supersedes_document_id",
+                      "key": "payload",
                       "type": "text",
-                      "value": "{{document_id}}"
+                      "value": "{\"user_profile\": {\"employee_id\": \"E00001\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}, \"document_metadata\": {\"supersedes_document_id\": \"{{document_id}}\"}}"
                     }
                   ]
                 },
-                "description": "Set the document_id variable to an existing (ideally already-indexed) document first. Only valid with exactly one file (422 on a batch) and only if the target id exists (per-file \"rejected\" otherwise). Phase 26: this upload indexes immediately in the same call, so the old document is flipped to is_current=false as part of THIS request, not a separate step - check the old document afterward (List/Get/Delete folder) to see is_current go false and superseded_by get set; a Query request should then only ever cite the new document."
+                "description": "Set the document_id variable to an existing (ideally already-indexed) document first. Only valid with exactly one file (422 on a batch) and only if the target id exists (per-file \"rejected\" otherwise). Phase 26: this upload indexes immediately in the same call, so the old document is flipped to is_current=false as part of THIS request, not a separate step - check the old document afterward (List/Get/Delete folder) to see versioning_info.is_current go false and superseded_by get set; a Query request should then only ever cite the new document. supersedes_document_id now lives inside payload's document_metadata sub-object (Phase 45), not a flat form field."
               }
-            }
-          ]
-        },
-        {
-          "name": "List, get & delete — GET/DELETE /v1/rag-ingestion/documents[/{id}]",
-          "item": [
+            },
             {
-              "name": "List all",
+              "name": "Upload with chunking overrides (chunk_info) and document_metadata override",
               "request": {
-                "method": "GET",
+                "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-ingestion/documents",
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-ingestion",
+                    "rag",
+                    "ingest-document",
                     "documents"
                   ]
-                }
+                },
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "files",
+                      "type": "file",
+                      "src": "{{kb_docs_dir}}/JPMC Healthcare Benefits.pdf"
+                    },
+                    {
+                      "key": "payload",
+                      "type": "text",
+                      "value": "{\"user_profile\": {\"employee_id\": \"E00001\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}, \"chunk_info\": {\"chunking_strategy\": \"recursive\", \"chunk_size\": 500, \"chunk_overlap\": 50}, \"document_metadata\": {\"doc_type\": \"benefits\", \"department\": \"HR\"}}"
+                    }
+                  ]
+                },
+                "description": "Phase 38: re-exposes per-call chunking overrides (now payload.chunk_info, Phase 45). chunking_strategy must be one of the ChunkingStrategy enum values (fixed/recursive/semantic/markdown/html/none) or this 422s; left out, CHUNK_DEFAULT_SIZE/CHUNK_DEFAULT_OVERLAP from .env (or decide_chunk_size()'s own table/large-document auto-sizing) apply instead. Phase 45: doc_type/department here override whatever the LLM extraction step would have guessed for those two fields - check the response's document_metadata to see the caller's values win."
+              }
+            }
+          ]
+        },
+        {
+          "name": "List, get & delete — GET/DELETE /v1/genai-rag/ingest-document/documents[/{id}]",
+          "item": [
+            {
+              "name": "List all",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "rag",
+                    "ingest-document",
+                    "documents"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00001\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}\n}"
+                },
+                "description": "GET with a JSON body (Phase 45, non-standard HTTP, deliberate) - Postman supports this natively."
               }
             },
             {
               "name": "Get one by id",
               "request": {
                 "method": "GET",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-ingestion/documents/{{document_id}}",
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents/{{document_id}}",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-ingestion",
+                    "rag",
+                    "ingest-document",
                     "documents",
                     "{{document_id}}"
                   ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00001\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}\n}"
                 }
               }
             },
@@ -533,17 +623,28 @@
               "name": "Edge — unknown id (404)",
               "request": {
                 "method": "GET",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-ingestion/documents/does-not-exist",
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents/does-not-exist",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-ingestion",
+                    "rag",
+                    "ingest-document",
                     "documents",
                     "does-not-exist"
                   ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00001\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}\n}"
                 },
                 "description": "Every error in this API returns the same {\"error\": \"...\"} shape, never a raw stack trace, regardless of status code."
               }
@@ -552,36 +653,58 @@
               "name": "Delete one document (full delete: vectors + metadata + file)",
               "request": {
                 "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-ingestion/documents/{{document_id}}",
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents/{{document_id}}",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-ingestion",
+                    "rag",
+                    "ingest-document",
                     "documents",
                     "{{document_id}}"
                   ]
                 },
-                "description": "Deletes the document's vectors (if indexed), its metadata row, and its uploaded file, all in one call. Not selective - a document has one current state, not a retained version history to pick from. Expect 200 with chunks_removed (0 if it was never indexed). Run one of folder 2's upload requests first if document_id is empty."
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00001\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}\n}"
+                },
+                "description": "Deletes the document's vectors (if indexed), its metadata row, and its uploaded file, all in one call. Not selective - a document has one current state, not a retained version history to pick from. Expect 200 with chunks_removed (0 if it was never indexed) and deleted_by echoing the caller's employee_id. Run one of folder 2's upload requests first if document_id is empty."
               }
             },
             {
               "name": "Edge — delete unknown id (404)",
               "request": {
                 "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-ingestion/documents/does-not-exist",
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents/does-not-exist",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-ingestion",
+                    "rag",
+                    "ingest-document",
                     "documents",
                     "does-not-exist"
                   ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00001\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}\n}"
                 }
               }
             },
@@ -589,59 +712,56 @@
               "name": "Delete ALL documents (Phase 27)",
               "request": {
                 "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-ingestion/documents",
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-ingestion",
+                    "rag",
+                    "ingest-document",
                     "documents"
                   ]
                 },
-                "description": "Deletes EVERY document - vectors, metadata rows, uploaded files. Same full-delete semantics as the single-document DELETE, just for all of them at once. No confirmation flag (matches the single-delete endpoint, which also has none). Returns documents_deleted and total chunks_removed."
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00001\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}\n}"
+                },
+                "description": "Deletes EVERY document - vectors, metadata rows, uploaded files. Same full-delete semantics as the single-document DELETE, just for all of them at once. No confirmation flag (matches the single-delete endpoint, which also has none). Returns documents_deleted, total chunks_removed, and deleted_by."
               }
             }
           ]
         }
       ],
-      "event": [
-        {
-          "listen": "prerequest",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "// Phase 23 gateway placeholder - unsigned identity headers, not real auth.",
-              "// Every request in this folder needs the HR_SUPPORT role.",
-              "pm.request.headers.upsert({key: \"X-Employee-Id\", value: \"E00001\"});",
-              "pm.request.headers.upsert({key: \"X-Full-Name\", value: \"Hana Support\"});",
-              "pm.request.headers.upsert({key: \"X-Role\", value: \"hr_support\"});"
-            ]
-          }
-        }
-      ],
-      "description": "Every request in this folder is gated to the HR_SUPPORT role by the Phase 23 gateway - a folder-level pre-request script injects the placeholder identity headers automatically."
+      "description": "Every request in this folder is gated to the HR_SUPPORT role. Phase 45: identity is JSON (payload's user_profile for upload, a plain JSON body for list/get/delete/delete-all) - no folder-level header injection anymore, each request sets its own identity explicitly."
     },
     {
       "name": "RAG Retrieval",
       "item": [
         {
-          "name": "Query — POST /v1/rag-retrieval/query",
-          "description": "Real retrieval + grounded generation (MVP, as of 2026-09-10) - not a stub. A well-formed query spends one real embedding call + one real chat completion, and needs the target content already indexed (run RAG Ingestion > Upload then RAG Ingestion > Index on a real PDF first). Query decomposition, guardrails, and evaluations are still hand-written and not built. resources/golden_dataset/golden_dataset.json has 22 real question/expected-answer pairs grounded in the actual PDFs, ready to try here.",
+          "name": "Query — POST /v1/genai-rag/retrieve-document/query",
+          "description": "Real retrieval + grounded generation (MVP, as of 2026-09-10) - not a stub. A well-formed query spends one real embedding call + one real chat completion, and needs the target content already indexed (run RAG Ingestion > Upload on a real PDF first - Phase 26 indexes in the same call as upload, no separate step). Query decomposition, guardrails, and evaluations are still hand-written and not built. resources/golden_dataset/golden_dataset.json has 22 real question/expected-answer pairs grounded in the actual PDFs, ready to try here. Phase 45: request body is nested - user_profile, query (top-level), search_options, generation_options; response is query/answer_info/retrieval_info.",
           "item": [
             {
               "name": "Well-formed query (real grounded answer)",
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-retrieval/query",
+                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-retrieval",
+                    "rag",
+                    "retrieve-document",
                     "query"
                   ]
                 },
@@ -653,9 +773,9 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"query\": \"How many weeks of paid parental leave does JPMorgan Chase provide?\",\n  \"top_k\": 5\n}"
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00002\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"How many weeks of paid parental leave does JPMorgan Chase provide?\",\n  \"search_options\": {\"top_k\": 5}\n}"
                 },
-                "description": "Expect 200, a real answer grounded in whatever's actually indexed, sources with real filename/chunk_index/score, and model_used naming the model that generated it. If nothing relevant is indexed yet, expect a fixed \"I don't have any information about that\" answer with empty sources, not an error."
+                "description": "Expect 200, a real answer grounded in whatever's actually indexed (retrieval_info.sources with real filename/chunk_index/score), and answer_info.model_used naming the model that generated it. If nothing relevant is indexed yet, expect a fixed \"I don't have any information about that\" answer with empty sources, not an error."
               }
             },
             {
@@ -663,13 +783,14 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-retrieval/query",
+                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-retrieval",
+                    "rag",
+                    "retrieve-document",
                     "query"
                   ]
                 },
@@ -681,9 +802,9 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"query\": \"How many weeks of paid parental leave does JPMorgan Chase provide?\",\n  \"search_strategy\": \"mmr\"\n}"
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00002\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"How many weeks of paid parental leave does JPMorgan Chase provide?\",\n  \"search_options\": {\"search_strategy\": \"mmr\"}\n}"
                 },
-                "description": "Max Marginal Relevance - more diverse sources than plain similarity search (module 2's own rule of thumb: use this when you want relevant AND non-redundant context). search_strategy: \"mmr\" in the response; every source's score is null (LangChain's max_marginal_relevance_search() doesn't return a per-chunk score). This is the only way to select MMR now - the old dedicated /query/mmr endpoint was removed in Phase 21."
+                "description": "Max Marginal Relevance - more diverse sources than plain similarity search (module 2's own rule of thumb: use this when you want relevant AND non-redundant context). retrieval_info.search_strategy: \"mmr\" in the response; every source's score is null (LangChain's max_marginal_relevance_search() doesn't return a per-chunk score). This is the only way to select MMR now - the old dedicated /query/mmr endpoint was removed in Phase 21."
               }
             },
             {
@@ -691,13 +812,14 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-retrieval/query",
+                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-retrieval",
+                    "rag",
+                    "retrieve-document",
                     "query"
                   ]
                 },
@@ -709,7 +831,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"query\": \"How does 401k vesting work?\",\n  \"use_multi_query\": true,\n  \"top_k\": 5\n}"
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00002\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"How does 401k vesting work?\",\n  \"search_options\": {\"use_multi_query\": true, \"top_k\": 5}\n}"
                 },
                 "description": "Phase 20 - LangChain's own MultiQueryRetriever rewrites the question into several phrasings, searches with each, and merges/dedupes results - a layer on top of search_strategy, not a third option. Every source's score is null (same as MMR - MultiQueryRetriever doesn't return one). Verified live: returned 7 real chunks and a grounded answer against a real indexed 401(k) document."
               }
@@ -719,13 +841,14 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-retrieval/query",
+                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-retrieval",
+                    "rag",
+                    "retrieve-document",
                     "query"
                   ]
                 },
@@ -737,9 +860,9 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"query\": \"Show me benefits-type documents about 401k matching\",\n  \"use_self_query\": true,\n  \"top_k\": 5\n}"
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00002\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"Show me benefits-type documents about 401k matching\",\n  \"search_options\": {\"use_self_query\": true, \"top_k\": 5}\n}"
                 },
-                "description": "Phase 20 - LangChain's own SelfQueryRetriever parses the question into a structured filter over doc_type/department/doc_classification (Phase 19's chunk metadata) before searching. is_current is never exposed to it and always stays AND-ed on regardless of what gets parsed. The response's applied_filter shows exactly what was parsed, or null if nothing was found or parsing failed (falls back to an unfiltered search, never errors). Real limitation found during live verification: doc_type is semi-controlled and filters reliably (doc_type=benefits alone matched 5 real chunks), but doc_classification is deliberately free text (Phase 19's own design), so an exact-match filter on it only succeeds when the model's guess happens to match the stored string exactly - see docs/BACKLOG.md's \"Retrieval quality\" section."
+                "description": "Phase 20 - LangChain's own SelfQueryRetriever parses the question into a structured filter over doc_type/department/doc_classification (Phase 19's chunk metadata) before searching. is_current is never exposed to it and always stays AND-ed on regardless of what gets parsed. The response's retrieval_info.applied_filter shows exactly what was parsed, or null if nothing was found or parsing failed (falls back to an unfiltered search, never errors). Real limitation found during live verification: doc_type is semi-controlled and filters reliably (doc_type=benefits alone matched 5 real chunks), but doc_classification is deliberately free text (Phase 19's own design), so an exact-match filter on it only succeeds when the model's guess happens to match the stored string exactly - see docs/BACKLOG.md's \"Retrieval quality\" section."
               }
             },
             {
@@ -747,13 +870,14 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-retrieval/query",
+                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-retrieval",
+                    "rag",
+                    "retrieve-document",
                     "query"
                   ]
                 },
@@ -765,7 +889,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"query\": \"test\",\n  \"search_strategy\": \"not-a-real-strategy\"\n}"
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00002\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"test\",\n  \"search_options\": {\"search_strategy\": \"not-a-real-strategy\"}\n}"
                 },
                 "description": "Expect 422, naming the unknown strategy and listing the valid ones."
               }
@@ -775,13 +899,14 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-retrieval/query",
+                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-retrieval",
+                    "rag",
+                    "retrieve-document",
                     "query"
                   ]
                 },
@@ -793,7 +918,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"query\": \"test\",\n  \"llm_provider\": \"made-up\"\n}"
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00002\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"test\",\n  \"search_options\": {\"llm_provider\": \"made-up\"}\n}"
                 },
                 "description": "llm_provider is a real LlmProvider enum (common/enums.py) - picks which provider powers use_multi_query/use_self_query's own reasoning (independent of model_name, which still only controls the final answer's model). An unrecognized value is rejected with a 422 naming the valid options, same pattern as vector_db/search_strategy."
               }
@@ -803,13 +928,14 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-retrieval/query",
+                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-retrieval",
+                    "rag",
+                    "retrieve-document",
                     "query"
                   ]
                 },
@@ -821,7 +947,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"query\": \"\"\n}"
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00002\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"\"\n}"
                 }
               }
             },
@@ -830,13 +956,14 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-retrieval/query",
+                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-retrieval",
+                    "rag",
+                    "retrieve-document",
                     "query"
                   ]
                 },
@@ -848,7 +975,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{}"
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00002\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"}\n}"
                 }
               }
             },
@@ -857,13 +984,14 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-retrieval/query",
+                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-retrieval",
+                    "rag",
+                    "retrieve-document",
                     "query"
                   ]
                 },
@@ -875,7 +1003,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"query\": \"test\",\n  \"top_k\": 100\n}"
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00002\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"test\",\n  \"search_options\": {\"top_k\": 100}\n}"
                 }
               }
             },
@@ -884,13 +1012,14 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-retrieval/query",
+                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-retrieval",
+                    "rag",
+                    "retrieve-document",
                     "query"
                   ]
                 },
@@ -902,7 +1031,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"query\": \"{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}\"\n}"
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00002\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}{{$randomLoremParagraphs}}\"\n}"
                 },
                 "description": "Postman's dynamic lorem-paragraph variable, repeated 10x, comfortably clears the 2000-char cap."
               }
@@ -912,13 +1041,14 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/rag-retrieval/query",
+                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "rag-retrieval",
+                    "rag",
+                    "retrieve-document",
                     "query"
                   ]
                 },
@@ -930,7 +1060,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"query\": \"test\",\n  \"vector_db\": \"made_up_store\"\n}"
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"E00002\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"test\",\n  \"search_options\": {\"vector_db\": \"made_up_store\"}\n}"
                 },
                 "description": "vector_db is a closed set ('chromadb' or 'pinecone'), not a free-text field with a length cap - any value outside that set is rejected the same way, short or long."
               }
@@ -938,22 +1068,7 @@
           ]
         }
       ],
-      "event": [
-        {
-          "listen": "prerequest",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "// Phase 23 gateway placeholder - unsigned identity headers, not real auth.",
-              "// Retrieval accepts employee/manager/hr_support - defaulting to employee here.",
-              "pm.request.headers.upsert({key: \"X-Employee-Id\", value: \"E00002\"});",
-              "pm.request.headers.upsert({key: \"X-Full-Name\", value: \"Eddy Employee\"});",
-              "pm.request.headers.upsert({key: \"X-Role\", value: \"employee\"});"
-            ]
-          }
-        }
-      ],
-      "description": "Every request in this folder is gated to employee/manager/hr_support by the Phase 23 gateway - a folder-level pre-request script injects the placeholder identity headers automatically (defaults to employee)."
+      "description": "Every request in this folder is gated to employee/manager/hr_support. Phase 45: identity is the request body's user_profile sub-object - no folder-level header injection anymore, each request sets its own identity explicitly (defaults to employee)."
     },
     {
       "name": "Agentic",

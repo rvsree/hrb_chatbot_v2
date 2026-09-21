@@ -19,10 +19,12 @@ class BaseMetadataClient(ABC):
         file_size_bytes: int,
         content_hash: str,
         supersedes: str | None = None,
+        uploaded_by: str | None = None,
     ) -> None:
         """Insert one row for a newly-uploaded document (status 'uploaded',
         version 1, is_current true). `supersedes` only records intent here -
-        the actual flip happens later, in record_successful_index()."""
+        the actual flip happens later, in record_successful_index().
+        `uploaded_by` is the caller's employee_id, for the audit trail only."""
         raise NotImplementedError
 
     @abstractmethod

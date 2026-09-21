@@ -69,11 +69,21 @@ pinecone==7.3.0
 aiosqlite==0.19.0
 psycopg[binary]==3.2.5
 psycopg-pool==3.2.5
-# SQLRecordManager's own dependency (Phase 17 - LangChain's indexing API,
-# ai/doc_processing/indexing/vector_indexer.py) - was already installed
-# transitively before this, pinned explicitly now that this project
-# actually imports it directly.
+# SQLRecordManager's own dependency (Phase 17 - LangChain's indexing API) -
+# still installed for retrieval's shared LangChain vector-store builder
+# (common/clients/db_client/langchain_vector_store.py), even though
+# indexing itself moved back to LlamaIndex in Phase 44.
 sqlalchemy==2.0.52
+# Phase 44: indexing reverted from LangChain's index() back to LlamaIndex's
+# VectorStoreIndex (course-ware alignment, reversing Phase 17 - see
+# docs/RAG-ROADMAP.md). Re-adding what Phase 17 removed: `pip install
+# --dry-run` against this project's current stack found no new conflicts -
+# llama-index-vector-stores-chroma/-pinecone were already installed and
+# never actually uninstalled, and llama-index-core's own dependency tree
+# was already satisfied by packages already present for other reasons.
+llama-index-core==0.13.6
+llama-index-vector-stores-chroma==0.6.0
+llama-index-vector-stores-pinecone==0.9.0
 
 # -----------------------------------------------------------------------------
 # LLM and Agent Stack

@@ -108,19 +108,19 @@ run against a real server):
 
 ```powershell
 # upload a real PDF - copy the document_id from the response
-curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" http://127.0.0.1:8093/v1/rag-ingestion/documents
+curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" http://127.0.0.1:8093/v1/rag/ingest-document/documents
 
 # index it (spends: one real embedding call per chunk) - auto-selects a
 # chunking strategy if you don't pick one; see README_TEST.md section 4.8-4.10
 # for every technique and how to pick one explicitly, e.g.:
 # curl ... -d "{\"chunking_strategy\": \"recursive\"}"
-curl -X POST http://127.0.0.1:8093/v1/rag-ingestion/documents/<document_id>/index
+curl -X POST http://127.0.0.1:8093/v1/rag/ingest-document/documents/<document_id>/index
 
 # ask a question - real retrieval + grounded generation (spends: one real
 # embedding call + one real chat completion). Query decomposition, guardrails,
 # and evaluations are still hand-written and not built yet - see Phase 6 in
 # docs/RAG-ROADMAP.md for exactly what's in and what's deliberately deferred
-curl -X POST http://127.0.0.1:8093/v1/rag-retrieval/query -H "Content-Type: application/json" -d "{\"query\": \"How many weeks of parental leave do I get?\"}"
+curl -X POST http://127.0.0.1:8093/v1/rag/retrieve-document/query -H "Content-Type: application/json" -d "{\"query\": \"How many weeks of parental leave do I get?\"}"
 ```
 
 Idempotency (the `Idempotency-Key` header) and content-hash duplicate-upload

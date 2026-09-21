@@ -1,20 +1,23 @@
 """Tests for main.py's global exception handler and request-validation
 bounds. Core claim: when something unexpected breaks, the client gets a
 generic, safe message - never raw exception text, which could leak
-internal details (file paths, connection strings, etc.)."""
+internal details (file paths, connection strings, etc.).
+
+Phase 45: identity travels as a JSON body on every request, including
+GET (non-standard HTTP, deliberate), not shared client headers or query params."""
 
 from fastapi.testclient import TestClient
 
-from src.hrb_chatbot.api.rag import routes_query
+from src.hrb_chatbot.api.rag import retrieve_document
 from src.hrb_chatbot.main import app
 from src.hrb_chatbot.services import documents_service
 
 client = TestClient(app)
-# Phase 23 gateway: retrieval needs EMPLOYEE/MANAGER/HR_SUPPORT headers now.
-client.headers.update({"X-Employee-Id": "E00002", "X-Full-Name": "Eddy Employee", "X-Role": "employee"})
-# Ingestion needs HR_SUPPORT - used by the two ad-hoc TestClient instances below.
-HR_SUPPORT_HEADERS = {"X-Employee-Id": "E00001", "X-Full-Name": "Hana Support", "X-Role": "hr_support"}
-EMPLOYEE_HEADERS = {"X-Employee-Id": "E00002", "X-Full-Name": "Eddy Employee", "X-Role": "employee"}
+
+HR_SUPPORT_IDENTITY_BODY = {
+    "user_profile": {"employee_id": "E00001", "full_name": "Hana Support", "role": "hr_support"}
+}
+EMPLOYEE_USER_PROFILE = {"employee_id": "E00002", "full_name": "Eddy Employee", "role": "employee"}
 
 SECRET_LOOKING_MESSAGE = "connection failed: password=supersecret123 at internal-db-host:5432"
 
@@ -27,8 +30,8 @@ def test_an_unexpected_exception_never_leaks_its_raw_message_to_the_client(monke
 
     # raise_server_exceptions=False: otherwise TestClient re-raises the
     # exception instead of returning the handler's real HTTP response.
-    with TestClient(app, raise_server_exceptions=False, headers=HR_SUPPORT_HEADERS) as test_client:
-        response = test_client.get("/v1/rag-ingestion/documents")
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        response = test_client.request("GET", "/v1/genai-rag/ingest-document/documents", json=HR_SUPPORT_IDENTITY_BODY)
 
     assert response.status_code == 500
     body_text = response.text
@@ -43,8 +46,8 @@ def test_the_generic_error_response_still_has_the_project_s_standard_shape(monke
 
     monkeypatch.setattr(documents_service, "list_documents", raise_unexpectedly)
 
-    with TestClient(app, raise_server_exceptions=False, headers=HR_SUPPORT_HEADERS) as test_client:
-        response = test_client.get("/v1/rag-ingestion/documents")
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        response = test_client.request("GET", "/v1/genai-rag/ingest-document/documents", json=HR_SUPPORT_IDENTITY_BODY)
 
     # Still {"error": ...} (json_error()'s shape), not FastAPI's default
     # {"detail": ...} - the handler normalizes every error response.
@@ -65,9 +68,9 @@ def test_a_multipart_body_on_a_json_endpoint_is_a_clean_422_not_a_crash():
     same class of bug either way)."""
     non_utf8_multipart_body = b"--boundary\r\nContent-Disposition: form-data; name=\"files\"\r\n\r\n\xd3\xeb\xe9\xe1 raw bytes\r\n--boundary--"
 
-    with TestClient(app, raise_server_exceptions=False, headers=EMPLOYEE_HEADERS) as test_client:
+    with TestClient(app, raise_server_exceptions=False) as test_client:
         response = test_client.post(
-            "/v1/rag-retrieval/query",
+            "/v1/genai-rag/retrieve-document/query",
             content=non_utf8_multipart_body,
             headers={"Content-Type": "multipart/form-data; boundary=boundary"},
         )
@@ -80,7 +83,10 @@ def test_a_multipart_body_on_a_json_endpoint_is_a_clean_422_not_a_crash():
 def test_query_longer_than_the_max_length_is_rejected():
     too_long_query = "a" * 2001
 
-    response = client.post("/v1/rag-retrieval/query", json={"query": too_long_query})
+    response = client.post(
+        "/v1/genai-rag/retrieve-document/query",
+        json={"user_profile": EMPLOYEE_USER_PROFILE, "query": too_long_query},
+    )
 
     assert response.status_code == 422
     # Pydantic's own validation errors used to bypass json_error() entirely
@@ -101,12 +107,16 @@ def test_query_at_exactly_the_max_length_is_accepted_by_validation(monkeypatch):
             "sources": [],
             "vector_db": "chromadb",
             "search_strategy": "similarity",
+            "applied_filter": None,
         }
 
-    monkeypatch.setattr(routes_query.rag_service, "answer_query", _fake_answer_query)
+    monkeypatch.setattr(retrieve_document.rag_service, "answer_query", _fake_answer_query)
     exactly_max_length_query = "a" * 2000
 
-    response = client.post("/v1/rag-retrieval/query", json={"query": exactly_max_length_query})
+    response = client.post(
+        "/v1/genai-rag/retrieve-document/query",
+        json={"user_profile": EMPLOYEE_USER_PROFILE, "query": exactly_max_length_query},
+    )
 
     # 200, not 422 - confirms validation accepted it and the request reached
     # the route handler (the pipeline itself is faked, not under test here).

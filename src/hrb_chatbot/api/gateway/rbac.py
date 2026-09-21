@@ -1,23 +1,19 @@
-"""Role-based access check - wired at the router level in main.py, so
-routes_documents.py/routes_query.py never see this directly."""
+"""Role-based access check - called explicitly at the top of every route,
+against an already-resolved UserProfile (Phase 45: identity resolution
+itself lives in user_profile.py, since its source now differs by endpoint)."""
 
-from fastapi import Depends, HTTPException
+from fastapi import HTTPException
 
-from src.hrb_chatbot.api.gateway.current_user import CurrentUser, get_current_user
+from src.hrb_chatbot.api.gateway.user_profile import UserProfile
 from src.hrb_chatbot.common.enums import Role
 
 
-def require_role(*allowed_roles: Role):
-    """Return a FastAPI dependency raising 403 unless the caller's resolved
-    role is one of allowed_roles. Depends on get_current_user for who's calling."""
-
-    def _check(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-        if current_user.role not in allowed_roles:
-            allowed = [role.value for role in allowed_roles]
-            raise HTTPException(
-                status_code=403,
-                detail=f"Role {current_user.role.value!r} is not permitted here - requires one of {allowed}",
-            )
-        return current_user
-
-    return _check
+def check_role(userProfile: UserProfile, *allowed_roles: Role) -> UserProfile:
+    """Raise 403 unless userProfile's role is one of allowed_roles."""
+    if userProfile.role not in allowed_roles:
+        allowed = [role.value for role in allowed_roles]
+        raise HTTPException(
+            status_code=403,
+            detail=f"Role {userProfile.role!r} is not permitted here - requires one of {allowed}",
+        )
+    return userProfile

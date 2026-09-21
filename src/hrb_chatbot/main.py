@@ -1,13 +1,11 @@
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 
 from src.hrb_chatbot.api.admin import routes_health
 from src.hrb_chatbot.api.dependencies import json_error
-from src.hrb_chatbot.api.gateway.rbac import require_role
-from src.hrb_chatbot.api.rag import routes_documents, routes_query
+from src.hrb_chatbot.api.rag import ingest_document, retrieve_document
 from src.hrb_chatbot.common import error_codes
-from src.hrb_chatbot.common.enums import Role
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("main")
@@ -19,18 +17,9 @@ app = FastAPI(
 )
 
 app.include_router(routes_health.router)
-# Gateway role gate (Phase 23) - HR_SUPPORT only manages the knowledge base;
-# all three roles can query it. See api/gateway/ for the (placeholder) identity source.
-app.include_router(
-    routes_documents.router,
-    prefix="/v1/rag-ingestion",
-    dependencies=[Depends(require_role(Role.HR_SUPPORT))]
-)
-app.include_router(
-    routes_query.router,
-    prefix="/v1/rag-retrieval",
-    dependencies=[Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR_SUPPORT))],
-)
+
+app.include_router(ingest_document.router_ingest_document, prefix="/v1/genai-rag/ingest-document")
+app.include_router(retrieve_document.router_retrieve_document, prefix="/v1/genai-rag/retrieve-document")
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -41,6 +30,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 _ERROR_CODES_BY_STATUS = {
     401: error_codes.UNAUTHENTICATED,
     403: error_codes.FORBIDDEN,
+    422: error_codes.VALIDATION_ERROR,
     429: error_codes.RATE_LIMITED,
 }
 

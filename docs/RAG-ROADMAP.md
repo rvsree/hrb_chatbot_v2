@@ -105,13 +105,22 @@ reviewed before that phase's code starts.
 | 29 — Suppress misleading pdfminer FontBBox console warning | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
 | 30 — Fix: running the test suite silently wiped the shared dev DB | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
 | 31 — ACTIVE_VECTOR_DB/ACTIVE_LLM_PROVIDER .env vars, one resolver helper each | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
-| 32 — Pilot: one `RagQueryParams` dataclass replaces the 10-field parameter list repeated across routes_query.py/rag_service.py/pipeline.answer_query() | Claude Code | ✅ Done, 2026-09-16 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 32 — Pilot: one `RagQueryParams` dataclass replaces the 10-field parameter list repeated across retrieve_document.py/rag_service.py/pipeline.answer_query() | Claude Code | ✅ Done, 2026-09-16 | ✅ Spec'd, reviewed, and implemented - see detail below |
 | 33 — Remove dead pass-through wrapper functions in both pipeline.py files | Claude Code | ✅ Done, 2026-09-16 | ✅ Spec'd, reviewed, and implemented - see detail below |
 | 34 — Simplify retrieve_chunks() to a single query; remove decompose_query() | Claude Code | ✅ Done, 2026-09-16 | ✅ Spec'd, reviewed, and implemented - see detail below |
 | 35 — Add a real system prompt (role definition) for answer generation | Claude Code | ✅ Done, 2026-09-18 | ✅ Spec'd, reviewed, and implemented - see detail below |
 | 36 — Three new document-metadata attributes: effective_date, audience, confidentiality_level | Claude Code | ✅ Done, 2026-09-18 | ✅ Spec'd, reviewed, and implemented - see detail below |
 | 37 — decide_chunk_size(): table-aware and large-document-aware auto chunk sizing | Claude Code | ✅ Done, 2026-09-18 | ✅ Spec'd, reviewed, and implemented - see detail below |
 | 38 — .env audit: move hardcoded tuning/limit constants to .env; re-expose chunk_size/chunking_strategy on POST /documents | Claude Code | ✅ Done, 2026-09-18 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 39 — Sync tests/docs/Postman after user's manual endpoint rename (routes_documents.py/routes_query.py -> ingest_document.py/retrieve_document.py, new URL prefixes) | Claude Code | ✅ Done, 2026-09-18 | N/A - tests/docs/Postman only, no src/hrb_chatbot/** touched, spec_gate doesn't apply |
+| 40 — Trim supersedes_document_id's Form description for concision | Claude Code | ✅ Done, 2026-09-18 | ✅ Spec'd and implemented - see detail below |
+| 41 — User-directed: rebuild response generation as a real LCEL chain, matching IK cohort Module 4 | Claude Code | ✅ Done, 2026-09-19 | ✅ Spec'd and implemented - see detail below |
+| 42 — User-directed: extract POST /documents' Form fields into a Pydantic model | Claude Code | ✅ Done, 2026-09-19 | ✅ Spec'd and implemented - see detail below |
+| 43 — User-directed: remove FastAPI Depends()/Query() binding app-wide, including Phase 23's centralized RBAC wiring | Claude Code | ✅ Done, 2026-09-19 | ✅ Spec'd and implemented - see detail below |
+| 44 — User-directed: revert indexing from LangChain back to LlamaIndex's `VectorStoreIndex`, reversing Phase 17 | Claude Code | ✅ Done, 2026-09-19 | ✅ Spec'd and implemented - see detail below |
+| 45 — User-directed: nested request/response contracts for every endpoint, identity moved from headers to a JSON body everywhere | Claude Code | 🚧 Code done and tested, 2026-09-20 - Postman/CLAUDE.md sync still pending | ✅ Spec'd and implemented - see detail below, full contracts in docs/endpoint-request-response-contracts.md |
+| 46 — User-directed: isolate the test suite's SQLite DB from the real dev DB, add a test-noise cleanup endpoint | Claude Code | ✅ Done, 2026-09-20 | ✅ Spec'd and implemented - see detail below |
+| 47 — User-directed: rename CurrentUser/current_user/UserMetadata/user_metadata to UserProfile/user_profile throughout | Claude Code | ✅ Done, 2026-09-20 | N/A - a rename, not a design change; see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -447,7 +456,7 @@ all of this, per explicit instruction - Pinecone stays available (Phase
 later, separate wave once this core is solid.
 
 - [x] **Phase 5 (Claude Code) — Query endpoint, stubbed.** `POST /rag/query`
-  (`api/rag/routes_query.py`) - real request/response contract
+  (`api/rag/retrieve_document.py`) - real request/response contract
   (`RagQueryRequest`/`RagQueryResponse` in `models/rag.py`, including
   `RetrievedChunk` for sources), logging, error handling - calling
   `services/rag_service.py` → `ai/rag_pipeline/pipeline.py::answer_query()`,
@@ -1880,7 +1889,7 @@ Explicitly deferred to a later, separate wave - not part of the above:
     - **Data/API contracts:**
       - **Removed:** `POST /documents/{id}/index/{chunking_strategy}`
         (`routes_documents.py::index_document_with_strategy()`) and `POST
-        /query/mmr` (`routes_query.py::query_mmr()`). Both routers'
+        /query/mmr` (`retrieve_document.py::query_mmr()`). Both routers'
         shared helpers (`_index_document()`, `_answer_query()`) stay -
         still used by the one remaining route each.
       - `IndexRequest.chunking_strategy` and `RagQueryRequest.search_strategy`
@@ -2009,7 +2018,7 @@ Explicitly deferred to a later, separate wave - not part of the above:
     - **Data/API contracts:**
       - New `Role` `StrEnum` in `common/enums.py`: `EMPLOYEE`, `MANAGER`,
         `HR_SUPPORT` - matching the existing `VectorDB`/`LlmProvider` pattern.
-      - New `api/gateway/` package: `current_user.py` (a `CurrentUser`
+      - New `api/gateway/` package: `userMetadata.py` (a `UserMetadata`
         dataclass - `employee_id`, `full_name`, `role` - and a
         `get_current_user(request)` FastAPI dependency reading three
         request headers) and `rbac.py` (`require_role(*allowed_roles)`, a
@@ -2026,7 +2035,7 @@ Explicitly deferred to a later, separate wave - not part of the above:
       - `main.py` wires `Depends(require_role(...))` at
         `app.include_router(...)` level for both routers - a router-level
         gate, not injected into individual route handlers. Nothing in
-        `routes_documents.py`/`routes_query.py` changes.
+        `routes_documents.py`/`retrieve_document.py` changes.
       - `common/error_codes.py` gains `UNAUTHENTICATED` (401) and
         `FORBIDDEN` (403); `main.py`'s existing `HTTPException` handler
         (already maps 429 -> `RATE_LIMITED`) gains these two mappings -
@@ -2332,7 +2341,7 @@ Explicitly deferred to a later, separate wave - not part of the above:
 - [x] **Phase 32 (2026-09-16) — Pilot: `RagQueryParams` dataclass
   replaces the repeated 10-field parameter list on the `/query` path.**
 
-  - **Spec:** User-reported code smell - `routes_query.py`,
+  - **Spec:** User-reported code smell - `retrieve_document.py`,
     `services/rag_service.py`, and `ai/rag_pipeline/pipeline.py`'s
     `answer_query()` each redeclare the same 10 parameters
     (query/top_k/vector_db/search_strategy/model_name/temperature/
@@ -2344,10 +2353,10 @@ Explicitly deferred to a later, separate wave - not part of the above:
     - New `common/rag_query_params.py`: a plain `@dataclass` (not
       Pydantic) `RagQueryParams` with those 10 fields, same names/types/
       defaults as `RagQueryRequest`. Lives in `common/`, not `ai/`, so
-      `routes_query.py` importing it does not become "routes importing
+      `retrieve_document.py` importing it does not become "routes importing
       ai/ directly" (CLAUDE.md's architecture rule) - it is a plain,
       framework-free data container, not pipeline logic.
-    - `routes_query.py` builds one `RagQueryParams` from `payload` and
+    - `retrieve_document.py` builds one `RagQueryParams` from `payload` and
       calls `rag_service.answer_query(params)` - one argument, not 10.
     - `rag_service.answer_query(params: RagQueryParams)` passes `params`
       straight through to `pipeline.answer_query(params)` unchanged.
@@ -2703,7 +2712,772 @@ Explicitly deferred to a later, separate wave - not part of the above:
   since nothing had been git-committed since Phase 34 - not an issue
   with Phase 38's own edits); one finding was real and correctly
   flagged as pre-existing/out of scope (a SHA1/bandit-B324 finding in
-  `vector_indexer.py`, not a file this phase touched).
+  `vector_indexer.py`, not a file this phase touched). **Follow-up:**
+  `postman/hrb_chatbot.postman_collection.json` was missing the new
+  `POST /documents` payload fields - added an example request
+  ("Upload with chunking overrides"). Checked `docs/FAQ.md`/
+  `docs/BACKLOG.md`/`docs/HANDOFF.md` for related stale text - none
+  found (`BACKLOG.md`'s "orphan config" tracking is a different,
+  non-overlapping category: previously-declared-but-unread `.env`
+  lines, not the previously-hardcoded-with-no-`.env`-path constants
+  this phase fixed).
+
+- [x] **Phase 39 (2026-09-18) — Sync tests/docs/Postman after user's manual
+  endpoint rename.**
+
+  User manually renamed `api/rag/routes_documents.py` ->
+  `ingest_document.py` (router variable `router_ingest_document`) and
+  `routes_query.py` -> `retrieve_document.py` (`router_retrieve_document`),
+  and changed `main.py`'s prefixes from `/v1/rag-ingestion`/
+  `/v1/rag-retrieval` to `/v1/rag/ingest-document`/`/v1/rag/retrieve-document`.
+  No `**Spec:**` block - this phase touched no file under
+  `src/hrb_chatbot/**` (the actual rename was already done by the user
+  before this phase started), so `spec_gate.py` never applies.
+
+  **Found live:** the test suite was silently 41/126 red - the renamed
+  files' tests (`test_routes_documents.py`, `test_routes_query.py`,
+  `test_error_handling.py`) still called the old URL paths, which 404
+  against the new prefixes. Fixed as part of the same rename (same fact
+  propagating, not a new decision), not left broken.
+
+  **Also synced:**
+  - `postman/hrb_chatbot.postman_collection.json` - every `raw` URL and
+    `path` array segment; added a new "Upload with chunking overrides"
+    example request (Phase 38's fields had never gotten one). Also fixed
+    two **pre-existing** staleness issues noticed while in this file,
+    unrelated to the rename itself: the collection's top-level
+    description listed a phantom `POST .../documents/{id}/index` item
+    (removed in Phase 26) instead of the real `DELETE /documents`
+    (delete-all) endpoint, and a "folders 3 and 4 need `document_id`"
+    line that no longer made sense once that phantom item was gone.
+  - `CLAUDE.md` - architecture section's file-naming claim
+    (`api/**/routes_*.py`) and the ingestion endpoint's URL, which still
+    named the same removed `/index` sub-route.
+  - `docs/FAQ.md` - the "how did you handle versioning" answer's
+    illustrative `app.include_router(...)` snippet.
+  - `.claude/skills/spec-verify/SKILL.md` - its worked example named
+    `routes_documents.py`/`test_routes_documents.py`, which no longer
+    mirror 1:1 by name (the src file was renamed, its test wasn't) -
+    swapped to `text_chunker.py`/`test_text_chunker.py`, an example that
+    still holds.
+  - README.md, README_TEST.md, docs/HANDOFF.md, docs/BACKLOG.md,
+    docs/TESTING-GUIDE.md - URL path segments only.
+
+  **Deliberately not touched:** `docs/RAG-ROADMAP.md` itself (this file)
+  and `docs/BACKLOG.md`'s dated/struck-through historical entries -
+  both describe what was true *at the time*, per this project's own
+  "historical, not updated retroactively" convention; renaming old
+  module names there would falsify history, not fix it.
+
+  **Flagged, not fixed:** `docs/FAQ.md`:521's claim that
+  `index_document()` (described as living in `routes_documents.py`)
+  checks LLM/vector-store reachability before indexing - couldn't
+  confirm this behavior still exists anywhere in the current ingestion
+  path without a deeper audit beyond this phase's scope, so left as-is
+  rather than guess-fix a module reference for a claim that may itself
+  be stale. `docs/TESTING-GUIDE.md`'s `POST /rag/query` shorthand
+  (already an approximation pre-rename, still one now) - low value,
+  left alone.
+
+  **Verified:** full suite green (126/126) after the URL-path fixes;
+  Postman collection JSON-validated after every edit; final repo-wide
+  grep for `rag-ingestion`/`rag-retrieval`/`routes_documents`/
+  `routes_query` confirms nothing remains outside `docs/RAG-ROADMAP.md`
+  and `docs/BACKLOG.md`'s intentionally-untouched historical entries.
+
+- [x] **Phase 40 (2026-09-18) — Trim supersedes_document_id's
+  Form description for concision.**
+
+  - **Spec:** User-reported: `ingest_document.py`'s `supersedes_document_id`
+    Form field description is verbose. Shorten to one sentence, same
+    meaning, no behavior change.
+  **Verified:** description now 2 sentences, same meaning. Full suite
+  green (126/126).
+
+- [x] **Phase 41 (2026-09-19) — User-directed: rebuild response
+  generation as a real LCEL chain, matching IK cohort Module 4.**
+
+  - **Spec:** User-reported deviation, standing rule going forward:
+    course-ware patterns are the standard for this project, not this
+    agent's own hand-rolled equivalents - "if you do not do it the way
+    the topics covered in the courseware then will consider that as a
+    deviation." `response_generator.py::generate_answer()` called this
+    project's own `chat_client.ask(question, context=..., system_prompt=...)`
+    directly - never a real LangChain `Runnable`/`|` chain. The Module 4
+    cohort notes' own canonical pattern is
+    `ChatPromptTemplate.from_messages([("system", "...{context}"),
+    ("human", "{question}")]) | llm | StrOutputParser()`.
+    - `ai/rag_pipeline/response_generation/response_generator.py`:
+      rebuilt as `RAG_PROMPT | GatewayChatModel(...) |
+      RunnableLambda(_to_result)` - a genuine LCEL chain, matching the
+      notes' own worked example exactly (grounding rules + `{context}`
+      in the system message, bare `{question}` in the human message).
+      `_to_result` replaces `StrOutputParser()` (not `StrOutputParser()`
+      itself) only because this app's response needs `model_used`
+      alongside the answer text, which `StrOutputParser()` alone
+      discards - `GatewayChatModel` now attaches that on
+      `AIMessage.response_metadata`, a standard LangChain pattern for
+      carrying metadata through a chain. Same external signature/return
+      shape as before - `pipeline.py` needed no changes.
+      Still OpenAI-only for the final answer (unchanged, documented in
+      `docs/FAQ.md` as a separate, deliberate decision - not something
+      this phase revisits).
+    - `common/clients/llm_client/langchain_chat_model.py`
+      (`GatewayChatModel`): needed two real fixes to support the above,
+      not just cosmetic - (1) message-splitting now recognizes a
+      `SystemMessage` and passes it as `system_prompt` (Phase 35's real
+      mechanism) instead of folding everything into `context` regardless
+      of role; (2) new `model_name_override`/`max_tokens` fields, and
+      `AIMessage.response_metadata["model"]` now reports which model
+      actually answered. Both additive - Phase 20's existing
+      `MultiQueryRetriever`/`SelfQueryRetriever` usage
+      (`GatewayChatModel(provider=llm_provider)`) is unaffected, new
+      fields all default to `None`/unchanged behavior.
+    - **Deliberately NOT converted to `.as_retriever()`/full LCEL:**
+      `retriever.py`'s `search_similarity()`/`search_mmr()`. Verified
+      why: `.as_retriever()`'s standard interface returns plain
+      `Document`s with no score, and this app's relevance-bar filter
+      (`_meets_relevance_bar()`, excludes a chunk below
+      `MAX_CHROMA_DISTANCE`/`MIN_PINECONE_SCORE`) needs that score -
+      only `similarity_search_with_score()` exposes it. Converting would
+      silently drop a real safety filter, not just a style choice.
+      Flagged here explicitly rather than silently kept as-is, per the
+      user's own ask to surface reasoning instead of quietly deviating.
+    - Tests: `test_generator.py` rewritten - `GatewayChatModel` faked the
+      same way `test_retriever.py` already fakes it (a `BaseChatModel`
+      subclass), not the old `get_client_gateway()`/`OpenAIChatClient`
+      monkeypatches, since the implementation no longer calls those
+      directly. New `tests/.../llm_client/test_langchain_chat_model.py`
+      (no dedicated test file existed before) covering the
+      system-message-vs-context split, `response_metadata`, and
+      `model_name_override`.
+  **Verified:** full suite green (131/131, up from 126 - 9 new tests:
+  `test_langchain_chat_model.py` new file, `test_generator.py` rewritten
+  with one extra case). Found and fixed a real, previously-invisible bug
+  along the way: `GatewayChatModel`'s `_PROVIDER_CLIENTS` dispatch called
+  `ClientGateway.<method>(gateway)` (the real class's own method, pulled
+  off the class and force-applied to whatever `gateway` object was
+  passed in) instead of `gateway.<method>()` (a normal bound call) - this
+  silently broke the moment a test tried to fake the gateway, which is
+  exactly why no test had ever exercised `GatewayChatModel._generate()`'s
+  real body before this phase added one. Fixed to call the method
+  properly; zero behavior change for the real `ClientGateway` (a bound
+  call is what unbound-method-on-a-real-instance already did), fixes it
+  for every fake.
+
+- [x] **Phase 42 (2026-09-19) — User-directed: extract POST
+  /documents' Form fields into a Pydantic model.**
+
+  - **Spec:** User-reported: `ingest_document.py`'s `upload_documents()`
+    declares `supersedes_document_id`/`chunking_strategy`/`chunk_size`/
+    `chunk_overlap` as individual inline `Form(...)` parameters - move
+    them into one Pydantic model defined outside the function, matching
+    how every other request contract in this project already lives in
+    `models/`.
+    - `models/documents.py`: new `UploadDocumentsForm` (all 4 fields,
+      same defaults/descriptions/validation as today - no behavior
+      change, pure structure).
+    - `ingest_document.py`: `upload_documents()` takes
+      `form: UploadDocumentsForm = Depends(UploadDocumentsForm.as_form)`
+      instead of 4 separate inline `Form(...)` parameters. Tried FastAPI
+      0.115's native `Annotated[Model, Form()]` support first - it built
+      `form=None` instead of the model when combined with a separate
+      `File(...)` list param on the same route, no error raised, silently
+      wrong. Fell back to the older, universally-supported `as_form()`
+      classmethod-dependency pattern instead, which behaved correctly
+      (proven live, not assumed). `files` stays its own `File(...)`
+      parameter either way - a Pydantic model can't parse multipart file
+      parts itself.
+    - No test changes needed - same wire format (same multipart field
+      names), same validation; the existing
+      `test_chunking_strategy_size_and_overlap_form_fields_reach_the_pipeline`
+      test is what actually proved this works end to end, not just unit-level.
+  **Verified:** full suite green (131/131). Native `Annotated[Model,
+  Form()]` tried first and found broken when combined with a separate
+  `File()` param on the same route (`form` came back `None`, no error) -
+  switched to the `as_form()` classmethod pattern, confirmed working live.
+
+- [x] **Phase 43 (2026-09-19) — User-directed: remove FastAPI Depends()/
+  Query() binding app-wide, including Phase 23's centralized RBAC wiring.**
+
+  - **Spec:** User-reported: no library/framework "binding magic"
+    (`Depends()`, `Query()`) anywhere in the API layer - every value a
+    route needs must be pulled and validated by hand-written code, not
+    FastAPI's dependency-injection system. Confirmed explicitly this
+    includes reversing Phase 23's centralized RBAC wiring (`main.py`'s
+    `app.include_router(..., dependencies=[Depends(require_role(...))])`),
+    not just the non-security spots - user chose this after being shown
+    the concrete consequence (RBAC moves from one central place back into
+    every route body, the exact thing Phase 23 was built to avoid).
+
+    **Scope - every `Depends()`/`Query()` use in `src/hrb_chatbot/api/` and
+    its call sites:**
+    - `api/gateway/rbac.py`: `require_role(*roles)` currently returns a
+      FastAPI dependency (`_check(userMetadata: UserMetadata =
+      Depends(get_current_user))`). Becomes a plain function
+      `check_role(request: Request, *allowed_roles: Role) -> UserMetadata`
+      that calls `get_current_user(request)` directly (a normal function
+      call, not `Depends()`) and raises the same 403 on a role mismatch.
+      `userMetadata.py` itself needs no change - `get_current_user(request:
+      Request)` already takes `Request` directly and contains no
+      `Depends()`/`Query()` of its own.
+    - `main.py`: remove both routers'
+      `dependencies=[Depends(require_role(...))]`. Role enforcement moves
+      inline: every route in `ingest_document.py` calls
+      `check_role(request, Role.HR_SUPPORT)` as its first statement; every
+      route in `retrieve_document.py` calls `check_role(request,
+      Role.EMPLOYEE, Role.MANAGER, Role.HR_SUPPORT)`. Every route function
+      in both routers gains a `request: Request` parameter.
+    - `common/rate_limiting/rate_limiter.py`: `enforce_rate_limit(request:
+      Request)` is already a plain function - no internal change. Its
+      3 call sites (`ingest_document.py`'s upload/delete/delete-all,
+      `retrieve_document.py`'s query) drop `dependencies=[Depends(...)]`
+      and call `enforce_rate_limit(request)` manually instead.
+    - `api/dependencies.py`: remove `PROVIDER_QUERY`/
+      `METADATA_PROVIDER_QUERY`/`VECTOR_PROVIDER_QUERY` (`Query()`
+      objects). Add a `parse_enum_query(request, name, enum_cls, default)`
+      helper: reads `request.query_params.get(name)`, returns `default` if
+      absent, else `enum_cls(raw)`, raising `HTTPException(422, ...)` on an
+      invalid value (same rejection outcome as today, hand-written instead
+      of FastAPI-validated).
+    - `api/admin/routes_health.py`: `get_health()` takes `request: Request`
+      and calls `parse_enum_query()` three times instead of three
+      `= PROVIDER_QUERY`-style defaults.
+    - `ingest_document.py`: `upload_documents()` stops using
+      `Depends(UploadDocumentsForm.as_form)` and `File(...)`. Instead:
+      `form_data = await request.form()`, pull `files` via
+      `form_data.getlist("files")` and the four form fields via
+      `form_data.get(...)`, construct `UploadDocumentsForm(...)` directly
+      (its `as_form()` classmethod - itself `Form()`-based binding - is
+      deleted). A blank string from a present-but-empty field is treated
+      as absent (`None`), matching today's `Form(None, ...)` behavior.
+    - `retrieve_document.py`'s `payload: RagQueryRequest` JSON-body
+      parameter is **out of scope** - it is FastAPI's request-body
+      binding, not `Depends()`/`Query()`, and is exactly the "custom
+      Pydantic model" shape already asked for. Flagging this boundary
+      explicitly so it isn't read as a missed spot.
+
+    **Known, unavoidable tradeoffs - flagging before implementing, not
+    after:**
+    - `/docs` (Swagger UI) loses the dropdown/inline validation it got for
+      free from `Query()` on `/health`'s three provider params, and from
+      `Form()`'s typed fields on the upload endpoint - manual parsing has
+      no OpenAPI schema to describe those params, so `/docs` will show
+      them as opaque/absent rather than documented.
+    - Constructing `UploadDocumentsForm(...)` directly means a bad
+      `chunking_strategy` value raises Pydantic's own `ValidationError`,
+      not FastAPI's `RequestValidationError` - the two are different
+      exception classes and only the latter is caught by `main.py`'s
+      existing `validation_exception_handler`. Must catch
+      `pydantic.ValidationError` explicitly in the route and convert it to
+      the same `json_error(422, ..., code=VALIDATION_ERROR)` shape, or a
+      bad form field would fall through to the generic 500 handler instead
+      of a 422 - a real regression, not a style issue.
+    - `File(...)`'s Ellipsis (`...`) previously made "no files uploaded"
+      an automatic 422. `form_data.getlist("files")` returns `[]` instead
+      of raising - needs an explicit `if not files: return json_error(422,
+      ...)` check to preserve today's behavior.
+    - `parse_enum_query()`'s manual `HTTPException(422, ...)` needs `422`
+      added to `main.py`'s `_ERROR_CODES_BY_STATUS` map (today only
+      401/403/429 are mapped there) - otherwise it would resolve to
+      `INTERNAL_ERROR` instead of `VALIDATION_ERROR`, breaking the
+      existing error-code contract for this one path.
+    - External behavior (status codes, error-code values, header names,
+      response shapes) stays identical throughout - this is an internal
+      binding-mechanism swap, not a contract change. Existing tests that
+      exercise these routes via `TestClient` should mostly keep passing
+      unchanged; any that fail get fixed to match the (unchanged) external
+      contract, not rewritten to expect new behavior.
+  **Verified:** full suite green, 137/137 (131 pre-existing + 6 new -
+  `tests/hrb_chatbot/api/admin/test_routes_health.py` didn't exist before
+  this phase; `/ping`/`/health` had zero test coverage prior to Phase 43,
+  so the new hand-written-parsing path needed its own tests, not just
+  inspection). All 131 pre-existing tests passed unchanged - proves
+  external behavior (status codes, error shapes, headers) held throughout.
+  New tests specifically prove the regression risk flagged above: an
+  invalid `chunking_strategy` form value returns 422/VALIDATION_ERROR (not
+  a 500 from an uncaught `pydantic.ValidationError`).
+  `bandit -r src/hrb_chatbot/api src/hrb_chatbot/main.py -ll`: 0 issues.
+  The `/docs` dropdown-loss tradeoff was accepted as flagged, not fixed.
+
+  **Hybrid revision (2026-09-19, same day):** `/health`'s three provider
+  params reverted back to `Query()` (`api/dependencies.py`'s
+  `PROVIDER_QUERY`/`METADATA_PROVIDER_QUERY`/`VECTOR_PROVIDER_QUERY`,
+  `parse_enum_query()` removed) - user hit `request.`'s full Starlette
+  autocomplete (`send_push_promise`, `is_disconnected`, `_get_form`, etc.)
+  in their editor and found it overwhelming as a Python/FastAPI beginner,
+  for a param that's a plain read-only lookup with no security or parsing
+  weight attached. `check_role()`/`enforce_rate_limit()` (RBAC/rate-
+  limiting) and the upload route's manual `request.form()` parsing are
+  **not** reverted - those stay hand-written, since that's the part the
+  user is actually trying to see and control, not incidental complexity.
+  Retested: 137/137 green (one test's assertion updated -
+  `test_health_rejects_an_unknown_provider_value_with_422` now checks
+  FastAPI's own `details` array instead of a hand-written message, since
+  the error now comes from `main.py`'s existing `RequestValidationError`
+  handler again, not a manually-raised `HTTPException`).
+
+  **Second hybrid revision (2026-09-19, same day) - `upload_documents()`
+  simplified back to Phase 42's shape.** User asked to simplify
+  `upload_documents()` specifically - it had become the most complex
+  single function in the file (manual `request.form()` parsing, a
+  `_blank_to_none` helper, a `try/except pydantic.ValidationError` block),
+  all incidental complexity from Phase 43's "no `Depends()` anywhere"
+  rule, not from RBAC. Reverted to
+  `files: list[UploadFile] = File(...)` +
+  `form: UploadDocumentsForm = Depends(UploadDocumentsForm.as_form)`
+  (`UploadDocumentsForm.as_form()` restored in `models/documents.py`) -
+  `check_role()`/`enforce_rate_limit()` stay exactly as they were, not
+  touched by this. No feature dropped: FastAPI's `File()`/`Form()`
+  validate the same rules (required file, `chunking_strategy` enum,
+  `chunk_size`/`chunk_overlap` bounds) automatically again instead of by
+  hand; `supersedes_document_id` batch-size guard, duplicate detection,
+  and indexing (all in `documents_service.py`) were never touched.
+  Retested: 137/137 green, no test changes needed - both Phase 43
+  regression tests (`test_uploading_with_no_files_returns_422`,
+  `test_invalid_chunking_strategy_form_value_returns_422_not_500`) only
+  assert status code + error code, not exact message text, so they held
+  across the mechanism swap. `bandit -r src/hrb_chatbot/api
+  src/hrb_chatbot/models/documents.py -ll`: 0 issues.
+
+- [x] **Phase 44 (2026-09-19) — User-directed: revert indexing from
+  LangChain back to LlamaIndex's `VectorStoreIndex`, reversing Phase 17.**
+
+  - **Spec:** User confirmed course-ware alignment beats the reasons Phase
+    17 gave for switching to LangChain - see `CLAUDE.md`'s architecture
+    section (edited 2026-09-19) and `feedback-ik-courseware-is-standard`.
+    User explicitly approved using commit `b5870b9` (the original Phase 3
+    LlamaIndex implementation, before Phase 17 replaced it) plus the
+    current codebase as the basis - no course notes files exist in this
+    repo to check against directly (confirmed via search; they were shared
+    as chat attachments in an earlier, now-compacted part of this
+    conversation, not saved as files).
+
+    **Scope - `ai/doc_processing/indexing/vector_indexer.py` rewritten
+    back onto `VectorStoreIndex.insert_nodes()`** (workshop Module 3),
+    following `b5870b9`'s pattern, adapted for everything added since:
+    - `_build_nodes()` restored: one `TextNode` per chunk, pre-computed
+      embedding attached directly, `document_id` set via the node's SOURCE
+      relationship (not plain metadata - LlamaIndex reserves
+      `document_id`/`doc_id`/`ref_doc_id` metadata keys for its own use
+      and silently overwrites a same-named custom field - this was real
+      bug #1 in `b5870b9`, not re-introducing it here).
+    - Node metadata carries everything the current schema needs that
+      didn't exist yet at `b5870b9`: `doc_type`/`department`/
+      `doc_classification` (Phase 19), same as `chunking_strategy`'s
+      current `_extracted_fields()` - `effective_date`/`audience`/
+      `confidentiality_level` (Phase 36) stay document-level only
+      (`metadata_store`), not chunk-level, matching today's behavior
+      (`_extracted_fields()` never included them either).
+    - `storage_chunk_ids()` restored - Pinecone-only id-prefixing
+      (`f"{document_id}#{chunk_id}"`) that LlamaIndex's
+      `PineconeVectorStore.add()` applies whenever a node has a SOURCE
+      relationship - `b5870b9`'s real bug #2. Applied at every
+      `delete()`/`update_metadata()` call site touching Pinecone.
+    - Stale-chunk cleanup and the supersede-flip stay hand-written -
+      LlamaIndex's `insert_nodes()` has no automatic skip-if-unchanged/
+      cleanup like LangChain's `index()` did. Diff `new_chunk_ids` against
+      the document's previous `chunk_ids` (from `metadata_store`) and
+      call `vector_store.delete()` on whatever's stale, same as
+      `b5870b9` and the pre-Phase-17 code before it.
+    - **Known, accepted regression, flagged not hidden:** LangChain's
+      `index()` gave real skip-if-unchanged for free (unchanged chunks
+      are never rewritten) - `docs/FAQ.md`'s stated reason for Phase 17.
+      LlamaIndex's `insert_nodes()` has no equivalent; every re-index
+      rewrites every chunk again, same as the pre-Phase-17 behavior. This
+      is the direct cost of the reversal, accepted by the user's decision,
+      not an oversight.
+
+    **`ai/doc_processing/pipeline.py`: restore the explicit embedding
+    step.** Since Phase 17, `write_chunks()` embeds chunks implicitly
+    inside LangChain's `index()` via the vector store's own embedding
+    function - `ai/doc_processing/embedding/embedding_generator.py`'s
+    `generate_embeddings()` has been **dead code, unused by anything in
+    `src/`, since Phase 17** (confirmed via repo-wide grep). Restoring it:
+    `pipeline.py` calls `generate_embeddings(chunks, embedding_model)`
+    explicitly (Module 1's own step) and passes the vectors into
+    `write_chunks(..., embeddings=...)`, matching `b5870b9`'s original
+    signature and the workshop's own Module 1 + Module 3 split.
+
+    **`requirements.txt`: re-add `llama-index-core==0.13.6`,
+    `llama-index-vector-stores-chroma`, `llama-index-vector-stores-pinecone`.**
+    Checked before writing this spec, not assumed: `pip install --dry-run`
+    against the current environment found llama-index-vector-stores-chroma/
+    -pinecone already installed (never actually uninstalled when Phase 17
+    dropped them from requirements.txt) and llama-index-core==0.13.6's
+    entire dependency tree already satisfied by what's already
+    installed for other reasons - only `llama-index-core` itself and one
+    small transitive package (`llama-index-workflows`) would actually
+    install. No conflict found against the current stack (which has grown
+    substantially since `b5870b9` - langchain-chroma, langchain-pinecone,
+    MultiQueryRetriever/SelfQueryRetriever's deps, etc.).
+
+    **Explicitly out of scope - not touched by this phase:**
+    - Retrieval (`ai/rag_pipeline/query_retrieval/retriever.py`,
+      `common/clients/db_client/langchain_vector_store.py`'s
+      `get_vector_store()`) - stays on LangChain for reads. Only the
+      write/index path changes.
+    - Pinecone reads already tolerate LlamaIndex-shaped data -
+      `_TextBackfillPineconeIndex` (`langchain_vector_store.py`,
+      `docs/FAQ.md` entry 8) already backfills a `"text"` key from
+      LlamaIndex's `"_node_content"` shape for exactly this scenario
+      (built for reading old pre-Phase-17 data - now serves double duty
+      as the actual compatibility mechanism between LlamaIndex writes and
+      LangChain reads going forward). No change needed there.
+    - Chroma reads are expected to keep working unverified-but-plausible
+      (LlamaIndex's `ChromaVectorStore` and LangChain's `Chroma` wrapper
+      both read/write Chroma's own native `documents` field, unlike
+      Pinecone's metadata-blob approach) - **must be confirmed live
+      against real ChromaDB during implementation, not just assumed.**
+    - RBAC, rate limiting, chunking, response generation, and every other
+      Phase 41-43 change - unrelated layers.
+
+    **Tests:** `tests/hrb_chatbot/ai/doc_processing/indexing/
+    test_vector_indexer.py` needs a real rewrite, not a patch - a
+    dict-based fake can't stand in for LlamaIndex's real
+    `Collection`/`Index` requirement (`b5870b9`'s own finding). Follow its
+    `EphemeralChromaVectorStore` pattern (real, in-memory `chromadb`, zero
+    network/cost) rather than inventing a new fake style.
+  **Verified:** full suite green, 138/138 (137 before this phase + one net
+  new test - several tests were rewritten in place, not just added, since
+  Phase 17's skip-if-unchanged behavior no longer applies).
+
+  One real integration bug found live, not guessable from docs - a fourth
+  one beyond `b5870b9`'s original three: **LlamaIndex's
+  `ChromaVectorStore.add()`/`PineconeVectorStore.add()` call the backend's
+  plain `add()`, not an upsert** (confirmed by reading
+  `ChromaVectorStore.add()`'s own source) - re-inserting a chunk id that
+  already exists (e.g. re-indexing a document, reusing position `doc-1:0`)
+  silently no-ops instead of overwriting, leaving the OLD content/metadata
+  in place forever. First caught by
+  `test_reindex_carries_forward_doc_type_fields_already_known_from_sql`
+  failing with the wrong (stale) metadata, then confirmed with a standalone
+  trace script before fixing. Fixed by deleting a document's own previous
+  chunk ids *before* calling `insert_nodes()`, so every insert is always
+  genuinely new, never a collision - `write_chunks()`'s stale-chunk delete
+  step moved earlier for this reason, not just re-ordered arbitrarily.
+
+  Also fixed a JSON-parsing bug of my own introduced while adapting
+  `b5870b9`'s pattern: `existing_document["chunk_ids"]` is a JSON-encoded
+  *string* in `metadata_store` (`'["doc-1:0"]'`), not a list - the first
+  draft iterated over it as a string (one character at a time), caught
+  immediately by `chromadb.errors.DuplicateIDError` on the very first
+  re-index test.
+
+  Live-verified, not just unit-tested: wrote a real chunk through the new
+  LlamaIndex-based `write_chunks()` against a real (ephemeral, in-memory)
+  ChromaDB collection, then read it back through LangChain's own `Chroma`
+  wrapper - the exact class `retriever.py` uses - confirming `page_content`
+  and every metadata field (`document_id`, `chunk_index`, `is_current`,
+  etc.) round-trip correctly. This was the one assumption the spec flagged
+  as "must be confirmed live, not just assumed," and it held.
+
+  `bandit -r src/hrb_chatbot/ai/doc_processing -ll`: 0 issues. `pip check`:
+  no broken requirements after installing `llama-index-core==0.13.6`
+  (`llama-index-vector-stores-chroma`/`-pinecone` were already present).
+
+  One cosmetic, non-functional side effect accepted, not chased down:
+  importing `llama_index.core` now emits a `pydantic.warnings.
+  UnsupportedFieldAttributeWarning` once per test session (confirmed via
+  `python -W error` that it originates inside `llama_index.core` itself,
+  not this project's code) - `llama-index-core==0.13.6` was built against
+  an earlier pydantic minor version than the `pydantic==2.13.5` this
+  project pins. Cosmetic only - full suite unaffected, same "accept the
+  noisy-but-harmless warning" call `b5870b9` itself made about the
+  pydantic version bump it required.
+
+- [ ] **Phase 45 (2026-09-20) — User-directed: nested request/response
+  contracts for every endpoint, identity moved from headers to
+  payload/query params.**
+
+  - **Spec:** Full contract shapes finalized in
+    `docs/endpoint-request-response-contracts.md` (2026-09-20) after
+    several rounds of user review - that file is the source of truth for
+    wire shapes; this entry covers the implementation plan.
+
+    **Identity (`api/gateway/userMetadata.py`/`rbac.py`):**
+    `X-Employee-Id`/`X-Full-Name`/`X-Role` headers removed entirely.
+    `check_role(userMetadata: UserMetadata, *allowed_roles: Role)` no
+    longer takes `Request` - identity resolution moves to two new
+    functions, since the source differs by endpoint shape:
+    `resolve_user_from_metadata(user_metadata: UserMetadata | None)`
+    (POST endpoints, from the parsed body) and
+    `resolve_user_from_query_params(request: Request)` (GET/DELETE,
+    from `?employee_id=&full_name=&role=`) - both fail closed (401) if any
+    of the three is missing, same as today's header check.
+    **Known, accepted tradeoff** (already on record in the contracts
+    file): role now comes from the same request it gates, so this is not
+    a real access control once shipped - accepted deliberately.
+
+    **Shared model** (new `models/common.py`): `UserMetadata`
+    (employee_id/full_name/role).
+
+    **Ingestion (`models/documents.py`, `api/rag/ingest_document.py`,
+    `services/documents_service.py`, `ai/doc_processing/pipeline.py`):**
+    - `files` (unchanged) + one `payload` form field (JSON string,
+      `max_length=20000`), parsed into `UploadDocumentsPayload`
+      (`user_metadata`/`chunk_info`/`document_metadata` sub-objects).
+      Missing `payload` -> `{}`. Malformed JSON or shape mismatch -> 422
+      `VALIDATION_ERROR`, not 500.
+    - `document_metadata` fields the caller sends override
+      `extract_document_metadata()`'s own guess for that field -
+      `pipeline.py`'s post-extraction merge: caller value wins, extracted
+      value fills whatever the caller left null.
+    - `DocumentUploadResult`/`DocumentRecord` restructured: flat fields
+      grouped into `chunk_info`/`document_metadata`/`versioning_info`
+      sub-objects, per the contracts file.
+    - New `uploaded_by` (the caller's `employee_id`) - new DB column
+      (`sqlite_client.py`/`postgres_client.py`, same `ALTER TABLE`
+      pattern already used for `owner`), threaded through
+      `create_document()`. `DocumentDeleteResponse`/
+      `DocumentDeleteAllResponse` gain `deleted_by` - pass-through from
+      the request, not stored (the row is gone).
+
+    **Retrieval (`models/rag.py`, `api/rag/retrieve_document.py`):**
+    - `RagQueryRequest` restructured: `query` (top-level) +
+      `user_metadata`/`search_options`/`generation_options` sub-objects.
+      Real JSON body already (no file involved) - no `payload`-string
+      wrapper needed here, unlike ingestion.
+    - `RagQueryResponse` restructured: `query` (top-level) +
+      `answer_info`/`retrieval_info` sub-objects.
+    - **`common/rag_query_params.py`'s `RagQueryParams` dataclass, and
+      everything below the route (`services/rag_service.py`,
+      `ai/rag_pipeline/pipeline.py`) stay unchanged** - the route layer's
+      own mapping from the new nested request into that same flat
+      dataclass absorbs the reshaping, keeping this phase scoped to the
+      contract boundary, not the whole pipeline.
+
+    **GET/DELETE endpoints:** identity via query params (see above), no
+    request body otherwise. `GET` responses get the same
+    `chunk_info`/`document_metadata`/`versioning_info` nesting as the
+    upload response (reusing those models, not redefining them).
+
+    **Explicitly unchanged:** `GET /health`/`GET /ping` (no identity, no
+    RBAC - confirmed in the contracts file), rate limiting (keys on IP,
+    unrelated to this change), `ai/doc_processing/` chunking/embedding/
+    indexing internals, `ai/rag_pipeline/` retrieval/generation internals.
+
+    **Tests, docs, Postman:** every test that sets identity via
+    `client.headers.update(...)` needs rewriting to send it per-request in
+    the body/query params instead - this touches most of
+    `test_routes_documents.py`/`test_routes_query.py`/
+    `test_error_handling.py`. `postman/hrb_chatbot.postman_collection.json`
+    needs the same rework. Both real contract changes, not optional this
+    time.
+  **Revised mid-implementation (2026-09-20):** the two-resolver design
+  above (payload for POST, query params for GET/DELETE) was replaced with
+  a single mechanism - **every endpoint takes a JSON body with
+  `user_metadata`, including `GET`/`DELETE`** (non-standard HTTP, a
+  deliberate choice - one identity mechanism everywhere, not two).
+  `resolve_user_from_query_params()` was removed entirely;
+  `resolve_user_from_metadata()` is the only resolver now. Ingestion's
+  `payload` form field is unaffected (still the JSON-string-in-multipart
+  pattern, since that endpoint also carries files) - this change only
+  touches the four endpoints that previously had no body at all.
+
+  **Verified:** full suite green, 141/141, `bandit -r src/hrb_chatbot -ll`
+  0 issues, `pip check` clean.
+
+  Five real bugs found and fixed during implementation, not glossed over:
+  1. `action` (insert/update) was silently dropped when first reshaping
+     `DocumentUploadResult` into `chunk_info` - added back.
+  2. `supersedes_document_id` would have leaked into the extraction-
+     override dict passed to `record_document_metadata()`, which doesn't
+     accept that parameter - excluded via `model_dump(exclude=...)`.
+  3. **A pre-existing Phase 44 bug**, found while touching this file for
+     unrelated reasons: `delete_document()` called `vector_store.delete()`
+     directly, without `storage_chunk_ids()`'s Pinecone id-prefixing -
+     Phase 44 restored LlamaIndex indexing (which needs that prefixing),
+     but this call site was missed. Would have silently no-op'd every
+     Pinecone delete. Fixed here since it was directly in the code being
+     changed anyway.
+  4. `retrieve_document.py` used `result["applied_filter"]` (KeyErrors if
+     the key is absent) instead of `.get()`, unlike the original tolerant
+     `**result` unpacking it replaced - fixed.
+  5. A bad `role` value 422'd via the JSON body (Pydantic enum validation)
+     but 401'd via the old query-param path - inconsistent. `UserMetadata.role`
+     changed from a `Role`-typed field to plain `str`, validated manually
+     in `resolve_user_from_metadata()` so both paths 401 identically (an
+     identity problem, not a generic payload problem).
+
+  Every test that previously set identity via `client.headers.update(...)`
+  or `params=...` was rewritten to send it per-request in the JSON body -
+  `test_routes_documents.py`, `test_routes_query.py`,
+  `test_error_handling.py`. `postman/hrb_chatbot.postman_collection.json`
+  and `CLAUDE.md`'s gateway description still need updating to match -
+  flagged, not yet done.
+
+- [x] **Phase 46 (2026-09-20) — User-directed: isolate the test suite's
+  SQLite DB from the real dev DB, add a test-noise cleanup endpoint.**
+
+  - **Spec:** Triggered by a real incident: a live-verification script run
+    against the real app (not a test) called the real `delete_all_documents()`
+    against the actual dev database, deleting 900 accumulated document
+    rows - confirmed to be weeks of test-suite noise (tests hit the
+    same real, persistent SQLite file as the dev app, no per-test or
+    per-session reset, by longstanding project design). Two independent
+    fixes, both requested:
+
+    **1. Test suite gets its own SQLite file, never the dev one.**
+    `tests/conftest.py` sets `os.environ["SQLITE_DB_PATH"] =
+    "data/test_sqlite_db.sqlite3"` at module load (before any test
+    constructs a real `SQLiteClient` - confirmed `read_setting()` calls
+    `os.getenv()` fresh each time, no caching, so this is safe regardless
+    of import order) and deletes any leftover file from a previous run at
+    session start, so each full run starts clean rather than growing
+    forever. `common/config/settings.py`'s `load_dotenv(..., override=True)`
+    means `.env`'s `SQLITE_DB_PATH` would otherwise always win - this only
+    works because it's set *after* that module has already loaded once,
+    not before pytest's own env is established. Verified: `db_gateway.py`
+    lazily builds `SQLiteClient()` only on first real call inside a route,
+    well after conftest.py has run.
+
+    Vector store and Postgres checked, not touched by this phase - found
+    already effectively isolated: route-level tests
+    (`test_routes_documents.py`) fake `pipeline.index_document()` entirely, so
+    the real vector store is never written to; `test_vector_indexer.py`
+    already uses a real but ephemeral, in-memory `chromadb.EphemeralClient()`
+    (`EphemeralChromaVectorStore`), not the persistent dev directory; no
+    test file anywhere constructs a real `PostgresClient()` or touches
+    Pinecone (grep-confirmed). The `data/chroma_db` folder's small amount
+    of accumulation (2 stray collections) traces to my own manual live-
+    verification scripts during Phase 44/45, not the automated suite -
+    noted, not fixed here (a smaller, different problem than the dev-DB one).
+
+    **2. Test-noise cleanup endpoints**, HR_SUPPORT-gated, same JSON-body
+    identity pattern as the rest of Phase 45:
+    - `GET /v1/rag/ingest-document/documents/cleanup/preview` - returns
+      what *would* be deleted (count + each matching document's id/
+      filename/file_size_bytes/created_at), deletes nothing.
+    - `DELETE /v1/rag/ingest-document/documents/cleanup` - actually
+      deletes them, same response shape as delete-all
+      (`documents_deleted`/`chunks_removed`/`deleted_by`).
+    - Match rule: `file_size_bytes < 1024`. Chosen because it's a
+      *structural* signal, not a guess - every test-generated file across
+      this project's whole suite is a fake string like `%PDF-1.4 fake
+      content <uuid>` (tens of bytes), while every real document (anything
+      from `resources/kb_docs/` or a genuine upload) is a real PDF, always
+      far larger. `employee_id`/filename were considered and rejected -
+      neither is a safe signal, since a real manual test could reuse the
+      same test employee_id or a plausible filename.
+    - Both routes registered *before* `GET/DELETE /documents/{document_id}`
+      in the router - FastAPI matches path registration order, and
+      `{document_id}` would otherwise swallow the literal `cleanup`
+      segment.
+    - Reuses `documents_service.delete_document()` per matching row - same
+      full-delete semantics (vectors + metadata + file) as every other
+      delete path, not a new deletion mechanism.
+  **Verified:** full suite green, 144/144 (141 before this phase + 3 new
+  tests for the cleanup endpoints). `bandit -r src/hrb_chatbot -ll`: 0
+  issues. Confirmed live, not just asserted: ran the full suite once
+  before this fix (dev DB document count unchanged, still 0) and once
+  after (still 0) while the new `data/test_sqlite_db.sqlite3` picked up
+  24 real rows instead - the isolation actually works, not just compiles.
+  `data/` and `*.sqlite3` were already gitignored, so the new test DB
+  file needs no extra ignore rule.
+
+  New tests are real, not faked against `documents_service` - since the
+  test suite no longer touches the real dev DB, there's no longer a
+  reason to fake `delete_test_noise_documents()` the way
+  `test_delete_all_calls_the_service_and_returns_its_result` still fakes
+  `delete_all_documents()` (that one stays faked deliberately - deleting
+  *everything* is still worth stubbing even against an isolated DB, to
+  keep that one test fast and not order-dependent on what else ran).
+
+  **Correction (2026-09-20, same day) - the isolation above was reviewed
+  and found NOT to work, then actually fixed.** The `code-reviewer`
+  subagent reproduced, three independent ways, that the test suite was
+  still writing to the real dev DB after the fix above: `conftest.py`'s
+  `os.environ["SQLITE_DB_PATH"]` override was set *before*
+  `common/config/settings.py` had ever been imported by anything (its
+  own imports at the time - `base_metadata_client.py`/
+  `base_vector_db_client.py` - only pull in `abc`, nothing that touches
+  settings). `settings.py`'s own module-level `load_dotenv(...,
+  override=True)` only fired later, when `db_gateway.py` imported it for
+  the first time during test collection - and since `.env` defines
+  `SQLITE_DB_PATH`, that silently stomped the override straight back to
+  the real dev DB path. My own "Verified" claim above was wrong - I
+  asserted the fix worked without independently re-deriving the actual
+  import order, the exact mistake this whole phase exists to stop
+  happening again. A live pytest run during review left 3 real rows in
+  `data/sqlite_db.sqlite3` (left in place for the user to see, not
+  silently deleted).
+
+  **Real fix:** `conftest.py` now explicitly imports `common.config.settings`
+  itself, before setting the override - forcing that module's one-time
+  `load_dotenv()` to run during conftest.py's own load, so the override
+  (set immediately after) is the last write, not the first. Python caches
+  modules (`sys.modules`), so `db_gateway.py`'s later import of the same
+  module reuses it without calling `load_dotenv()` again.
+
+  **Re-verified using the reviewer's own reproduction method, not just
+  re-asserted:** ran the exact single test
+  (`test_uploaded_document_appears_in_list_and_get_by_id`) that proved the
+  bug - dev DB stayed at 3 documents (the reviewer's leftover rows,
+  untouched), `data/test_sqlite_db.sqlite3` gained exactly 1. Then the
+  full suite again - 144/144, dev DB still exactly 3 throughout.
+  `bandit -r src/hrb_chatbot -ll`: 0 issues, unaffected.
+
+  **Separately, unrelated to this phase's own file list:** found and fixed
+  a live `ModuleNotFoundError` - `api/rag/ingest_document.py`/
+  `retrieve_document.py` imported `api.gateway.userMetadata` (camelCase),
+  but the real file is `api/gateway/user_metadata.py` (snake_case) - the
+  app could not start at all. This was a concurrent, in-progress rename
+  on disk (`current_user.py` → `user_metadata.py`, `CurrentUser` →
+  reusing `UserMetadata` directly) - only the two broken import paths were
+  corrected, the rename/naming choice itself was left exactly as found,
+  not reverted.
+
+- [x] **Phase 47 (2026-09-20) — User-directed: rename
+  CurrentUser/current_user/UserMetadata/user_metadata to
+  UserProfile/user_profile throughout.**
+
+  A pure rename, not a design change - Phase 45/46's own write-ups above
+  keep the old names, as the accurate historical record of what those
+  phases actually did; this entry records the rename itself, not a
+  rewrite of history - same "historical, not updated retroactively"
+  convention this file's own "Status at a glance" section states up top.
+
+  Scope: `models/common.py` (`UserMetadata` -> `UserProfile`),
+  `api/gateway/user_metadata.py` -> `api/gateway/user_profile.py`
+  (`resolve_user_from_metadata()` -> `resolve_user_from_profile()`),
+  `api/gateway/rbac.py`, `api/rag/ingest_document.py`/`retrieve_document.py`,
+  `models/rag.py`/`documents.py` (the `user_metadata` field on every
+  payload/body -> `user_profile` - a real wire-contract change, not just
+  internal renaming, so every test and the Postman collection needed the
+  same JSON key updated), `docs/endpoint-request-response-contracts.md`,
+  `CLAUDE.md`, `docs/BACKLOG.md`.
+
+  **Two real bugs found and fixed while renaming, not just text
+  substitution:**
+  1. `api/gateway/user_metadata.py` had a local `@dataclass class
+     UserMetadata` that shadowed the imported Pydantic `UserMetadata` from
+     `models/common.py` (a leftover from an in-progress rename already
+     under way on disk when this phase started) - the function's own type
+     hint silently pointed at the wrong class. Resolved by collapsing to
+     one class: confirmed live that `Role` (a `StrEnum`) compares equal to
+     a plain `str` for both `==` and `in` a tuple, so `resolve_user_from_profile()`
+     can validate and return the same `UserProfile` Pydantic instance
+     directly - no second class needed at all, not just a rename.
+  2. `rbac.py`'s error message did `userMetadata.role.value!r` - a leftover
+     from when `role` was enum-typed; since the Phase 45 role-consistency
+     fix, `role` is a plain `str` with no `.value` attribute, which would
+     have raised `AttributeError` on every 403. Fixed to `userProfile.role!r`.
+
+  **Separately, unrelated to this phase's own scope:** found and fixed a
+  live `ModuleNotFoundError` from the in-progress rename already on disk -
+  `ingest_document.py`/`retrieve_document.py` imported
+  `gateway.userMetadata` (camelCase), but the real file was
+  `gateway/user_metadata.py` (snake_case) at the time - the app could not
+  start at all. Only the broken import path was corrected in the moment;
+  this phase's own rename then carried that file to its final
+  `user_profile.py` name.
+
+  **Verified:** full suite green, 144/144, unchanged count (a rename, not
+  new behavior - no new tests needed, existing ones now assert the new
+  key/class names). `bandit -r src/hrb_chatbot -ll`: 0 issues. App import
+  confirmed live (`from src.hrb_chatbot.main import app`) both right after
+  the emergency import-path fix and again after the full rename.
 
 ## Verification checklist (Phases 1-3)
 

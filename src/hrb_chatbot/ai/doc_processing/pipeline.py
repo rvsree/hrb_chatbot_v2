@@ -8,8 +8,10 @@ from src.hrb_chatbot.ai.doc_processing.chunking.text_chunker import (
     decide_chunking_strategy,
     extract_text_from_pdf,
 )
+from src.hrb_chatbot.ai.doc_processing.embedding.embedding_generator import generate_embeddings
 from src.hrb_chatbot.ai.doc_processing.indexing.vector_indexer import apply_extracted_chunk_metadata, write_chunks
 from src.hrb_chatbot.ai.doc_processing.metadata_extraction.document_metadata_extractor import (
+    EMPTY_RESULT,
     extract_document_metadata,
 )
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
@@ -49,6 +51,7 @@ async def index_document(
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
     embedding_model: str | None = None,
+    document_metadata_override: dict | None = None,
 ) -> dict:
     if chunking_strategy and chunking_strategy not in CHUNKING_STRATEGIES:
         raise ValueError(
@@ -88,10 +91,13 @@ async def index_document(
         chunk_size=resolved_chunk_size,
         chunk_overlap=resolved_chunk_overlap,
     )
-    # write_chunks() embeds each chunk itself (LangChain's index(), Phase 17).
+    # Module 1's own explicit step (Phase 44) - embeddings are computed here,
+    # not inside write_chunks(), and attached directly to each chunk's node.
+    embeddings = generate_embeddings(chunks, embedding_model=resolved_embedding_model)
     result = await write_chunks(
         document_id,
         chunks,
+        embeddings,
         vector_db=resolved_vector_db,
         embedding_model=resolved_embedding_model,
         chunk_size=resolved_chunk_size,
@@ -108,19 +114,28 @@ async def index_document(
 
     # Extracted once, on first index only - not repeated/re-billed on a
     # re-index. Best-effort: a failure here is logged, never fails the index.
+    document_metadata = dict(EMPTY_RESULT)
     if result["action"] == "insert":
         try:
-            extracted_metadata = extract_document_metadata(text)
-            await get_db_gateway().metadata_store().record_document_metadata(document_id, **extracted_metadata)
+            document_metadata = extract_document_metadata(text)
+            # Phase 45: whatever the caller actually sent overrides the
+            # extraction guess for that field; a field the caller left null
+            # still gets whatever extraction found.
+            if document_metadata_override:
+                for key, value in document_metadata_override.items():
+                    if value is not None:
+                        document_metadata[key] = value
+
+            await get_db_gateway().metadata_store().record_document_metadata(document_id, **document_metadata)
             # Not known yet when write_chunks() wrote the chunks above -
             # patch them now (a re-index already knows them by write time).
             await apply_extracted_chunk_metadata(
                 document_id,
                 result["chunk_ids"],
                 resolved_vector_db,
-                doc_type=extracted_metadata["doc_type"],
-                department=extracted_metadata["department"],
-                doc_classification=extracted_metadata["doc_classification"],
+                doc_type=document_metadata["doc_type"],
+                department=document_metadata["department"],
+                doc_classification=document_metadata["doc_classification"],
             )
         except Exception as error:
             logger.warning(
@@ -137,5 +152,6 @@ async def index_document(
         "embedding_model": resolved_embedding_model,
         "chunk_size": resolved_chunk_size,
         "chunk_overlap": resolved_chunk_overlap,
+        "document_metadata": document_metadata,
         **result,
     }

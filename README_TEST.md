@@ -9,7 +9,7 @@ the same cases against the deployed instance.
 Cases are grouped **happy path** (the normal, working case) and **unhappy /
 edge** (what should happen when something is wrong) per endpoint, because a
 contract that only documents success hides exactly the behavior callers rely
-on when things go wrong - a `POST /v1/rag-ingestion/documents` that silently 500s on an
+on when things go wrong - a `POST /v1/rag/ingest-document/documents` that silently 500s on an
 empty batch is a worse API than one that returns a clear 4xx, and the only
 way to know which this one does is to have actually tried it.
 
@@ -27,11 +27,11 @@ resources/kb_docs/JPMC Unpaid TimeOff.pdf
 
 No case here spends money by accident - `GET /health` (always a real,
 though free, provider call now - see section 1) and
-`POST /v1/rag-ingestion/documents/{id}/index` are the only ones that call a
+`POST /v1/rag/ingest-document/documents/{id}/index` are the only ones that call a
 real provider, called out explicitly where they appear.
 
-**Gateway headers required (Phase 23, 2026-09-15)**: every `/v1/rag-ingestion/*`
-and `/v1/rag-retrieval/*` call below needs three identity headers, or it's a
+**Gateway headers required (Phase 23, 2026-09-15)**: every `/v1/rag/ingest-document/*`
+and `/v1/rag/retrieve-document/*` call below needs three identity headers, or it's a
 `401`. This is a **placeholder for real OAuth, not real security** - the
 values are read as-is, unsigned, trivially spoofable; the point is the
 role-gate wiring (`api/gateway/`) real auth slots into later, not
@@ -122,21 +122,21 @@ body, not a crash (`health_check()` never raises - see
 
 **1.7 Gateway access control (Phase 23) - missing/wrong role**
 ```
-curl -i http://127.0.0.1:8093/v1/rag-ingestion/documents
+curl -i http://127.0.0.1:8093/v1/rag/ingest-document/documents
 ```
 Verified live: `401`, `code: "UNAUTHENTICATED"`, error naming which
 header(s) are missing (`X-Employee-Id`, `X-Full-Name`, `X-Role`).
 ```
-curl -i http://127.0.0.1:8093/v1/rag-ingestion/documents \
+curl -i http://127.0.0.1:8093/v1/rag/ingest-document/documents \
   -H "X-Employee-Id: E00002" -H "X-Full-Name: Eddy Employee" -H "X-Role: employee"
 ```
 Verified live: `403`, `code: "FORBIDDEN"` - only `hr_support` may reach
-`/v1/rag-ingestion/*`; `/v1/rag-retrieval/*` accepts `employee`, `manager`,
+`/v1/rag/ingest-document/*`; `/v1/rag/retrieve-document/*` accepts `employee`, `manager`,
 or `hr_support` uniformly. `GET /ping`/`GET /health` need no headers at all.
 
 ---
 
-## 2. Document upload - `POST /v1/rag-ingestion/documents`
+## 2. Document upload - `POST /v1/rag/ingest-document/documents`
 
 **Spends money (Phase 26, 2026-09-15)**: upload now chunks, embeds, and
 indexes each file in the same call - real embedding calls, not free. Cheap
@@ -148,7 +148,7 @@ for one small PDF, but don't loop this over every file in
 **2.1 Upload a single real PDF**
 ```
 curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" \
-  http://127.0.0.1:8093/v1/rag-ingestion/documents
+  http://127.0.0.1:8093/v1/rag/ingest-document/documents
 ```
 Expect `200`, `uploaded_count: 1`, `rejected_count: 0`, one `results` entry
 with `status: "uploaded"`, a real `document_id` (a hex uuid), and (Phase
@@ -160,7 +160,7 @@ separate step. Save the id - every later example in this file reuses it.
 curl \
   -F "files=@resources/kb_docs/JPMC Paid TimeOff.pdf;type=application/pdf" \
   -F "files=@resources/kb_docs/JPMC Guild Tuition Assistance.pdf;type=application/pdf" \
-  http://127.0.0.1:8093/v1/rag-ingestion/documents
+  http://127.0.0.1:8093/v1/rag/ingest-document/documents
 ```
 Expect `200`, `uploaded_count: 2`, `rejected_count: 0`, two `results` entries
 in the order given.
@@ -173,7 +173,7 @@ echo "not a pdf" > not_a_pdf_scratch.txt
 curl \
   -F "files=@resources/kb_docs/JPMC Unpaid TimeOff.pdf;type=application/pdf" \
   -F "files=@not_a_pdf_scratch.txt;type=text/plain" \
-  http://127.0.0.1:8093/v1/rag-ingestion/documents
+  http://127.0.0.1:8093/v1/rag/ingest-document/documents
 rm not_a_pdf_scratch.txt
 ```
 Expect `200` (not a batch-level failure), `uploaded_count: 1`,
@@ -185,7 +185,7 @@ the single most important behavior to verify in this endpoint - see
 **2.4 Empty file**
 ```
 touch empty_scratch.pdf
-curl -F "files=@empty_scratch.pdf;type=application/pdf" http://127.0.0.1:8093/v1/rag-ingestion/documents
+curl -F "files=@empty_scratch.pdf;type=application/pdf" http://127.0.0.1:8093/v1/rag/ingest-document/documents
 rm empty_scratch.pdf
 ```
 Verified live: `200`, `rejected_count: 1`, error `"File is empty"`.
@@ -193,7 +193,7 @@ Verified live: `200`, `rejected_count: 1`, error `"File is empty"`.
 **2.5 File over the 20MB limit**
 ```
 head -c 21000000 /dev/urandom > too_big_scratch.pdf
-curl -F "files=@too_big_scratch.pdf;type=application/pdf" http://127.0.0.1:8093/v1/rag-ingestion/documents
+curl -F "files=@too_big_scratch.pdf;type=application/pdf" http://127.0.0.1:8093/v1/rag/ingest-document/documents
 rm too_big_scratch.pdf
 ```
 Verified live: `200`, `rejected_count: 1`, error
@@ -204,7 +204,7 @@ PDF content - both would reject it either way.)
 
 **2.6 No `files` field at all**
 ```
-curl -X POST http://127.0.0.1:8093/v1/rag-ingestion/documents
+curl -X POST http://127.0.0.1:8093/v1/rag/ingest-document/documents
 ```
 Expect `422` (FastAPI's own request-validation error, before this project's
 code ever runs) - `files` is a required field with no default.
@@ -212,7 +212,7 @@ code ever runs) - `files` is a required field with no default.
 **2.7 Re-uploading identical content (dedup reinstated 2026-09-14, Phase 16)**
 ```
 curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" \
-  http://127.0.0.1:8093/v1/rag-ingestion/documents
+  http://127.0.0.1:8093/v1/rag/ingest-document/documents
 ```
 Run the exact same command a second time. First call: `200`,
 `uploaded_count: 1`, a real `document_id`. Second call (identical bytes):
@@ -228,19 +228,19 @@ case is specifically about content-hash duplicate detection, which is back.
 
 ---
 
-## 3. List / get / delete documents - `GET /v1/rag-ingestion/documents`, `GET /v1/rag-ingestion/documents/{id}`, `DELETE /v1/rag-ingestion/documents/{id}`
+## 3. List / get / delete documents - `GET /v1/rag/ingest-document/documents`, `GET /v1/rag/ingest-document/documents/{id}`, `DELETE /v1/rag/ingest-document/documents/{id}`
 
 ### Happy path
 
 **3.1 List every uploaded document**
 ```
-curl http://127.0.0.1:8093/v1/rag-ingestion/documents
+curl http://127.0.0.1:8093/v1/rag/ingest-document/documents
 ```
 Expect `200`, `count` matching the real number of rows, newest first.
 
 **3.2 Get one document by its real id** (use an id from section 2)
 ```
-curl http://127.0.0.1:8093/v1/rag-ingestion/documents/<document_id>
+curl http://127.0.0.1:8093/v1/rag/ingest-document/documents/<document_id>
 ```
 Expect `200` and the full `DocumentRecord` - `status: "indexed"` and real
 `chunk_ids` already, since upload indexes in the same call (Phase 26).
@@ -249,7 +249,7 @@ Expect `200` and the full `DocumentRecord` - `status: "indexed"` and real
 
 **3.3 Unknown document id**
 ```
-curl -i http://127.0.0.1:8093/v1/rag-ingestion/documents/does-not-exist
+curl -i http://127.0.0.1:8093/v1/rag/ingest-document/documents/does-not-exist
 ```
 Expect `404`, body `{"error": "Unknown document 'does-not-exist'"}` -
 `-i` here so the status code is visible, since the body alone looks the
@@ -257,7 +257,7 @@ same shape as a real error would.
 
 **3.4 Path-traversal-looking id**
 ```
-curl -i "http://127.0.0.1:8093/v1/rag-ingestion/documents/..%2F..%2Fetc%2Fpasswd"
+curl -i "http://127.0.0.1:8093/v1/rag/ingest-document/documents/..%2F..%2Fetc%2Fpasswd"
 ```
 Verified live: expect `404` with FastAPI's own generic
 `{"detail":"Not Found"}` - the encoded slashes never even reach this
@@ -269,7 +269,7 @@ two different 404s for two different reasons, not the same code path.
 
 **3.5 Delete a document (full delete: vectors + metadata + file), added 2026-09-10**
 ```
-curl -i -X DELETE http://127.0.0.1:8093/v1/rag-ingestion/documents/<document_id>
+curl -i -X DELETE http://127.0.0.1:8093/v1/rag/ingest-document/documents/<document_id>
 ```
 Expect `200`, `{"document_id": ..., "filename": ..., "chunks_removed": N}`
 (`N` is `0` if it was never indexed). Verified live against real data: an
@@ -283,7 +283,7 @@ not stored history).
 
 **3.6 Delete an unknown id**
 ```
-curl -i -X DELETE http://127.0.0.1:8093/v1/rag-ingestion/documents/does-not-exist
+curl -i -X DELETE http://127.0.0.1:8093/v1/rag/ingest-document/documents/does-not-exist
 ```
 Expect `404`, same `{"error": "Unknown document '...'"}` shape as 3.3.
 
@@ -292,7 +292,7 @@ Expect `404`, same `{"error": "Unknown document '...'"}` shape as 3.3.
 ## 4. Indexing - folded into upload (Phase 26, 2026-09-15)
 
 There is no longer a separate index/reindex endpoint. `POST
-/v1/rag-ingestion/documents` (section 2) now does the whole pipeline in one
+/v1/rag/ingest-document/documents` (section 2) now does the whole pipeline in one
 call - save, extract, chunk (auto-selected strategy, no per-call
 overrides), embed, write to the vector store - and reports the outcome
 (`action`, `chunks_indexed`, `chunks_removed`) directly in each upload
@@ -307,7 +307,7 @@ so the config-flexibility those existed for wasn't earning its complexity)
 
 ---
 
-## 5. RAG query - `POST /v1/rag-retrieval/query`
+## 5. RAG query - `POST /v1/rag/retrieve-document/query`
 
 **Real retrieval + grounded generation, as of 2026-09-10** (Phase 6 MVP,
 Claude-Code override - see `docs/RAG-ROADMAP.md`). Query decomposition,
@@ -319,7 +319,7 @@ completion - requires the target document to already be indexed.
 
 **5.1 A well-formed query against a real, indexed document**
 ```
-curl -i -X POST http://127.0.0.1:8093/v1/rag-retrieval/query \
+curl -i -X POST http://127.0.0.1:8093/v1/rag/retrieve-document/query \
   -H "Content-Type: application/json" \
   -d '{"query": "How many weeks of paid time off do employees get per year?", "top_k": 5}'
 ```
@@ -335,7 +335,7 @@ LLM call.
 
 **5.5 MMR search via `search_strategy` in the request body**
 ```
-curl -X POST http://127.0.0.1:8093/v1/rag-retrieval/query \
+curl -X POST http://127.0.0.1:8093/v1/rag/retrieve-document/query \
   -H "Content-Type: application/json" \
   -d '{"query": "How many weeks of paid time off do employees get per year?", "top_k": 3, "search_strategy": "mmr"}'
 ```
@@ -351,7 +351,7 @@ see `docs/RAG-ROADMAP.md`'s Phase 21 entry for why.
 
 **5.6 Omitting `search_strategy` - defaults to similarity**
 ```
-curl -X POST http://127.0.0.1:8093/v1/rag-retrieval/query \
+curl -X POST http://127.0.0.1:8093/v1/rag/retrieve-document/query \
   -H "Content-Type: application/json" \
   -d '{"query": "test"}'
 ```
@@ -360,7 +360,7 @@ default, unchanged behavior when the field is left out.
 
 **5.8 `use_multi_query: true` - rewrites the question, merges results (Phase 20)**
 ```
-curl -X POST http://127.0.0.1:8093/v1/rag-retrieval/query \
+curl -X POST http://127.0.0.1:8093/v1/rag/retrieve-document/query \
   -H "Content-Type: application/json" \
   -d '{"query": "How does 401k vesting work?", "use_multi_query": true, "top_k": 5}'
 ```
@@ -375,7 +375,7 @@ call (the rewrite) plus one embedding+search per rewritten phrasing.
 
 **5.9 `use_self_query: true` - the model parses a metadata filter from the question (Phase 20)**
 ```
-curl -X POST http://127.0.0.1:8093/v1/rag-retrieval/query \
+curl -X POST http://127.0.0.1:8093/v1/rag/retrieve-document/query \
   -H "Content-Type: application/json" \
   -d '{"query": "Show me benefits-type documents about 401k matching", "use_self_query": true, "top_k": 5}'
 ```
@@ -400,7 +400,7 @@ section for the tracked follow-up.
 
 **5.10 `llm_provider` - which model powers `use_multi_query`/`use_self_query`'s own reasoning**
 ```
-curl -X POST http://127.0.0.1:8093/v1/rag-retrieval/query \
+curl -X POST http://127.0.0.1:8093/v1/rag/retrieve-document/query \
   -H "Content-Type: application/json" \
   -d '{"query": "test", "use_multi_query": true, "llm_provider": "anthropic"}'
 ```
@@ -414,7 +414,7 @@ pattern as `vector_db`/`search_strategy`.
 
 **5.2 Empty query string**
 ```
-curl -i -X POST http://127.0.0.1:8093/v1/rag-retrieval/query \
+curl -i -X POST http://127.0.0.1:8093/v1/rag/retrieve-document/query \
   -H "Content-Type: application/json" \
   -d '{"query": ""}'
 ```
@@ -424,7 +424,7 @@ to exist.
 
 **5.3 `top_k` outside the allowed range**
 ```
-curl -i -X POST http://127.0.0.1:8093/v1/rag-retrieval/query \
+curl -i -X POST http://127.0.0.1:8093/v1/rag/retrieve-document/query \
   -H "Content-Type: application/json" \
   -d '{"query": "test", "top_k": 100}'
 ```
@@ -432,13 +432,13 @@ Expect `422` - `top_k` has `le=20`.
 
 **5.4 Missing `query` field entirely**
 ```
-curl -i -X POST http://127.0.0.1:8093/v1/rag-retrieval/query -H "Content-Type: application/json" -d '{}'
+curl -i -X POST http://127.0.0.1:8093/v1/rag/retrieve-document/query -H "Content-Type: application/json" -d '{}'
 ```
 Expect `422` - `query` has no default.
 
 **5.7 Unknown `search_strategy`**
 ```
-curl -i -X POST http://127.0.0.1:8093/v1/rag-retrieval/query \
+curl -i -X POST http://127.0.0.1:8093/v1/rag/retrieve-document/query \
   -H "Content-Type: application/json" \
   -d '{"query": "test", "search_strategy": "not-a-real-strategy"}'
 ```
@@ -446,7 +446,7 @@ Expect `422`, naming the unknown strategy and listing the valid ones.
 
 **5.11 Unknown `llm_provider` (Phase 20)**
 ```
-curl -i -X POST http://127.0.0.1:8093/v1/rag-retrieval/query \
+curl -i -X POST http://127.0.0.1:8093/v1/rag/retrieve-document/query \
   -H "Content-Type: application/json" \
   -d '{"query": "test", "llm_provider": "made-up"}'
 ```
@@ -470,7 +470,7 @@ This is a **one-time override** of Phase 8's hand-written boundary in
 Phase 4 (chunking/embedding/indexing) was, not a new precedent for the rest
 of Phase 8 (retrieval metrics, LLM-as-judge evaluation, A/B testing
 infrastructure), which remain hand-written and unbuilt. The dataset can't
-be exercised yet either - `POST /v1/rag-retrieval/query` is still the Phase 6 stub (see
+be exercised yet either - `POST /v1/rag/retrieve-document/query` is still the Phase 6 stub (see
 case 5.1 above) - it exists now so it's ready the moment Phase 6 lands.
 
 For Postman-based manual testing, `postman/hrb_chatbot.postman_collection.json`

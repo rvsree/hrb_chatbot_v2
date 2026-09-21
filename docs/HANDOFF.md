@@ -199,8 +199,8 @@ Don't re-derive any of this from the code - it's already written down:
 
 ## Known gotchas - condensed, full detail in the docs above
 
-- **Document endpoints live under `/v1/rag-ingestion/...`, query endpoints
-  under `/v1/rag-retrieval/...`** (`GET /health` is the one exception,
+- **Document endpoints live under `/v1/rag/ingest-document/...`, query endpoints
+  under `/v1/rag/retrieve-document/...`** (`GET /health` is the one exception,
   deliberately unversioned). One shared `/v1`, then a context segment - not
   two independently-versioned prefixes - a fresh agent testing against an
   old memory of `/v1/rag/...` or

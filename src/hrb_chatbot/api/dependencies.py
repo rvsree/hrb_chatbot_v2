@@ -6,7 +6,9 @@ from fastapi.responses import JSONResponse
 from src.hrb_chatbot.common.enums import LlmProvider, MetadataStore, VectorDB
 
 # Query()'s enum default is what makes /docs render a dropdown, and what
-# makes FastAPI reject a typo with a 422 before any check runs.
+# makes FastAPI reject a typo with a 422 before any check runs. Phase 43
+# hybrid: /health is a plain read-only lookup with no security/parsing
+# weight, so it keeps this typed shortcut rather than hand-rolled parsing.
 PROVIDER_QUERY = Query(
     default=LlmProvider.OPENAI,
     description="Which LLM provider to check.",

@@ -1,9 +1,14 @@
-"""Tests for POST/GET/DELETE /v1/rag-ingestion/documents (api/rag/routes_documents.py).
+"""Tests for POST/GET/DELETE /v1/genai-rag/ingest-document/documents (api/rag/ingest_document.py).
 Phase 26: upload now indexes immediately (one endpoint, no separate
 /index step) - pipeline.index_document() is faked for every test here
-(see _fake_indexing below) so no test spends real embedding API cost."""
+(see _fake_indexing below) so no test spends real embedding API cost.
+
+Phase 45: identity travels as a JSON payload on every request, including
+GET/DELETE (non-standard HTTP, deliberate - see
+docs/endpoint-request-response-contracts.md) - not headers, not query params."""
 
 import io
+import json
 import uuid
 
 import pytest
@@ -14,9 +19,34 @@ from src.hrb_chatbot.models.documents import MAX_FILE_SIZE_BYTES
 from src.hrb_chatbot.services import documents_service
 
 client = TestClient(app)
-# Phase 23 gateway: ingestion requires HR_SUPPORT - set once so every
-# existing call below keeps working without touching each one individually.
-client.headers.update({"X-Employee-Id": "E00001", "X-Full-Name": "Hana Support", "X-Role": "hr_support"})
+
+HR_SUPPORT_USER_PROFILE = {"employee_id": "E00001", "full_name": "Hana Support", "role": "hr_support"}
+
+
+def _payload(user_profile=None, chunk_info=None, document_metadata=None) -> dict:
+    """Build the `data={"payload": ...}` kwarg for a multipart upload request."""
+    body = {"user_profile": HR_SUPPORT_USER_PROFILE if user_profile is None else user_profile}
+    if chunk_info is not None:
+        body["chunk_info"] = chunk_info
+    if document_metadata is not None:
+        body["document_metadata"] = document_metadata
+    return {"payload": json.dumps(body)}
+
+
+def _identity_body(user_profile=None) -> dict:
+    """Build the JSON body for a GET/DELETE request's identity."""
+    return {"user_profile": HR_SUPPORT_USER_PROFILE if user_profile is None else user_profile}
+
+
+def _get(url: str, user_profile=None):
+    # TestClient.get() doesn't accept json= (httpx restricts it on the
+    # convenience methods) - .request() does, and a GET/DELETE body is
+    # exactly what Phase 45 deliberately does everywhere.
+    return client.request("GET", url, json=_identity_body(user_profile))
+
+
+def _delete(url: str, user_profile=None):
+    return client.request("DELETE", url, json=_identity_body(user_profile))
 
 
 @pytest.fixture(autouse=True)
@@ -36,6 +66,11 @@ def _fake_indexing(monkeypatch):
             "chunk_size": 1000,
             "chunk_overlap": 150,
             "document_version": 1,
+            "document_metadata": {
+                "owner": None, "department": None, "doc_type": None, "purpose": None,
+                "doc_classification": None, "effective_date": None, "audience": None,
+                "confidentiality_level": None,
+            },
         }
 
     monkeypatch.setattr(documents_service.pipeline, "index_document", _fake_index_document)
@@ -54,7 +89,7 @@ def _pdf_file(filename: str = "policy.pdf", content: bytes | None = None):
 
 
 def test_single_valid_pdf_is_uploaded_and_indexed():
-    response = client.post("/v1/rag-ingestion/documents", files=_pdf_file())
+    response = client.post("/v1/genai-rag/ingest-document/documents", files=_pdf_file(), data=_payload())
 
     assert response.status_code == 200
     body = response.json()
@@ -65,8 +100,9 @@ def test_single_valid_pdf_is_uploaded_and_indexed():
     assert result["status"] == "uploaded"
     assert result["document_id"] is not None
     assert result["error"] is None
-    assert result["action"] == "insert"
-    assert result["chunks_indexed"] == 1
+    assert result["chunk_info"]["action"] == "insert"
+    assert result["chunk_info"]["chunks_indexed"] == 1
+    assert result["uploaded_by"] == "E00001"
 
 
 def test_chunking_strategy_size_and_overlap_form_fields_reach_the_pipeline(monkeypatch):
@@ -86,14 +122,19 @@ def test_chunking_strategy_size_and_overlap_form_fields_reach_the_pipeline(monke
             "chunk_size": 500,
             "chunk_overlap": 50,
             "document_version": 1,
+            "document_metadata": {
+                "owner": None, "department": None, "doc_type": None, "purpose": None,
+                "doc_classification": None, "effective_date": None, "audience": None,
+                "confidentiality_level": None,
+            },
         }
 
     monkeypatch.setattr(documents_service.pipeline, "index_document", _capturing_fake_index_document)
 
     response = client.post(
-        "/v1/rag-ingestion/documents",
+        "/v1/genai-rag/ingest-document/documents",
         files=_pdf_file(),
-        data={"chunking_strategy": "recursive", "chunk_size": "500", "chunk_overlap": "50"},
+        data=_payload(chunk_info={"chunking_strategy": "recursive", "chunk_size": 500, "chunk_overlap": 50}),
     )
 
     assert response.status_code == 200
@@ -102,13 +143,48 @@ def test_chunking_strategy_size_and_overlap_form_fields_reach_the_pipeline(monke
     assert captured["chunk_overlap"] == 50
 
 
+def test_invalid_chunking_strategy_payload_value_returns_422_not_500():
+    response = client.post(
+        "/v1/genai-rag/ingest-document/documents",
+        files=_pdf_file(),
+        data=_payload(chunk_info={"chunking_strategy": "not-a-real-strategy"}),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
+
+
+def test_malformed_payload_json_returns_422_not_500():
+    response = client.post(
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(), data={"payload": "{not valid json"}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
+
+
+def test_missing_payload_still_requires_identity_and_is_a_401():
+    # payload omitted entirely -> {} -> user_profile is None -> 401, same
+    # fail-closed behavior the old header check had.
+    response = client.post("/v1/genai-rag/ingest-document/documents", files=_pdf_file())
+
+    assert response.status_code == 401
+
+
+def test_uploading_with_no_files_returns_422():
+    response = client.post("/v1/genai-rag/ingest-document/documents", data=_payload())
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
+
+
 def test_batch_of_two_valid_pdfs_are_both_uploaded():
     files = [
         ("files", ("policy-a.pdf", io.BytesIO(f"%PDF-1.4 fake a {uuid.uuid4().hex}".encode()), "application/pdf")),
         ("files", ("policy-b.pdf", io.BytesIO(f"%PDF-1.4 fake b {uuid.uuid4().hex}".encode()), "application/pdf")),
     ]
 
-    response = client.post("/v1/rag-ingestion/documents", files=files)
+    response = client.post("/v1/genai-rag/ingest-document/documents", files=files, data=_payload())
 
     assert response.status_code == 200
     body = response.json()
@@ -127,7 +203,7 @@ def test_non_pdf_file_is_rejected_not_the_whole_batch():
         ("files", ("notes.txt", io.BytesIO(b"just plain text"), "text/plain")),
     ]
 
-    response = client.post("/v1/rag-ingestion/documents", files=files)
+    response = client.post("/v1/genai-rag/ingest-document/documents", files=files, data=_payload())
 
     # Still 200 - a bad file in a batch is reported per-file, not a failed request.
     assert response.status_code == 200
@@ -143,7 +219,7 @@ def test_non_pdf_file_is_rejected_not_the_whole_batch():
 
 
 def test_empty_file_is_rejected():
-    response = client.post("/v1/rag-ingestion/documents", files=_pdf_file(content=b""))
+    response = client.post("/v1/genai-rag/ingest-document/documents", files=_pdf_file(content=b""), data=_payload())
 
     assert response.status_code == 200
     body = response.json()
@@ -155,7 +231,7 @@ def test_empty_file_is_rejected():
 def test_oversized_file_is_rejected():
     too_big = b"x" * (MAX_FILE_SIZE_BYTES + 1)
 
-    response = client.post("/v1/rag-ingestion/documents", files=_pdf_file(content=too_big))
+    response = client.post("/v1/genai-rag/ingest-document/documents", files=_pdf_file(content=too_big), data=_payload())
 
     assert response.status_code == 200
     body = response.json()
@@ -165,21 +241,23 @@ def test_oversized_file_is_rejected():
 
 
 def test_no_files_field_at_all_is_a_422():
-    response = client.post("/v1/rag-ingestion/documents", files={})
+    response = client.post("/v1/genai-rag/ingest-document/documents", files={}, data=_payload())
 
     assert response.status_code == 422
 
 
 def test_uploaded_document_appears_in_list_and_get_by_id():
-    upload_response = client.post("/v1/rag-ingestion/documents", files=_pdf_file(filename="findable.pdf"))
+    upload_response = client.post(
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="findable.pdf"), data=_payload()
+    )
     document_id = upload_response.json()["results"][0]["document_id"]
 
-    list_response = client.get("/v1/rag-ingestion/documents")
+    list_response = _get("/v1/genai-rag/ingest-document/documents")
     assert list_response.status_code == 200
     all_ids = [doc["id"] for doc in list_response.json()["documents"]]
     assert document_id in all_ids
 
-    get_response = client.get(f"/v1/rag-ingestion/documents/{document_id}")
+    get_response = _get(f"/v1/genai-rag/ingest-document/documents/{document_id}")
     assert get_response.status_code == 200
     document = get_response.json()
     assert document["filename"] == "findable.pdf"
@@ -187,10 +265,11 @@ def test_uploaded_document_appears_in_list_and_get_by_id():
     # the DB (the real write_chunks() does that internally) - status stays
     # "uploaded" here, same as documents_service.create_document() set it.
     assert document["status"] == "uploaded"
+    assert document["uploaded_by"] == "E00001"
 
 
 def test_get_unknown_document_id_is_a_404_with_the_standard_error_shape():
-    response = client.get("/v1/rag-ingestion/documents/does-not-exist")
+    response = _get("/v1/genai-rag/ingest-document/documents/does-not-exist")
 
     assert response.status_code == 404
     body = response.json()
@@ -200,39 +279,40 @@ def test_get_unknown_document_id_is_a_404_with_the_standard_error_shape():
 
 def test_deleting_an_indexed_document_removes_it():
     upload_response = client.post(
-        "/v1/rag-ingestion/documents", files=_pdf_file(filename="to-delete.pdf")
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="to-delete.pdf"), data=_payload()
     )
     document_id = upload_response.json()["results"][0]["document_id"]
 
-    delete_response = client.delete(f"/v1/rag-ingestion/documents/{document_id}")
+    delete_response = _delete(f"/v1/genai-rag/ingest-document/documents/{document_id}")
 
     assert delete_response.status_code == 200
     body = delete_response.json()
     assert body["document_id"] == document_id
     assert body["filename"] == "to-delete.pdf"
+    assert body["deleted_by"] == "E00001"
 
     # Really gone, not just reported as deleted.
-    get_response = client.get(f"/v1/rag-ingestion/documents/{document_id}")
+    get_response = _get(f"/v1/genai-rag/ingest-document/documents/{document_id}")
     assert get_response.status_code == 404
 
-    list_response = client.get("/v1/rag-ingestion/documents")
+    list_response = _get("/v1/genai-rag/ingest-document/documents")
     all_ids = [doc["id"] for doc in list_response.json()["documents"]]
     assert document_id not in all_ids
 
 
 def test_deleting_an_unknown_document_id_is_a_404():
-    response = client.delete("/v1/rag-ingestion/documents/does-not-exist")
+    response = _delete("/v1/genai-rag/ingest-document/documents/does-not-exist")
 
     assert response.status_code == 404
     assert "error" in response.json()
 
 
 def test_deleting_the_same_document_twice_is_404_the_second_time():
-    upload_response = client.post("/v1/rag-ingestion/documents", files=_pdf_file())
+    upload_response = client.post("/v1/genai-rag/ingest-document/documents", files=_pdf_file(), data=_payload())
     document_id = upload_response.json()["results"][0]["document_id"]
 
-    first_delete = client.delete(f"/v1/rag-ingestion/documents/{document_id}")
-    second_delete = client.delete(f"/v1/rag-ingestion/documents/{document_id}")
+    first_delete = _delete(f"/v1/genai-rag/ingest-document/documents/{document_id}")
+    second_delete = _delete(f"/v1/genai-rag/ingest-document/documents/{document_id}")
 
     assert first_delete.status_code == 200
     assert second_delete.status_code == 404
@@ -244,8 +324,8 @@ def test_uploading_identical_content_twice_is_a_duplicate_not_a_new_document():
     # leftover rows from a previous test *run*, not just within this one.
     same_content = f"%PDF-1.4 identical bytes both times {uuid.uuid4().hex}".encode()
 
-    first = client.post("/v1/rag-ingestion/documents", files=_pdf_file(content=same_content))
-    second = client.post("/v1/rag-ingestion/documents", files=_pdf_file(content=same_content))
+    first = client.post("/v1/genai-rag/ingest-document/documents", files=_pdf_file(content=same_content), data=_payload())
+    second = client.post("/v1/genai-rag/ingest-document/documents", files=_pdf_file(content=same_content), data=_payload())
 
     assert first.json()["results"][0]["status"] == "uploaded"
     first_document_id = first.json()["results"][0]["document_id"]
@@ -266,9 +346,13 @@ def test_uploading_identical_content_twice_is_a_duplicate_not_a_new_document():
 def test_identical_content_under_a_different_filename_is_still_a_duplicate():
     same_content = f"%PDF-1.4 same bytes, different name {uuid.uuid4().hex}".encode()
 
-    first = client.post("/v1/rag-ingestion/documents", files=_pdf_file(filename="v1.pdf", content=same_content))
+    first = client.post(
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="v1.pdf", content=same_content), data=_payload()
+    )
     second = client.post(
-        "/v1/rag-ingestion/documents", files=_pdf_file(filename="renamed-copy.pdf", content=same_content)
+        "/v1/genai-rag/ingest-document/documents",
+        files=_pdf_file(filename="renamed-copy.pdf", content=same_content),
+        data=_payload(),
     )
 
     first_document_id = first.json()["results"][0]["document_id"]
@@ -280,12 +364,14 @@ def test_identical_content_under_a_different_filename_is_still_a_duplicate():
 def test_same_filename_with_different_content_is_not_a_duplicate():
     run_id = uuid.uuid4().hex
     first = client.post(
-        "/v1/rag-ingestion/documents",
+        "/v1/genai-rag/ingest-document/documents",
         files=_pdf_file(filename="policy.pdf", content=f"%PDF-1.4 version one {run_id}".encode()),
+        data=_payload(),
     )
     second = client.post(
-        "/v1/rag-ingestion/documents",
+        "/v1/genai-rag/ingest-document/documents",
         files=_pdf_file(filename="policy.pdf", content=f"%PDF-1.4 version two {run_id}".encode()),
+        data=_payload(),
     )
 
     assert second.json()["results"][0]["status"] == "uploaded"
@@ -301,7 +387,9 @@ def test_supersedes_document_id_on_a_batch_upload_is_rejected_as_ambiguous():
     ]
 
     response = client.post(
-        "/v1/rag-ingestion/documents", files=files, data={"supersedes_document_id": "some-id"}
+        "/v1/genai-rag/ingest-document/documents",
+        files=files,
+        data=_payload(document_metadata={"supersedes_document_id": "some-id"}),
     )
 
     assert response.status_code == 422
@@ -309,9 +397,9 @@ def test_supersedes_document_id_on_a_batch_upload_is_rejected_as_ambiguous():
 
 def test_supersedes_document_id_pointing_at_an_unknown_document_is_rejected():
     response = client.post(
-        "/v1/rag-ingestion/documents",
+        "/v1/genai-rag/ingest-document/documents",
         files=_pdf_file(),
-        data={"supersedes_document_id": "does-not-exist"},
+        data=_payload(document_metadata={"supersedes_document_id": "does-not-exist"}),
     )
 
     assert response.status_code == 200
@@ -322,13 +410,15 @@ def test_supersedes_document_id_pointing_at_an_unknown_document_is_rejected():
 
 
 def test_supersedes_document_id_on_a_valid_target_is_recorded_on_the_new_document():
-    target_response = client.post("/v1/rag-ingestion/documents", files=_pdf_file(filename="v1.pdf"))
+    target_response = client.post(
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="v1.pdf"), data=_payload()
+    )
     target_id = target_response.json()["results"][0]["document_id"]
 
     response = client.post(
-        "/v1/rag-ingestion/documents",
+        "/v1/genai-rag/ingest-document/documents",
         files=_pdf_file(filename="v2.pdf"),
-        data={"supersedes_document_id": target_id},
+        data=_payload(document_metadata={"supersedes_document_id": target_id}),
     )
 
     assert response.status_code == 200
@@ -336,23 +426,23 @@ def test_supersedes_document_id_on_a_valid_target_is_recorded_on_the_new_documen
     assert result["status"] == "uploaded"
     new_document_id = result["document_id"]
 
-    new_document = client.get(f"/v1/rag-ingestion/documents/{new_document_id}").json()
-    assert new_document["supersedes"] == target_id
+    new_document = _get(f"/v1/genai-rag/ingest-document/documents/{new_document_id}").json()
+    assert new_document["versioning_info"]["supersedes"] == target_id
 
 
-def test_ingestion_without_any_identity_headers_is_a_401():
-    anonymous_client = TestClient(app)
-
-    response = anonymous_client.get("/v1/rag-ingestion/documents")
+def test_ingestion_without_any_identity_is_a_401():
+    response = client.request("GET", "/v1/genai-rag/ingest-document/documents", json={})
 
     assert response.status_code == 401
     body = response.json()
     assert body["code"] == "UNAUTHENTICATED"
-    assert "X-Employee-Id" in body["error"]
 
 
 def test_ingestion_with_an_unknown_role_value_is_a_401():
-    response = client.get("/v1/rag-ingestion/documents", headers={"X-Role": "made-up-role"})
+    response = _get(
+        "/v1/genai-rag/ingest-document/documents",
+        {"employee_id": "E00001", "full_name": "Hana Support", "role": "made-up-role"},
+    )
 
     assert response.status_code == 401
     body = response.json()
@@ -362,7 +452,11 @@ def test_ingestion_with_an_unknown_role_value_is_a_401():
 
 def test_ingestion_as_employee_or_manager_is_a_403_only_hr_support_may_upload():
     for role in ("employee", "manager"):
-        response = client.post("/v1/rag-ingestion/documents", files=_pdf_file(), headers={"X-Role": role})
+        response = client.post(
+            "/v1/genai-rag/ingest-document/documents",
+            files=_pdf_file(),
+            data=_payload(user_profile={"employee_id": "E00002", "full_name": "Some Employee", "role": role}),
+        )
 
         assert response.status_code == 403, role
         body = response.json()
@@ -372,9 +466,58 @@ def test_ingestion_as_employee_or_manager_is_a_403_only_hr_support_may_upload():
 
 def test_the_separate_index_endpoint_no_longer_exists():
     # Phase 26 - upload does the whole pipeline in one call now.
-    response = client.post("/v1/rag-ingestion/documents/does-not-exist/index")
+    response = client.post("/v1/genai-rag/ingest-document/documents/does-not-exist/index")
 
     assert response.status_code == 404
+
+
+def test_cleanup_preview_lists_test_noise_without_deleting_it():
+    # Phase 46: _pdf_file()'s fake content ("%PDF-1.4 fake content <uuid>")
+    # is well under the 1024-byte threshold - a real regression test, not
+    # faked, since tests now hit an isolated DB (data/test_sqlite_db.sqlite3),
+    # not the real dev one.
+    upload_response = client.post(
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="noise.pdf"), data=_payload()
+    )
+    document_id = upload_response.json()["results"][0]["document_id"]
+
+    preview_response = _get("/v1/genai-rag/ingest-document/documents/cleanup/preview")
+
+    assert preview_response.status_code == 200
+    body = preview_response.json()
+    assert body["threshold_bytes"] == 1024
+    matched_ids = [doc["id"] for doc in body["documents"]]
+    assert document_id in matched_ids
+    assert body["count"] == len(body["documents"])
+
+    # Still there - preview must not delete anything.
+    assert _get(f"/v1/genai-rag/ingest-document/documents/{document_id}").status_code == 200
+
+
+def test_cleanup_delete_removes_test_noise_and_reports_deleted_by():
+    upload_response = client.post(
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="noise-to-delete.pdf"), data=_payload()
+    )
+    document_id = upload_response.json()["results"][0]["document_id"]
+
+    delete_response = _delete("/v1/genai-rag/ingest-document/documents/cleanup")
+
+    assert delete_response.status_code == 200
+    body = delete_response.json()
+    assert body["documents_deleted"] >= 1
+    assert body["deleted_by"] == "E00001"
+
+    # Really gone.
+    assert _get(f"/v1/genai-rag/ingest-document/documents/{document_id}").status_code == 404
+
+
+def test_cleanup_routes_are_not_shadowed_by_the_document_id_route():
+    # "cleanup" must never be read as a document_id - both new routes are
+    # registered before GET/DELETE /documents/{document_id} for this reason.
+    response = _get("/v1/genai-rag/ingest-document/documents/cleanup/preview")
+
+    assert response.status_code == 200
+    assert "threshold_bytes" in response.json()  # not the 404 error shape
 
 
 def test_delete_all_calls_the_service_and_returns_its_result(monkeypatch):
@@ -382,12 +525,12 @@ def test_delete_all_calls_the_service_and_returns_its_result(monkeypatch):
     # ENTIRE dev DB, including whatever a person is testing manually via
     # Postman at the same time (confirmed live - this used to run for
     # real here and deleted a user's in-progress test document).
-    async def _fake_delete_all():
-        return {"documents_deleted": 3, "chunks_removed": 12}
+    async def _fake_delete_all(deleted_by=None):
+        return {"documents_deleted": 3, "chunks_removed": 12, "deleted_by": deleted_by}
 
     monkeypatch.setattr(documents_service, "delete_all_documents", _fake_delete_all)
 
-    response = client.delete("/v1/rag-ingestion/documents")
+    response = _delete("/v1/genai-rag/ingest-document/documents")
 
     assert response.status_code == 200
-    assert response.json() == {"documents_deleted": 3, "chunks_removed": 12}
+    assert response.json() == {"documents_deleted": 3, "chunks_removed": 12, "deleted_by": "E00001"}

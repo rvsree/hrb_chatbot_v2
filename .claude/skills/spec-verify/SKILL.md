@@ -13,8 +13,9 @@ allowed-tools: Read Grep Glob Bash(.venv/Scripts/python.exe -m pytest *)
 1. Read the target phase's `**Spec:**` block in `docs/RAG-ROADMAP.md`.
 2. For each "User-visible behavior" and "Failure modes" line, find the test
    that exercises it. `tests/` mirrors `src/` 1:1 (see `CLAUDE.md`), so a
-   change in `src/hrb_chatbot/api/rag/routes_documents.py` should have
-   coverage in `tests/hrb_chatbot/api/rag/test_routes_documents.py`.
+   change in `src/hrb_chatbot/ai/doc_processing/chunking/text_chunker.py`
+   should have coverage in
+   `tests/hrb_chatbot/ai/doc_processing/chunking/test_text_chunker.py`.
 3. For "Retrieval quality criteria" (when present), confirm at least one
    test or a documented manual run exercises the named
    `resources/golden_dataset/golden_dataset.json` rows - a golden-dataset

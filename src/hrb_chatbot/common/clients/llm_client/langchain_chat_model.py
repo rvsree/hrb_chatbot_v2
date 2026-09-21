@@ -6,45 +6,53 @@ from typing import Any
 
 from langchain_core.callbacks.manager import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, SystemMessage
 from langchain_core.messages.ai import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from src.hrb_chatbot.common.clients.llm_client.client_gateway import ClientGateway, get_client_gateway
+from src.hrb_chatbot.common.clients.llm_client.client_gateway import get_client_gateway
+from src.hrb_chatbot.common.clients.llm_client.openai_client import OpenAIChatClient
 from src.hrb_chatbot.common.enums import LlmProvider
 
-# Dispatch dict, matching CHUNKING_STRATEGIES/SEARCH_STRATEGIES - provider
-# name -> the ClientGateway method returning that provider's client.
+# Dispatch dict, matching CHUNKING_STRATEGIES/SEARCH_STRATEGIES - a bound
+# call on the gateway passed in, not ClientGateway's method pulled off the class.
 _PROVIDER_CLIENTS = {
-    LlmProvider.OPENAI: ClientGateway.openai_chat,
-    LlmProvider.ANTHROPIC: ClientGateway.anthropic_chat,
-    LlmProvider.OPENROUTER: ClientGateway.openrouter_chat,
-    LlmProvider.BEDROCK: ClientGateway.bedrock_chat,
+    LlmProvider.OPENAI: lambda gateway: gateway.openai_chat(),
+    LlmProvider.ANTHROPIC: lambda gateway: gateway.anthropic_chat(),
+    LlmProvider.OPENROUTER: lambda gateway: gateway.openrouter_chat(),
+    LlmProvider.BEDROCK: lambda gateway: gateway.bedrock_chat(),
 }
 
 
-def _messages_to_question_and_context(messages: list[BaseMessage]) -> tuple[str, str | None]:
-    """ask() takes one question string (+ optional context), not a message
-    list - the last message is the real question, everything before it
-    becomes context."""
+def _split_messages(messages: list[BaseMessage]) -> tuple[str, str | None, str | None]:
+    """Last message is the question; earlier SystemMessage -> system_prompt,
+    everything else -> context."""
     if not messages:
-        return "", None
+        return "", None, None
 
     *earlier, last = messages
     question = str(last.content)
     if not earlier:
-        return question, None
+        return question, None, None
 
-    context = "\n\n".join(str(message.content) for message in earlier if message.content)
-    return question, context or None
+    system_parts = [str(message.content) for message in earlier if isinstance(message, SystemMessage)]
+    context_parts = [
+        str(message.content) for message in earlier if not isinstance(message, SystemMessage) and message.content
+    ]
+    system_prompt = "\n\n".join(system_parts) if system_parts else None
+    context = "\n\n".join(context_parts) if context_parts else None
+    return question, context, system_prompt
 
 
 class GatewayChatModel(BaseChatModel):
     """Adapts one of this project's own LLM clients to LangChain's
-    BaseChatModel - `provider` picks which one, via client_gateway.py."""
+    BaseChatModel - `provider` picks which one, via client_gateway.py.
+    model_name_override/max_tokens are optional per-call overrides."""
 
     provider: LlmProvider = LlmProvider.OPENAI
     temperature: float = 0.0
+    model_name_override: str | None = None
+    max_tokens: int | None = None
 
     @property
     def _llm_type(self) -> str:
@@ -57,8 +65,26 @@ class GatewayChatModel(BaseChatModel):
         run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
-        question, context = _messages_to_question_and_context(messages)
-        chat_client = _PROVIDER_CLIENTS[self.provider](get_client_gateway())
-        answer = chat_client.ask(question, context=context, temperature=self.temperature)
-        generation = ChatGeneration(message=AIMessage(content=answer))
+        question, context, system_prompt = _split_messages(messages)
+
+        # A one-off model override only means something for OpenAI today
+        # (the only provider that ever sets it) - a fresh client, not the
+        # shared gateway's cached one.
+        if self.model_name_override and self.provider == LlmProvider.OPENAI:
+            chat_client = OpenAIChatClient(model=self.model_name_override)
+        else:
+            chat_client = _PROVIDER_CLIENTS[self.provider](get_client_gateway())
+
+        answer = chat_client.ask(
+            question,
+            context=context,
+            system_prompt=system_prompt,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
+        # response_metadata carries which model actually answered - a
+        # chain ending in StrOutputParser() alone would discard this.
+        generation = ChatGeneration(
+            message=AIMessage(content=answer, response_metadata={"model": chat_client.model})
+        )
         return ChatResult(generations=[generation])

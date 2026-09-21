@@ -173,7 +173,7 @@ up, rather than marking it done in place here.
   responses.**~~ Fixed 2026-09-08. An audit found two real `json_error(...)`
   calls that interpolated a caught exception's raw `str(error)` directly
   into the client-facing message
-  (`routes_documents.py`'s index endpoint, `routes_query.py`'s query
+  (`routes_documents.py`'s index endpoint, `retrieve_document.py`'s query
   endpoint) - a genuine info-leak risk (a stack-trace fragment, an
   internal path, anything a library's own exception `__str__` happens to
   include). Both now log the full detail server-side and return a
@@ -202,19 +202,22 @@ up, rather than marking it done in place here.
   content-based (prompt-injection, PII) guardrails that remain Phase 7's
   hand-written work.
 
-## Access control (Phase 23, 2026-09-15)
+## Access control (Phase 23, 2026-09-15; identity mechanism replaced Phase 45, 2026-09-20)
 
-- **Real OAuth still not built.** `api/gateway/current_user.py` reads
-  unsigned `X-Employee-Id`/`X-Full-Name`/`X-Role` headers as-is - a
-  deliberate placeholder, trivially spoofable, not a security control.
+- **Real OAuth still not built.** `api/gateway/user_profile.py`'s
+  `resolve_user_from_profile()` reads a caller-supplied `user_profile`
+  sub-object straight from the JSON request body (every endpoint,
+  including `GET`/`DELETE`) as-is - a deliberate placeholder, trivially
+  spoofable, not a security control (self-asserted in the same request it
+  gates - see `docs/endpoint-request-response-contracts.md`).
   `common/clients/auth_client/oauth_client.py` is an empty placeholder for
-  the real integration; only `get_current_user()`'s internals should need
-  to change when it lands.
-- **Uploader identity isn't persisted.** `DocumentRecord` has no
-  `uploaded_by`/`employee_id` field - the gateway knows who uploaded a
-  document (it's in `CurrentUser`) but that identity never reaches
-  `documents_service.create_document()`. Natural follow-up once real
-  audit trail matters, not required for the access-control gate itself.
+  the real integration; only `resolve_user_from_profile()`'s internals
+  should need to change when it lands.
+- ~~**Uploader identity isn't persisted.**~~ **Done, Phase 45:**
+  `DocumentRecord`/`DocumentUploadResult` now carry `uploaded_by`
+  (`documents_service.create_document()` threads the caller's
+  `employee_id` through to a new DB column); `DocumentDeleteResponse`/
+  `DocumentDeleteAllResponse` carry `deleted_by` the same way.
 - **Rate limiting is still IP-keyed**, not by the identity the gateway now
   resolves - `common/rate_limiting/rate_limiter.py` predates Phase 23.
   Switching the key to `employee_id` (falling back to IP when absent)
