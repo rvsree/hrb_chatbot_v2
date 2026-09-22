@@ -2,7 +2,9 @@
 No query decomposition yet - see ai/pre_processing/query_decompose.py
 (Phase 5.1, not built) for where that will plug in."""
 
+from src.hrb_chatbot.ai.pre_processing.guardrails_input import check_input
 from src.hrb_chatbot.ai.rag_pipeline.query_retrieval.retriever import retrieve_chunks
+from src.hrb_chatbot.ai.rag_pipeline.response_generation.guardrails_output import check_output
 from src.hrb_chatbot.ai.rag_pipeline.response_generation.response_generator import generate_answer
 from src.hrb_chatbot.common.config.settings import get_active_llm_provider, get_active_vector_db, read_setting
 from src.hrb_chatbot.common.logging.logger import get_logger
@@ -12,8 +14,9 @@ logger = get_logger("rag_pipeline.pipeline")
 
 
 async def answer_query(params: RagQueryParams) -> dict:
-    """Run the full pipeline: retrieve, generate. Exceptions aren't caught
-    here - the router turns them into a clear error response."""
+    """Run the full pipeline: guardrail, retrieve, generate, guardrail.
+    GuardrailBlockedError isn't caught here - the router turns it into a 422."""
+    checked_query = await check_input(params.query)
     resolved_vector_db = get_active_vector_db(params.vector_db)
     resolved_search_strategy = params.search_strategy or read_setting(
         None, "RAG_DEFAULT_SEARCH_STRATEGY", "similarity"
@@ -28,7 +31,7 @@ async def answer_query(params: RagQueryParams) -> dict:
     logger.info(
         "Answering query %r (top_k=%s, vector_db=%s, search_strategy=%s, use_multi_query=%s, "
         "use_self_query=%s, llm_provider=%s)",
-        params.query,
+        checked_query,
         resolved_top_k,
         resolved_vector_db,
         resolved_search_strategy,
@@ -38,7 +41,7 @@ async def answer_query(params: RagQueryParams) -> dict:
     )
 
     chunks, applied_filter = await retrieve_chunks(
-        params.query,
+        checked_query,
         top_k=resolved_top_k,
         vector_db=resolved_vector_db,
         search_strategy=resolved_search_strategy,
@@ -47,15 +50,16 @@ async def answer_query(params: RagQueryParams) -> dict:
         llm_provider=resolved_llm_provider,
     )
     generation = generate_answer(
-        params.query, chunks, model_name=params.model_name, temperature=resolved_temperature,
+        checked_query, chunks, model_name=params.model_name, temperature=resolved_temperature,
         max_tokens=params.max_tokens,
     )
+    checked_answer = await check_output(checked_query, generation["answer"])
 
-    logger.info("Query %r answered using %d chunk(s)", params.query, len(chunks))
+    logger.info("Query %r answered using %d chunk(s)", checked_query, len(chunks))
 
     return {
-        "query": params.query,
-        "answer": generation["answer"],
+        "query": checked_query,
+        "answer": checked_answer,
         "model_used": generation["model_used"],
         "sources": chunks,
         "vector_db": resolved_vector_db,

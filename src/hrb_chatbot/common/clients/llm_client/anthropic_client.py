@@ -115,6 +115,9 @@ class AnthropicChatClient(BaseLLMClient):
                 **extra_arguments,
             )
 
+        if response.usage:
+            logger.info("[anthropic] tokens used: %s input + %s output", response.usage.input_tokens, response.usage.output_tokens)
+
         # Claude replies with a list of "blocks". Join the text ones together.
         answer = ""
         for block in response.content:

@@ -103,24 +103,21 @@ other). **Tavily has a client
 ### Upload documents, index them, and ask the knowledge base
 
 All of these are implemented and verified live (see
-[README_TEST.md](README_TEST.md) for every case, happy path and edge case,
-run against a real server):
+[docs/TESTING-GUIDE.md](docs/TESTING-GUIDE.md) for the automated test
+suite, and `postman/hrb_chatbot.postman_collection.json` for every
+request/response case, happy path and edge case, importable into Postman):
 
 ```powershell
-# upload a real PDF - copy the document_id from the response
-curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" http://127.0.0.1:8093/v1/rag/ingest-document/documents
-
-# index it (spends: one real embedding call per chunk) - auto-selects a
-# chunking strategy if you don't pick one; see README_TEST.md section 4.8-4.10
-# for every technique and how to pick one explicitly, e.g.:
-# curl ... -d "{\"chunking_strategy\": \"recursive\"}"
-curl -X POST http://127.0.0.1:8093/v1/rag/ingest-document/documents/<document_id>/index
+# upload a real PDF - chunks, embeds, and indexes in the same call (no
+# separate index step since Phase 26); identity travels as a JSON string in
+# the payload form field, not headers - copy the document_id from the response
+curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" -F "payload={\"user_profile\": {\"employee_id\": \"E00001\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}}" http://127.0.0.1:8093/v1/genai-rag/ingest-document/documents
 
 # ask a question - real retrieval + grounded generation (spends: one real
-# embedding call + one real chat completion). Query decomposition, guardrails,
-# and evaluations are still hand-written and not built yet - see Phase 6 in
-# docs/RAG-ROADMAP.md for exactly what's in and what's deliberately deferred
-curl -X POST http://127.0.0.1:8093/v1/rag/retrieve-document/query -H "Content-Type: application/json" -d "{\"query\": \"How many weeks of parental leave do I get?\"}"
+# embedding call + one real chat completion). Evaluations and guardrails
+# are still hand-written and not built yet - see docs/RAG-ROADMAP.md for
+# exactly what's in and what's deliberately deferred
+curl -X POST http://127.0.0.1:8093/v1/genai-rag/retrieve-document/query -H "Content-Type: application/json" -d "{\"user_profile\": {\"employee_id\": \"E00002\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"}, \"query\": \"How many weeks of parental leave do I get?\"}"
 ```
 
 Idempotency (the `Idempotency-Key` header) and content-hash duplicate-upload

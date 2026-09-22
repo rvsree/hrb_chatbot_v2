@@ -88,6 +88,21 @@ def test_system_message_carries_the_grounding_instruction(monkeypatch):
     assert human_message.content == "How much leave?"
 
 
+def test_system_message_carries_few_shot_examples(monkeypatch):
+    # Regression: all 4 examples, including the refusal one, must reach the model.
+    fake_llm = _FakeGatewayChatModel()
+    monkeypatch.setattr(response_generator, "GatewayChatModel", lambda **kwargs: fake_llm)
+
+    response_generator.generate_answer("How much leave?", SAMPLE_CHUNKS)
+
+    system_message, _ = fake_llm.calls[0]
+    assert "Example 1" in system_message.content
+    assert "Example 2" in system_message.content
+    assert "Example 3" in system_message.content
+    assert "Example 4" in system_message.content
+    assert "I don't have that information in the available documents" in system_message.content
+
+
 def test_model_name_override_is_passed_to_gateway_chat_model(monkeypatch):
     captured_kwargs = {}
 

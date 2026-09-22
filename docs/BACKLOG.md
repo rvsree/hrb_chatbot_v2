@@ -274,6 +274,43 @@ up, rather than marking it done in place here.
   sibling project's `.env.example` documents every setting name with a
   comment on what reads it.
 
+## Cleanup done 2026-09-21
+
+- Removed `resources/db_scripts/` entirely (postgres/ and sqlite/, 13
+  files) - described an unrelated, never-built project design (`coco`
+  database, `chat_sessions`/`policy_versions`/`leave_rules`/`agent_tasks`/
+  `user_feedback` tables, `src/app/common/db_scripts/...` paths that don't
+  exist in this repo). Zero overlap with the real schema (`documents`/
+  `chunks`, built via `CREATE TABLE IF NOT EXISTS` in `sqlite_client.py`/
+  `postgres_client.py`) and zero references anywhere in `src/` or current
+  docs - orphaned scaffolding from a different project, not this one's.
+- Removed `README_TEST.md` - stale and factually wrong (old `/v1/rag/...`
+  prefix, removed header-based auth from Phase 23, a "Phase 6 stub"
+  reference long superseded). Fully replaced by `docs/TESTING-GUIDE.md`
+  (pytest) and `postman/hrb_chatbot.postman_collection.json` (manual/
+  curl-style testing), which the file's own last line already pointed to.
+- Removed `postman/hrb_chatbot.postman_collection_v1.json` - a stale
+  duplicate collection using a defunct `/index/v1/rag/documents` routing
+  scheme, confusing to have alongside the real, actively-maintained
+  collection.
+- Removed `resources/kb_docs/text/indexing_batch_payload.json` - a sample
+  payload for an API shape (`namespace`/`title`/`tags` fields) that was
+  never this project's actual contract.
+- Removed `src/hrb_chatbot/services/rag_service.py` - a literal one-line
+  pass-through (`return await pipeline.answer_query(params)`) with no
+  logic of its own, unlike `services/documents_service.py` (real logic:
+  content-hash dedup, supersedes handling, file validation), which keeps
+  its service layer. `api/rag/retrieve_document.py` now calls
+  `ai/rag_pipeline/pipeline.py` directly - see `CLAUDE.md`'s architecture
+  section for the updated request flow.
+- **Not removed, flagged for the user's own call:** `infra/AgentCore
+  Installation and Run Guide.md` (real forward-looking AWS Bedrock
+  AgentCore deployment notes, not obviously stale) and
+  `resources/kb_docs/text/*.txt` / `resources/kb_docs/word/*.docx`
+  (real alternate-format copies of the 6 source PDFs, unreferenced by any
+  code but plausibly intentional reference material, not junk like the
+  payload JSON above).
+
 ## Cleanup done 2026-09-07
 
 - Removed 6 Microsoft Word lock files (`~$MC ....docx`, 162 bytes each,
@@ -307,6 +344,29 @@ declared but read by nothing:
 Also noted, not touched: `common/logging/log_helper.py` still has its own
 broken import (`agent_log_tags` module doesn't exist) - this was an
 explicit earlier decision to keep as-is for later, not a new finding.
+
+## Guardrails / Evaluation / Observability follow-up (Phases 7-8, 2026-09-22)
+
+- **3 of 6 KB documents not indexed.** 401(k), Unpaid TimeOff, and Sedgwick
+  Unpaid Timeoff are missing from the vector store - leftover from the
+  earlier live-DB-deletion incident, only 3 PDFs got re-uploaded
+  afterward. Found via the DeepEval harness scoring 0.00 on a 401(k)
+  question. Re-upload is simple, not done - your call on priority.
+- **DeepEval CI gate not wired up.** The scoring harness
+  (`golden_dataset_harness.py`) exists and is verified live; the actual
+  PASS/REVIEW/BLOCK threshold job (`docs/CICD-BRANCHING-STRATEGY.md`'s
+  practical-significance bar) isn't hooked into a CI workflow yet.
+- **PII in a query gets blocked, not masked.** `self check input`'s LLM
+  judgment flags SSN-like content before the dedicated `mask sensitive
+  data on input` rail gets a turn (rails run in sequence). Defensible
+  (safer), but different from "mask, don't block" - flagged for a
+  decision if the stricter behavior isn't wanted.
+- **Gate 2 (document-level ACL) and Gate 4 (context grading) still
+  unbuilt.** Both explicitly out of scope for Phase 7 - real gaps in the
+  six-gate framework, not started.
+- **LangSmith stays off**, by design - re-enable (`.env`'s
+  `LANGSMITH_ENABLED`) specifically when single/multi-agentic-rag work
+  begins, per the agreed trace-budget cadence.
 
 ## Process
 

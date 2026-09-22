@@ -7,8 +7,11 @@ from src.hrb_chatbot.api.dependencies import json_error
 from src.hrb_chatbot.api.rag import ingest_document, retrieve_document
 from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.logging.logger import get_logger
+from src.hrb_chatbot.common.observability.langsmith_tracing import enable_tracing_if_configured
 
 logger = get_logger("main")
+
+enable_tracing_if_configured()
 
 app = FastAPI(
     title="HRB Chatbot",

@@ -193,22 +193,22 @@ Don't re-derive any of this from the code - it's already written down:
 | [`CICD-BRANCHING-STRATEGY.md`](CICD-BRANCHING-STRATEGY.md) | The `feature-* → develop → master` branch model, every CI/CD gate and the reasoning behind its threshold (coverage floor, security scanning, the A/B-testing bar for once Phase 8 exists), the wheel-vs-JAR packaging question, and the open staging-deployment decision |
 | [`S3-ASYNC-UPLOAD-DESIGN.md`](S3-ASYNC-UPLOAD-DESIGN.md) | Design-only, not implemented - a future event-driven ingestion architecture |
 | [`CODING-STANDARDS.md`](CODING-STANDARDS.md) | Error handling, logging, API contract conventions |
-| [`README.md`](../README.md) / [`README_TEST.md`](../README_TEST.md) | How to run it locally, and a verified-live test case for every endpoint (happy + edge) |
+| [`README.md`](../README.md) | How to run it locally |
 | `resources/golden_dataset/golden_dataset.json` | 22 real Q&A cases, grounded in the actual PDFs, ready for Phase 6 |
 | `postman/hrb_chatbot.postman_collection.json` | Every endpoint, importable, including rate-limit/validation demo cases (idempotency demo cases removed 2026-09-13, see BACKLOG.md) |
 
 ## Known gotchas - condensed, full detail in the docs above
 
-- **Document endpoints live under `/v1/rag/ingest-document/...`, query endpoints
-  under `/v1/rag/retrieve-document/...`** (`GET /health` is the one exception,
-  deliberately unversioned). One shared `/v1`, then a context segment - not
-  two independently-versioned prefixes - a fresh agent testing against an
+- **Document endpoints live under `/v1/genai-rag/ingest-document/...`, query endpoints
+  under `/v1/genai-rag/retrieve-document/...`** (`GET /health` is the one exception,
+  deliberately unversioned). One shared `/v1`, then a mode segment
+  (`genai-rag` today; `single-agentic-rag`/`multi-agentic-rag` reserved for
+  later), then a resource segment - a fresh agent testing against an
   old memory of `/v1/rag/...` or
   `/rag/documents` will get a `404`, not a bug.
 - **Git Bash's MSYS layer mangles absolute Unix-style paths** (`/tmp/...`)
   passed to `curl -F` or AWS CLI args - corrupts them before the tool even
-  sees them. Use relative paths from the repo root instead - see
-  `README_TEST.md`'s own note on this.
+  sees them. Use relative paths from the repo root instead.
 - **The shell's working directory resets to a different project between
   tool calls** in this environment - always `cd` explicitly in the same
   command as anything using a relative path, or a `curl -F "files=@..."`

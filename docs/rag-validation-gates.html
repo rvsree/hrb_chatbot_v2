@@ -1,0 +1,429 @@
+<title>Six Gates of RAG Validation</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800;900&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #eef0f4;
+    --surface: #ffffff;
+    --surface-alt: #f4f5f9;
+    --border: #d9dce4;
+    --text: #191d28;
+    --text-muted: #565f72;
+    --text-faint: #8992a4;
+    --done: #1f8a4c; --done-bg: #e6f5ec; --done-border: #b9e2c9;
+    --partial: #b8790a; --partial-bg: #fbf1dd; --partial-border: #edd6a2;
+    --missing: #b23a2f; --missing-bg: #fbebe8; --missing-border: #f0c4bc;
+    --ribbon-bg: #191d28; --ribbon-text: #ffffff;
+    --shadow: 0 2px 4px rgba(20,24,34,0.06), 0 12px 26px rgba(20,24,34,0.08);
+
+    --validate-dark: #333f9e; --validate-mid: #4d5ad2; --validate-soft: #e8eafc;
+    --retrieve-dark: #0b6f66; --retrieve-mid: #13a494; --retrieve-soft: #e2f6f2;
+    --deliver-dark: #6c2f96; --deliver-mid: #9548c9; --deliver-soft: #f2e8fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1218; --surface: #1a1f29; --surface-alt: #1c212c; --border: #2b3140;
+      --text: #e8eaf0; --text-muted: #a3aac0; --text-faint: #6d7488;
+      --done: #4fbd80; --done-bg: #15281d; --done-border: #23492f;
+      --partial: #e0ac48; --partial-bg: #2c2311; --partial-border: #4a3a17;
+      --missing: #e2776a; --missing-bg: #2c1815; --missing-border: #4a2620;
+      --ribbon-bg: #e8eaf0; --ribbon-text: #14161e;
+      --shadow: 0 2px 4px rgba(0,0,0,0.35), 0 14px 30px rgba(0,0,0,0.42);
+      --validate-dark: #2b3480; --validate-mid: #4048ab; --validate-soft: #1c2140;
+      --retrieve-dark: #095c54; --retrieve-mid: #128577; --retrieve-soft: #12241f;
+      --deliver-dark: #56267a; --deliver-mid: #7c3aa8; --deliver-soft: #26192f;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1218; --surface: #1a1f29; --surface-alt: #1c212c; --border: #2b3140;
+    --text: #e8eaf0; --text-muted: #a3aac0; --text-faint: #6d7488;
+    --done: #4fbd80; --done-bg: #15281d; --done-border: #23492f;
+    --partial: #e0ac48; --partial-bg: #2c2311; --partial-border: #4a3a17;
+    --missing: #e2776a; --missing-bg: #2c1815; --missing-border: #4a2620;
+    --ribbon-bg: #e8eaf0; --ribbon-text: #14161e;
+    --shadow: 0 2px 4px rgba(0,0,0,0.35), 0 14px 30px rgba(0,0,0,0.42);
+    --validate-dark: #2b3480; --validate-mid: #4048ab; --validate-soft: #1c2140;
+    --retrieve-dark: #095c54; --retrieve-mid: #128577; --retrieve-soft: #12241f;
+    --deliver-dark: #56267a; --deliver-mid: #7c3aa8; --deliver-soft: #26192f;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    padding-inline: 16px; padding-block: 32px 56px;
+  }
+  .display { font-family: 'Archivo', 'IBM Plex Sans', sans-serif; }
+  .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+
+  .wrap { max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+
+  header { display: flex; flex-direction: column; gap: 10px; }
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.09em;
+    text-transform: uppercase; color: var(--text-faint); font-weight: 600;
+  }
+  h1 {
+    margin: 0; font-family: 'Archivo', sans-serif; font-weight: 900;
+    font-size: clamp(26px, 4.2vw, 38px); letter-spacing: -0.01em; text-wrap: balance;
+  }
+  .subtitle { margin: 0; color: var(--text-muted); font-size: 14.5px; max-width: 68ch; line-height: 1.55; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; }
+  .legend-item {
+    display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-muted);
+    background: var(--surface); border: 1px solid var(--border); padding: 5px 10px 5px 8px; border-radius: 999px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.done { background: var(--done); } .dot.partial { background: var(--partial); } .dot.missing { background: var(--missing); }
+
+  .ribbon {
+    display: flex; align-items: center; gap: 10px; justify-content: center;
+    background: var(--ribbon-bg); color: var(--ribbon-text);
+    border-radius: 12px; padding: 12px 18px; font-size: 13.5px; font-weight: 600;
+    text-align: center; box-shadow: var(--shadow);
+  }
+  .ribbon .mono { font-weight: 500; opacity: 0.85; font-size: 12.5px; }
+
+  .stack { display: flex; flex-direction: column; gap: 22px; }
+
+  .macro { display: flex; gap: 4px; align-items: stretch; }
+  .macro-rail {
+    flex: 0 0 68px;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    padding-top: 6px;
+  }
+  .macro-rail .rail-icon {
+    width: 38px; height: 38px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; color: #fff;
+    box-shadow: var(--shadow);
+  }
+  .macro.group-validate .rail-icon { background: var(--validate-mid); }
+  .macro.group-retrieve .rail-icon { background: var(--retrieve-mid); }
+  .macro.group-deliver .rail-icon { background: var(--deliver-mid); }
+  .macro-rail .rail-icon svg { width: 19px; height: 19px; }
+  .macro-rail .rail-label {
+    font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 11.5px;
+    letter-spacing: 0.05em; text-transform: uppercase; text-align: center;
+  }
+  .macro.group-validate .rail-label { color: var(--validate-mid); }
+  .macro.group-retrieve .rail-label { color: var(--retrieve-mid); }
+  .macro.group-deliver .rail-label { color: var(--deliver-mid); }
+  .macro-rail .rail-sub { font-size: 10.5px; color: var(--text-faint); text-align: center; line-height: 1.4; }
+  .macro-rail .rail-line {
+    flex: 1; width: 2px; background: var(--border); border-radius: 2px; min-height: 10px;
+    position: relative;
+  }
+  .macro-rail .rail-line::before, .macro-rail .rail-line::after {
+    content: ""; position: absolute; left: 50%; transform: translateX(-50%);
+    width: 7px; height: 7px; border-radius: 50%; background: var(--border);
+  }
+  .macro-rail .rail-line::before { top: -3px; } .macro-rail .rail-line::after { bottom: -3px; }
+
+  .bands { flex: 1; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+  .band-row { display: flex; align-items: stretch; }
+
+  .band-num {
+    flex: none; width: 52px; display: flex; align-items: center; justify-content: center;
+    font-family: 'Archivo', sans-serif; font-weight: 900; font-size: 19px; color: #fff;
+    border-radius: 16px 0 0 16px; margin-right: -16px; z-index: 2; box-shadow: var(--shadow);
+    padding-top: 2px;
+  }
+  .group-validate .band-num { background: var(--validate-dark); }
+  .group-retrieve .band-num { background: var(--retrieve-dark); }
+  .group-deliver .band-num { background: var(--deliver-dark); }
+
+  .band {
+    flex: 1; min-width: 0; border-radius: 20px; overflow: hidden; box-shadow: var(--shadow);
+    padding-left: 16px;
+  }
+  .group-validate .band { background: radial-gradient(ellipse 120% 140% at 0% 20%, rgba(255,255,255,0.28), transparent 55%), linear-gradient(180deg, var(--validate-dark) 0%, var(--validate-mid) 44%, var(--surface) 44%, var(--surface) 100%); }
+  .group-retrieve .band { background: radial-gradient(ellipse 120% 140% at 0% 20%, rgba(255,255,255,0.28), transparent 55%), linear-gradient(180deg, var(--retrieve-dark) 0%, var(--retrieve-mid) 44%, var(--surface) 44%, var(--surface) 100%); }
+  .group-deliver .band { background: radial-gradient(ellipse 120% 140% at 0% 20%, rgba(255,255,255,0.28), transparent 55%), linear-gradient(180deg, var(--deliver-dark) 0%, var(--deliver-mid) 44%, var(--surface) 44%, var(--surface) 100%); }
+
+  .band-head { padding: 16px 20px 13px 26px; text-align: center; }
+  .band-head .name { display: block; color: #fff; font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 17px; text-shadow: 0 1px 3px rgba(0,0,0,0.18); text-wrap: balance; }
+  .band-head .gate { display: block; color: rgba(255,255,255,0.88); font-size: 11px; margin-top: 3px; letter-spacing: 0.01em; }
+
+  .card-row {
+    display: flex; gap: 10px; padding: 14px 18px 18px 26px; overflow-x: auto;
+  }
+  .card {
+    flex: 1 1 185px; min-width: 165px;
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px 11px;
+    display: flex; flex-direction: column; gap: 7px; background: var(--surface-alt);
+  }
+  .card-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .card-icon {
+    width: 26px; height: 26px; border-radius: 7px; display: flex; align-items: center; justify-content: center;
+    flex: none;
+  }
+  .card-icon svg { width: 15px; height: 15px; }
+  .card.done .card-icon { background: var(--done-bg); color: var(--done); border: 1px solid var(--done-border); }
+  .card.partial .card-icon { background: var(--partial-bg); color: var(--partial); border: 1px solid var(--partial-border); }
+  .card.missing .card-icon { background: var(--missing-bg); color: var(--missing); border: 1px solid var(--missing-border); }
+
+  .status-pill {
+    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 999px; white-space: nowrap;
+  }
+  .card.done .status-pill { color: var(--done); background: var(--done-bg); border: 1px solid var(--done-border); }
+  .card.partial .status-pill { color: var(--partial); background: var(--partial-bg); border: 1px solid var(--partial-border); }
+  .card.missing .status-pill { color: var(--missing); background: var(--missing-bg); border: 1px solid var(--missing-border); }
+
+  .card-label { font-size: 12.5px; font-weight: 600; line-height: 1.3; }
+  .card-ref { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--text-faint); line-height: 1.4; word-break: break-word; }
+
+  .connector {
+    display: flex; align-items: center; gap: 10px; padding-left: 84px;
+  }
+  .connector-line { flex: none; width: 2px; height: 24px; background: var(--border); margin-left: 17px; }
+  .connector-card {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    background: var(--done-bg); border: 1px solid var(--done-border); color: var(--done);
+    border-radius: 999px; padding: 6px 14px 6px 10px; font-size: 12px; font-weight: 600;
+  }
+  .connector-card .card-icon { background: transparent; border: none; padding: 0; }
+  .connector-card .mono { color: var(--text-muted); font-weight: 500; font-size: 11px; }
+
+  footer { border-top: 1px solid var(--border); padding-top: 16px; font-size: 12.5px; color: var(--text-faint); line-height: 1.6; }
+
+  @media (max-width: 720px) {
+    .macro-rail { flex: 0 0 48px; }
+    .macro-rail .rail-icon { width: 30px; height: 30px; }
+    .macro-rail .rail-icon svg { width: 15px; height: 15px; }
+    .macro-rail .rail-label { font-size: 9px; }
+    .macro-rail .rail-sub { display: none; }
+    .band-num { width: 38px; font-size: 15px; border-radius: 12px 0 0 12px; margin-right: -12px; }
+    .band { padding-left: 12px; border-radius: 16px; }
+    .band-head { padding: 13px 14px 11px 18px; }
+    .band-head .name { font-size: 14.5px; }
+    .card-row { padding: 12px 12px 14px 18px; }
+    .connector { padding-left: 48px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">hrb_chatbot_v2 &middot; not part of the IK FDE course &mdash; this project's own review framework</div>
+    <h1 class="display">Six Gates of RAG Validation</h1>
+    <p class="subtitle">Every real stage <code class="mono">POST /v1/genai-rag/retrieve-document/query</code> passes through, mapped onto the six-layer validation gateway pattern, colored by what's actually built and tested.</p>
+    <div class="legend">
+      <span class="legend-item"><span class="dot done"></span>Built &amp; tested</span>
+      <span class="legend-item"><span class="dot partial"></span>Partial / known gap</span>
+      <span class="legend-item"><span class="dot missing"></span>Not built</span>
+    </div>
+  </header>
+
+  <div class="ribbon">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4h16v16H4z"/><path d="M4 8h16"/></svg>
+    Postman Client &rarr; <span class="mono">POST /v1/genai-rag/retrieve-document/query</span>
+  </div>
+
+  <div class="stack">
+
+    <div class="macro group-validate">
+      <div class="macro-rail">
+        <div class="rail-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v5c0 5-3 7.5-7 9-4-1.5-7-4-7-9V7z"/></svg></div>
+        <div class="rail-label">Validate</div>
+        <div class="rail-line"></div>
+        <div class="rail-sub">before anything is trusted</div>
+      </div>
+      <div class="bands">
+
+        <div class="band-row group-validate">
+          <div class="band-num display">01</div>
+          <div class="band">
+            <div class="band-head">
+              <span class="name display">Input Validation &amp; Sanitization</span>
+              <span class="gate">Gate 1 &middot; the Firewall</span>
+            </div>
+            <div class="card-row">
+              <div class="card done">
+                <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div><span class="status-pill">Done</span></div>
+                <div class="card-label">Schema validation</div>
+                <div class="card-ref">models/rag.py :: RagQueryRequest</div>
+              </div>
+              <div class="card done">
+                <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/></svg></div><span class="status-pill">Done</span></div>
+                <div class="card-label">Identity resolution</div>
+                <div class="card-ref">gateway/user_profile.py :: resolve_user_from_profile()</div>
+              </div>
+              <div class="card done">
+                <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v5c0 5-3 7.5-7 9-4-1.5-7-4-7-9V7z"/><path d="M9.5 12l1.8 1.8L15 10"/></svg></div><span class="status-pill">Done</span></div>
+                <div class="card-label">PII mask &amp; prompt-injection check</div>
+                <div class="card-ref">pre_processing/guardrails_input.py :: check_input() &mdash; NeMo Guardrails</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="band-row group-validate">
+          <div class="band-num display">02</div>
+          <div class="band">
+            <div class="band-head">
+              <span class="name display">Privilege &amp; Policy Separation</span>
+              <span class="gate">Gate 2 &middot; the Access Control Gate</span>
+            </div>
+            <div class="card-row">
+              <div class="card done">
+                <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div><span class="status-pill">Done</span></div>
+                <div class="card-label">Role check (employee/manager/hr_support)</div>
+                <div class="card-ref">gateway/rbac.py :: check_role()</div>
+              </div>
+              <div class="card missing">
+                <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4v6c0 5-4 8-9 9-5-1-9-4-9-9z"/><path d="M9.5 12l1.8 1.8L15 10"/></svg></div><span class="status-pill">Not built</span></div>
+                <div class="card-label">Document-level ACL by confidentiality</div>
+                <div class="card-ref">rag_pipeline/helper/access_control.py &mdash; 0 bytes</div>
+              </div>
+              <div class="card done">
+                <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div><span class="status-pill">Done</span></div>
+                <div class="card-label">Rate limiting</div>
+                <div class="card-ref">rate_limiting/rate_limiter.py :: enforce_rate_limit()</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="macro group-retrieve">
+      <div class="macro-rail">
+        <div class="rail-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div>
+        <div class="rail-label">Retrieve</div>
+        <div class="rail-line"></div>
+        <div class="rail-sub">shape and grade the search</div>
+      </div>
+      <div class="bands">
+
+        <div class="band-row group-retrieve">
+          <div class="band-num display">03</div>
+          <div class="band">
+            <div class="band-head">
+              <span class="name display">Query Intent &amp; Filter Validation</span>
+              <span class="gate">Gate 3 &middot; the Retrieval Strategy Gate</span>
+            </div>
+            <div class="card-row">
+              <div class="card done">
+                <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 12h6M4 6h10M4 18h16"/></svg></div><span class="status-pill">Done</span></div>
+                <div class="card-label">Map request &rarr; RagQueryParams</div>
+                <div class="card-ref">retrieve_document.py :: _params_from_request()</div>
+              </div>
+              <div class="card missing">
+                <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v6l6 6-6 6M18 3v18"/></svg></div><span class="status-pill">Not built</span></div>
+                <div class="card-label">Query decomposition</div>
+                <div class="card-ref">pre_processing/query_decompose.py &mdash; 0 bytes</div>
+              </div>
+              <div class="card partial">
+                <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16l-6 8v6l-4-2v-4z"/></svg></div><span class="status-pill">Partial</span></div>
+                <div class="card-label">Self-Query metadata-filter parsing</div>
+                <div class="card-ref">query_retrieval/retriever.py :: SelfQueryRetriever</div>
+              </div>
+              <div class="card done">
+                <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><span class="status-pill">Done</span></div>
+                <div class="card-label">Similarity / MMR / MultiQuery retrieval</div>
+                <div class="card-ref">query_retrieval/retriever.py :: retrieve_chunks()</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="band-row group-retrieve">
+          <div class="band-num display">04</div>
+          <div class="band">
+            <div class="band-head">
+              <span class="name display">Document Relevance &amp; Context Grading</span>
+              <span class="gate">Gate 4 &middot; the Context Gate</span>
+            </div>
+            <div class="card-row">
+              <div class="card missing">
+                <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M7 6l-4 6 4 6M17 6l4 6-4 6"/></svg></div><span class="status-pill">Not built</span></div>
+                <div class="card-label">Relevance scoring / CRAG re-query fallback</div>
+                <div class="card-ref">no file exists yet &mdash; not even a placeholder</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="connector">
+      <div class="connector-line"></div>
+      <div class="connector-card">
+        <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></svg></div>
+        Generation &mdash; LCEL stuff-chain, grounded system prompt
+        <span class="mono">response_generator.py :: generate_answer()</span>
+      </div>
+    </div>
+
+    <div class="macro group-deliver">
+      <div class="macro-rail">
+        <div class="rail-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l6 6L21 6"/></svg></div>
+        <div class="rail-label">Deliver</div>
+        <div class="rail-line"></div>
+        <div class="rail-sub">check before it ships</div>
+      </div>
+      <div class="bands">
+
+        <div class="band-row group-deliver">
+          <div class="band-num display">05</div>
+          <div class="band">
+            <div class="band-head">
+              <span class="name display">Faithfulness &amp; Hallucination Check</span>
+              <span class="gate">Gate 5 &middot; the Grounding Gate</span>
+            </div>
+            <div class="card-row">
+              <div class="card missing">
+                <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v5c0 5-3 7.5-7 9-4-1.5-7-4-7-9V7z"/></svg></div><span class="status-pill">Not built</span></div>
+                <div class="card-label">Chain-of-verification vs source text</div>
+                <div class="card-ref">response_generation/guardrails_output/ &mdash; 0 bytes</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="band-row group-deliver">
+          <div class="band-num display">06</div>
+          <div class="band">
+            <div class="band-head">
+              <span class="name display">Output Guardrails &amp; Format Masking</span>
+              <span class="gate">Gate 6 &middot; the Delivery Gate</span>
+            </div>
+            <div class="card-row">
+              <div class="card done">
+                <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v5c0 5-3 7.5-7 9-4-1.5-7-4-7-9V7z"/><path d="M12 8v5"/><circle cx="12" cy="16" r="0.5" fill="currentColor"/></svg></div><span class="status-pill">Done</span></div>
+                <div class="card-label">PII mask / toxicity check</div>
+                <div class="card-ref">response_generation/guardrails_output/ :: check_output() &mdash; NeMo Guardrails</div>
+              </div>
+              <div class="card done">
+                <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="1"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/></svg></div><span class="status-pill">Done</span></div>
+                <div class="card-label">Build RagQueryResponse</div>
+                <div class="card-ref">retrieve_document.py :: _answer_query()</div>
+              </div>
+              <div class="card done">
+                <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2.5 18a1 1 0 0 0 .9 1.5h17.2a1 1 0 0 0 .9-1.5L13.7 3.9a1 1 0 0 0-1.7 0z"/></svg></div><span class="status-pill">Done</span></div>
+                <div class="card-label">Global exception handlers</div>
+                <div class="card-ref">main.py + api/dependencies.py :: json_error()</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <div class="ribbon">
+    Response delivered &rarr; Postman Client
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+  </div>
+
+  <footer>
+    Snapshot: 2026-09-22. Full stage-by-stage reference table (all 19 stages, test files included) lives in <code class="mono">docs/rag-pipeline-status.md</code> alongside this diagram. Six-layer gate scorecard: Gates 1 and 6 done (NeMo Guardrails, Phase 7). Gate 5 deliberately stays unbuilt live - DeepEval's FaithfulnessMetric does that job offline instead (Phase 8), not duplicated. Gate 4 has no file at all, not even reserved.
+  </footer>
+
+</div>

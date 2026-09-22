@@ -12,6 +12,7 @@ INTERNAL_ERROR = "INTERNAL_ERROR"
 UNAUTHENTICATED = "UNAUTHENTICATED"
 FORBIDDEN = "FORBIDDEN"
 AMBIGUOUS_DOCUMENT_IDENTIFIER = "AMBIGUOUS_DOCUMENT_IDENTIFIER"
+INPUT_GUARDRAIL_BLOCKED = "INPUT_GUARDRAIL_BLOCKED"
 
 # Per-file upload rejection reasons - a rejected file is still a 200 (see
 # DocumentUploadResult.status), same "branch on a code" reasoning applies.

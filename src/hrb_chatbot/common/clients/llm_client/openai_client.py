@@ -89,6 +89,9 @@ class OpenAIChatClient(BaseLLMClient):
                 max_tokens=max_tokens,
             )
 
+        if response.usage:
+            logger.info("[openai] tokens used: %s prompt + %s completion", response.usage.prompt_tokens, response.usage.completion_tokens)
+
         answer = response.choices[0].message.content
         if answer is None:
             return ""

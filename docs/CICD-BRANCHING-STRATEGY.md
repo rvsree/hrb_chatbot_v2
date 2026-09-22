@@ -222,8 +222,8 @@ from there) - here's the honest trade-off rather than quietly picking one:
   (a real staging environment `deploy.yml` would also need a second
   workflow, or a branch-conditional step, targeting a *different* service
   ARN and URL). This gives an actual pre-prod environment to point
-  `README_TEST.md`'s manual checks and a future automated smoke suite at
-  before anything reaches production - closer to what was described. The
+  the Postman collection's manual checks and a future automated smoke
+  suite at before anything reaches production - closer to what was described. The
   real cost: App Runner bills continuously for a running service (not
   per-request), so this is an ongoing AWS charge for a second always-on
   service, on top of the existing one.

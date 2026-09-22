@@ -19,7 +19,7 @@ the kind of question an FDE interview round tends to probe hardest.
 
 **What this project does today**: full re-index only. `ai/doc_processing/indexing/vector_indexer.py`'s
 `write_chunks()` re-chunks, re-embeds, and re-upserts the *entire* document
-every time `POST /v1/rag/ingest-document/documents/{id}/index` is called again - there is no
+every time `POST /v1/genai-rag/ingest-document/documents/{id}/index` is called again - there is no
 concept of "only section 3 changed, only re-embed section 3." Deterministic
 chunk ids (`f"{document_id}:{chunk_index}"`) mean re-upserting naturally
 overwrites chunks that still exist at the same position; a real
@@ -120,7 +120,7 @@ successful index is one fact, not two writes that could disagree.
 ## 3. How are indexes created, and did you classify documents into categories to speed up search?
 
 **What "index" means here - two different things worth not confusing**:
-in this project's code, "index" (`POST /v1/rag/ingest-document/documents/{id}/index`, `index_document()`)
+in this project's code, "index" (`POST /v1/genai-rag/ingest-document/documents/{id}/index`, `index_document()`)
 means *writing a document's chunks into the vector store* - an
 application-level operation. The vector store's own internal search
 *structure* (an ANN index - typically HNSW for both Chroma and Pinecone)
@@ -422,8 +422,8 @@ implementation.
 
 Every business endpoint now lives under `/v1`
 (`main.py`: `app.include_router(ingest_document.router_ingest_document,
-prefix="/v1/rag/ingest-document")`) - a breaking change later becomes
-`/v2/rag/...` without silently changing
+prefix="/v1/genai-rag/ingest-document")`) - a breaking change later becomes
+`/v2/genai-rag/...` without silently changing
 what a `/v1` caller already depends on. **`GET /health` deliberately stays
 unversioned** - a liveness/readiness probe (a load balancer, Kubernetes,
 App Runner itself) needs one stable path across every API version, the

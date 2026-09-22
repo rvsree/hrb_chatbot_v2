@@ -80,8 +80,8 @@ reviewed before that phase's code starts.
 | 5.3 — Prompt chaining + versioning | Hand-written | 📋 Planned | 📋 pending |
 | 6 — Retrieval + grounded generation | Claude Code (override, 2026-09-10) | 🚧 MVP done - real retrieval + generation, no COT/guardrails yet; see Phase 6 detail below | Retrofitted (pre-SDD) for the MVP shipped; the COT/guardrails remainder needs its own spec |
 | 6.1 — Contracts/validation for query path | Claude Code | ✅ Done alongside the Phase 6 MVP - `model_used` added to `RagQueryResponse` | Retrofitted (pre-SDD) |
-| 7 — Guardrails (input + output) | Hand-written | 📋 Planned | 📋 pending |
-| 8 — Golden dataset + evaluations + A/B | Hand-written | 🚧 Golden dataset done (override, 2026-09-08); evaluations/A/B harness still 📋 planned | Retrofitted (pre-SDD) for the golden dataset; eval/A/B harness is 📋 pending |
+| 7 — Guardrails (input + output), NeMo Guardrails via LLMRails.check_async() | Hand-written | ✅ Done, 2026-09-22 - integration shape changed from spec (check_async(), not RunnableRails), see detail below | ✅ Spec'd and implemented - see detail below |
+| 8 — Golden dataset + evaluations + A/B, DeepEval | Hand-written | ✅ Harness done, 2026-09-22 - found 3/6 KB docs not indexed (real data gap, not a harness bug), see detail below. Formal CI gate/A/B still follow-up work | ✅ Spec'd and implemented (harness) - see detail below; golden dataset itself Retrofitted (pre-SDD) |
 | 9 — Bedrock as an LLM provider | Claude Code | ✅ Done | Retrofitted (pre-SDD) |
 | 10 — Docker + AWS deployment (App Runner) | Claude Code | ✅ Done - `RUNNING`, verified live (shallow + deep health, real Pinecone query); Postgres/Neon leg still pending the user's Neon signup (documented compromise, not a blocker) | Retrofitted (pre-SDD) |
 | 11 — CI/CD + GitHub | Claude Code | ✅ CI verified passing on GitHub Actions (pytest included as of Phase 12); deploy workflow written but unexercised - needs `main` merge + 2 GitHub Secrets still pending from the user | Retrofitted (pre-SDD) |
@@ -121,6 +121,7 @@ reviewed before that phase's code starts.
 | 45 — User-directed: nested request/response contracts for every endpoint, identity moved from headers to a JSON body everywhere | Claude Code | 🚧 Code done and tested, 2026-09-20 - Postman/CLAUDE.md sync still pending | ✅ Spec'd and implemented - see detail below, full contracts in docs/endpoint-request-response-contracts.md |
 | 46 — User-directed: isolate the test suite's SQLite DB from the real dev DB, add a test-noise cleanup endpoint | Claude Code | ✅ Done, 2026-09-20 | ✅ Spec'd and implemented - see detail below |
 | 47 — User-directed: rename CurrentUser/current_user/UserMetadata/user_metadata to UserProfile/user_profile throughout | Claude Code | ✅ Done, 2026-09-20 | N/A - a rename, not a design change; see detail below |
+| 48 — User-directed: multi-shot prompting (Module 4) for genai-rag generation | Claude Code | ✅ Done, 2026-09-21 | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -553,12 +554,116 @@ later, separate wave once this core is solid.
   `model_used` is the concrete contract addition; the existing
   `json_error()`/try-except/logging shape from upload/indexing already
   covered the rest and needed no changes.
-- [ ] **Phase 7 (hand-written) — Guardrails, both directions.**
+- [x] **Phase 7 (hand-written) — Guardrails, both directions.**
   `ai/pre_processing/guardrails_input.py` (currently empty) - a validation
   gateway for the incoming query before it reaches retrieval.
   `ai/rag_pipeline/response_generation/guardrails_output/` (currently
   empty) - validates/filters the generated answer before it's returned.
-- [ ] **Phase 8 (hand-written, golden dataset sub-item overridden 2026-09-08) —
+
+  **Spec (added 2026-09-22):**
+  - **Context:** self-audit against IK FDE cohort material plus a real
+    library-selection process found three candidates (Guardrails AI, LLM
+    Guard, NVIDIA NeMo Guardrails) - `pip install --dry-run` against this
+    project's actual `requirements.txt` (not in isolation) eliminated the
+    first two: Guardrails AI's real dependency (`langchain-core>=1.0`)
+    conflicts with this project's pinned `langchain==0.3.20`
+    (`langchain-core<1.0.0`) and silently resolves down to
+    `guardrails-ai==0.1.8` - a release that predates the modern Guardrails
+    Hub validator API, not the library actually being evaluated; LLM
+    Guard resolves clean but pulls ~500MB of PyTorch/transformers/spacy.
+    **NeMo Guardrails resolves clean at its current latest version
+    (0.24.1), lighter than LLM Guard, no forced downgrade** - verified,
+    not asserted.
+  - **Data/API contracts:** N/A - rails run transparently around the
+    existing `POST /v1/genai-rag/retrieve-document/query` request/response
+    shape, no new fields.
+  - **User-visible behavior:** blocked input -> `422`,
+    `INPUT_GUARDRAIL_BLOCKED` (new `error_codes.py` entry). Blocked output
+    -> swap in a safe canned message, still `200` (decided earlier: it's
+    the app's own generated content, not the caller's fault).
+  - **Integration shape:** `RunnableRails` (NeMo's LangChain `Runnable`
+    integration) composes with the existing LCEL chain via the same `|`
+    operator `response_generator.py` already uses -
+    `guarded_chain = guardrails | chain` - the Phase 48 multi-shot prompt
+    and the existing chain are wrapped, not replaced.
+  - **Deliberate scope cut, confirmed 2026-09-22:** the config does **NOT**
+    include NeMo's built-in `self check facts` (and drops `self check
+    output` if it turns out to be scoring quality rather than pure
+    toxicity, needs confirming during implementation) - faithfulness/
+    groundedness scoring is owned by Phase 8's `FaithfulnessMetric`
+    (DeepEval) instead, so there is exactly one groundedness
+    implementation, not two disagreeing ones. Config keeps: `self check
+    input` (prompt-injection/jailbreak), `mask sensitive data on
+    input`/`on output` (PII, entities: PERSON/EMAIL_ADDRESS/US_SSN/
+    CREDIT_CARD).
+  - **Reusability requirement:** the guardrail wrapper must be a plain
+    function taking any LCEL `Runnable` (`with_guardrails(chain) ->
+    Runnable`), not hardcoded to `response_generator.py`'s specific chain -
+    single-agentic-rag/multi-agentic-rag reuse the same wrapper around
+    their own chains later, not a second implementation.
+  - **Failure modes:** NeMo rail evaluation itself failing/timing out
+    (network, model) must fail closed (block) not open (silently skip the
+    check) - exact behavior to confirm against NeMo's own error handling
+    during implementation, not assumed.
+  - **Out of scope:** Gate 2's document-level ACL
+    (`ai/rag_pipeline/helper/access_control.py`) and Gate 4's context
+    grading - neither is a guardrails-library concern, both stay
+    unbuilt/separate.
+  - **Open questions:** exact wiring for `self check input`'s underlying
+    prompt customization (`prompts.yml`) not yet verified against NeMo's
+    docs - confirm before implementing, don't guess the syntax.
+
+  **Implementation note - the integration shape changed from the spec above,
+  for a real reason found while building it.** `RunnableRails`'s
+  `guardrails | chain` composition (what the spec above describes) turned
+  out to expect a specific input shape (string, or a dict with `input`/
+  `messages` keys) and to own the chain via a `runnable=` constructor
+  parameter, not a plain LCEL pipe - wiring our existing two-key
+  `{"context": ..., "question": ...}` chain through it would have added
+  real complexity. Switched to `LLMRails.check_async()` instead - two
+  plain functions (`check_input()`, `check_output()`) called explicitly in
+  `pipeline.py`, before/after retrieval+generation. `response_generator.py`'s
+  chain is untouched either way.
+
+  **Two real bugs found and fixed during implementation, not just
+  wiring:**
+  1. `check_async()`, not the sync `check()` - `pipeline.answer_query()` is
+     async, and NeMo raises `RuntimeError` if its sync method is called
+     from inside a running event loop. Both guardrail functions and their
+     callers in `pipeline.py` are `async def`/`await` throughout.
+  2. `presidio-analyzer`/`presidio-anonymizer` aren't pulled in by
+     `nemoguardrails` itself - the `mask sensitive data` rail needs them
+     installed separately, plus a one-time `python -m spacy download
+     en_core_web_lg` (~400MB, hardcoded by NeMo's own code, not
+     configurable to a smaller model) - confirmed via a live failure
+     before either was installed, not assumed. Both added to
+     `requirements.txt` with a comment explaining why.
+
+  **Also required, not mentioned in the original spec:** `prompts.yml`
+  alongside `config.yml` - NeMo does not ship default prompts for
+  `self check input`/`self check output`; a bare config with those flows
+  enabled fails to load at all without one. Used the same prompt content
+  as NeMo's own example bot (`nemoguardrails/examples/bots/abc/prompts.yml`),
+  adapted for the HR benefits domain.
+
+  **One behavior worth knowing, not a bug:** a query containing what looks
+  like an SSN gets **blocked** by `self check input`, not masked by `mask
+  sensitive data on input` - the input rails run in sequence and
+  `self check input`'s own policy judgment flags it first, so the masking
+  rail never gets a turn. Verified live. Arguably safer than masking-and-
+  proceeding, but different from the original "mask PII, don't block"
+  framing - left as-is, flagged for a decision if the stricter behavior
+  isn't wanted.
+
+  **Verified:** full suite green (151/151, 6 new guardrail tests added,
+  `get_rails()` faked so no real API key/cost). `bandit -r src/hrb_chatbot
+  -ll`: 0 issues. Live end-to-end via the real HTTP route: a real question
+  about parental leave returned a real grounded 200 answer with guardrails
+  passing silently; an injected "ignore all previous instructions" query
+  returned 422 with `INPUT_GUARDRAIL_BLOCKED`, both against the real
+  OpenAI API, not mocked.
+
+- [x] **Phase 8 (hand-written, golden dataset sub-item overridden 2026-09-08) —
   Golden dataset + A/B testing + evaluations.**
   `ai/rag_pipeline/evaluations/` (currently empty) - the evaluation metrics
   and A/B harness themselves remain hand-written and unbuilt: Workshop
@@ -579,6 +684,99 @@ later, separate wave once this core is solid.
   since Phase 6's MVP landed - the evaluation metrics/A/B harness
   themselves (Precision@K/Recall@K/F1, groundedness via LLM-as-judge)
   are still the unbuilt, hand-written part of this phase.
+
+  **Correction 2026-09-21:** the golden dataset file actually has 23
+  cases, not 22 - `_meta.case_count` said 22, was stale, fixed. Category
+  breakdown: 18 happy, 1 happy_multi_document, 2 unhappy_out_of_scope, 1
+  unhappy_unanswerable, 1 unhappy_adversarial. `_meta.description`/
+  `how_to_grade` also still referenced the pre-Phase-45 `POST /rag/query`
+  endpoint and the pre-Phase-45 flat `response.sources[]` shape - both
+  fixed to `POST /v1/genai-rag/retrieve-document/query` and
+  `response.retrieval_info.sources[]`.
+
+  **Spec (added 2026-09-22):**
+  - **Context:** same self-audit that produced Phase 7's spec. DeepEval
+    checked the same way - `pip install --dry-run` against this project's
+    real `requirements.txt` resolves clean at current version
+    (`deepeval==3.3.9`), no conflicts, no forced downgrade, no heavy ML
+    stack.
+  - **Data/API contracts:** N/A - the harness calls the existing
+    `POST /v1/genai-rag/retrieve-document/query` (or `pipeline.answer_query()`
+    directly) once per golden-dataset case; no new endpoint.
+  - **User-visible behavior:** a new pytest tier, not part of the default
+    run - `@pytest.mark.eval` (or equivalent), excluded from the
+    zero-cost/zero-API-key suite the rest of this project's tests are
+    (matches `docs/TESTING-GUIDE.md`'s stated guarantee; golden-dataset
+    grading needs real embedding + chat calls, so it can never join the
+    145 that run on every commit).
+  - **Metrics:** `ContextualPrecisionMetric`/`ContextualRecallMetric`
+    (retrieval - Module 5's Precision@K/Recall@K/F1, computed the 2026
+    RAG-Triad-standard way, not hand-rolled set overlap) and
+    `FaithfulnessMetric`/`AnswerRelevancyMetric` (generation -
+    groundedness/completeness). `FaithfulnessMetric` is the single
+    implementation also referenced by Phase 7's dropped `self check facts`
+    - not reimplemented twice.
+  - **CI threshold:** practical-significance bar already written down in
+    `docs/CICD-BRANCHING-STRATEGY.md`'s "A/B testing, once Phase 8 exists"
+    section - challenger beats baseline by >= 5 points average, no
+    single-case regression > 10 points; 23 cases is too small for a real
+    p-value, so no formal significance test until the dataset grows past
+    ~50/variant. This spec doesn't change that guidance, just finally
+    gives it code to gate.
+  - **One thing to verify before implementing, not assume:** DeepEval
+    ships with anonymous telemetry (`posthog`/`sentry-sdk` showed up in
+    the dry-run) - confirm the opt-out mechanism and set it before this
+    ships, don't find out later what it sent.
+  - **Reusability requirement:** the harness takes a callable ("ask this
+    question, return an answer + sources") as a parameter, not a hardcoded
+    import of `genai-rag`'s `pipeline.answer_query()` - so the same 23
+    golden-dataset cases can grade single-agentic-rag/multi-agentic-rag
+    later by passing a different callable in, not a second harness.
+  - **Out of scope:** growing the dataset past 23 cases, formal
+    statistical significance testing - both explicitly deferred in the
+    existing CI/CD doc.
+  - **Open questions:** none blocking - telemetry opt-out is a
+    pre-ship checklist item, not an open design question.
+
+  **Implementation, 2026-09-22:** `ai/rag_pipeline/evaluations/
+  golden_dataset_harness.py` - `load_golden_cases()` and `score_case(case,
+  ask)`, where `ask` is any `async def ask(query: str) -> {"answer": str,
+  "retrieved_texts": list[str]}` - genai-rag's own adapter
+  (`ask_genai_rag()`) lives in the test file, not the harness, keeping the
+  harness itself pipeline-agnostic per the reusability requirement.
+  `DEEPEVAL_TELEMETRY_OPT_OUT=YES` added to `.env`, confirmed via
+  `deepeval/telemetry.py`'s own source before setting it, not guessed.
+  `pytest.ini` gained `markers = eval: ...` and `addopts = -m "not eval"` -
+  verified live that a plain `pytest -q` deselects the eval test (151
+  passed, 1 deselected) and `pytest -m eval` correctly overrides the
+  addopts default to run only it.
+
+  **A real finding, not a harness bug:** running the harness against real
+  golden-dataset cases surfaced `contextual_precision`/`contextual_recall`
+  scores of 0.00 - traced this down rather than reporting the raw numbers
+  as-is. Root cause: **only 3 of the 6 real KB documents are currently
+  indexed** (Tuition Assistance, Paid TimeOff, Healthcare Benefits) - the
+  401(k), Unpaid TimeOff, and Sedgwick Unpaid Timeoff documents are
+  missing, left over from the earlier session incident where 900 rows
+  were deleted from the live DB and only some PDFs were manually
+  re-uploaded afterward. A 401(k) question retrieved zero 401(k) content
+  (5 chunks, all leave/healthcare) - the pipeline correctly said "I don't
+  have that information" rather than hallucinating (faithfulness 0.67),
+  but that's irrelevant to the actual question (answer_relevancy 0.33,
+  contextual precision/recall both 0.00 since nothing retrieved supports
+  the expected answer). **This is the harness working exactly as
+  intended** - it caught a real data gap immediately. Re-uploading the 3
+  missing PDFs is separate, simple follow-up work, not done as part of
+  this phase (flagged, not silently fixed).
+
+  **Verified:** full suite green (151 passed, 1 deselected by default).
+  `pytest -m eval -v`: 1 passed, real API calls, real scores returned (not
+  zeros-by-bug, not errors) - confirmed by tracing one case's actual
+  retrieval+generation+scores end to end, not just reading the pass/fail
+  result. `bandit -r src/hrb_chatbot -ll`: 0 issues. The committed test
+  scores only 3 of 23 cases (a smoke test confirming the harness works),
+  not all 23 - a full 23-case run is manual/CI work, not something to run
+  on every `pytest -m eval` invocation given real cost per run.
 - [x] **Phase 9 (Claude Code) — Bedrock as an LLM provider.**
   `BedrockChatClient` implementing `BaseLLMClient` via the Converse API, wired
   into `/health` the same way as OpenAI/Anthropic/OpenRouter
@@ -3478,6 +3676,47 @@ Explicitly deferred to a later, separate wave - not part of the above:
   key/class names). `bandit -r src/hrb_chatbot -ll`: 0 issues. App import
   confirmed live (`from src.hrb_chatbot.main import app`) both right after
   the emergency import-path fix and again after the full rename.
+
+- [x] **Phase 48 (2026-09-21) — User-directed: multi-shot prompting for
+  genai-rag generation.**
+
+  **Spec:**
+  - **Context:** self-audit against IK FDE cohort Module 4's "Prompt
+    Engineering for RAG" section found few-shot examples and Chain-of-
+    Thought had been identified twice already (once in the user's own
+    early batch request, once in a later Module 4 comparison) but never
+    escalated into an actual implementation decision - user asked "how did
+    we miss it" and requested a durable fix, not just an apology.
+  - **Data/API contracts:** N/A - no request/response shape change, purely
+    the system prompt text `response_generation/response_generator.py`
+    sends to the model.
+  - **User-visible behavior:** answers should more reliably cite the
+    source document by name and refuse out-of-scope questions in the
+    demonstrated shape, not just the instructed one - four few-shot
+    examples added to `SYSTEM_PROMPT_TEMPLATE`, matching Module 4's own
+    "Few-Shot Examples" pattern (`Example 1:` / `Example 2:` / ...).
+  - **Failure modes:** N/A - prompt-only change, no new error path.
+  - **Retrieval quality criteria:** three of the four examples use real
+    sentences copied directly from `resources/kb_docs/text/*.txt` (401k
+    auto-enrollment/match, Parental Leave eligibility, Guild tuition
+    tiers) - not invented facts. The fourth is a deliberate refusal
+    example (asks about a gym stipend, which no KB document covers) so
+    the model has *seen* the "I don't have that information" shape
+    demonstrated, not just instructed - mirrors the golden dataset's own
+    adversarial-case pattern.
+  - **Out of scope:** single-agentic-rag/multi-agentic-rag system prompts
+    - no code exists for either pipeline yet, so there's nothing to enrich
+    (confirmed with the user; ReAct/multi-agent work explicitly excluded
+    for now). Ingestion-side prompting (`metadata_extraction/
+    document_metadata_extractor.py`'s extraction prompt) is a different
+    kind of prompting task (structured extraction, not grounded Q&A) and
+    was confirmed out of scope for this phase.
+  - **Open questions:** none - self-contained prompt change.
+
+  **Verified:** full suite green, 144/144. New regression test
+  `test_system_message_carries_few_shot_examples` asserts all four
+  examples (including the refusal one) actually reach the model, not just
+  that the file contains the text.
 
 ## Verification checklist (Phases 1-3)
 

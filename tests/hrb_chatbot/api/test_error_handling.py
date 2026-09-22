@@ -110,7 +110,7 @@ def test_query_at_exactly_the_max_length_is_accepted_by_validation(monkeypatch):
             "applied_filter": None,
         }
 
-    monkeypatch.setattr(retrieve_document.rag_service, "answer_query", _fake_answer_query)
+    monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _fake_answer_query)
     exactly_max_length_query = "a" * 2000
 
     response = client.post(

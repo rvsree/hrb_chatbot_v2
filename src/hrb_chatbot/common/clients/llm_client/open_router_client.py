@@ -97,6 +97,9 @@ class OpenRouterChatClient(BaseLLMClient):
                 extra_headers=self.extra_headers or None,
             )
 
+        if response.usage:
+            logger.info("[openrouter] tokens used: %s prompt + %s completion", response.usage.prompt_tokens, response.usage.completion_tokens)
+
         answer = response.choices[0].message.content
         if answer is None:
             return ""

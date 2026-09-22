@@ -103,6 +103,9 @@ def test_single_valid_pdf_is_uploaded_and_indexed():
     assert result["chunk_info"]["action"] == "insert"
     assert result["chunk_info"]["chunks_indexed"] == 1
     assert result["uploaded_by"] == "E00001"
+    # Bug found 2026-09-21: is_current was reporting null on a fresh upload.
+    assert result["versioning_info"]["is_current"] is True
+    assert result["versioning_info"]["supersedes"] is None
 
 
 def test_chunking_strategy_size_and_overlap_form_fields_reach_the_pipeline(monkeypatch):
@@ -341,6 +344,9 @@ def test_uploading_identical_content_twice_is_a_duplicate_not_a_new_document():
     assert duplicate_result["document_id"] == first_document_id
     assert duplicate_result["message"] is not None
     assert first_document_id in duplicate_result["message"]
+    # Same bug as the fresh-upload case: versioning_info must reflect the
+    # EXISTING document's real row, not default to null.
+    assert duplicate_result["versioning_info"]["is_current"] is True
 
 
 def test_identical_content_under_a_different_filename_is_still_a_duplicate():

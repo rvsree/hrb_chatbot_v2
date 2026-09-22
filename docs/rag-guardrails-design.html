@@ -1,0 +1,212 @@
+<title>RAG Guardrails Blueprint</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800;900&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #eef0f4; --surface: #ffffff; --surface-alt: #f4f5f9; --border: #d9dce4;
+    --text: #191d28; --text-muted: #565f72; --text-faint: #8992a4;
+    --done: #1f8a4c; --done-bg: #e6f5ec; --done-border: #b9e2c9;
+    --missing: #b23a2f; --missing-bg: #fbebe8; --missing-border: #f0c4bc;
+    --ribbon-bg: #191d28; --ribbon-text: #ffffff;
+    --shadow: 0 2px 4px rgba(20,24,34,0.06), 0 12px 26px rgba(20,24,34,0.08);
+    --band-dark: #3a4150; --band-mid: #545d70;
+    --lib-chip-bg: #eef1f5; --lib-chip-text: #46536b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1218; --surface: #1a1f29; --surface-alt: #1c212c; --border: #2b3140;
+      --text: #e8eaf0; --text-muted: #a3aac0; --text-faint: #6d7488;
+      --done: #4fbd80; --done-bg: #15281d; --done-border: #23492f;
+      --missing: #e2776a; --missing-bg: #2c1815; --missing-border: #4a2620;
+      --ribbon-bg: #e8eaf0; --ribbon-text: #14161e;
+      --shadow: 0 2px 4px rgba(0,0,0,0.35), 0 14px 30px rgba(0,0,0,0.42);
+      --band-dark: #2b303c; --band-mid: #3f4759;
+      --lib-chip-bg: #222836; --lib-chip-text: #aab4c8;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1218; --surface: #1a1f29; --surface-alt: #1c212c; --border: #2b3140;
+    --text: #e8eaf0; --text-muted: #a3aac0; --text-faint: #6d7488;
+    --done: #4fbd80; --done-bg: #15281d; --done-border: #23492f;
+    --missing: #e2776a; --missing-bg: #2c1815; --missing-border: #4a2620;
+    --ribbon-bg: #e8eaf0; --ribbon-text: #14161e;
+    --shadow: 0 2px 4px rgba(0,0,0,0.35), 0 14px 30px rgba(0,0,0,0.42);
+    --band-dark: #2b303c; --band-mid: #3f4759;
+    --lib-chip-bg: #222836; --lib-chip-text: #aab4c8;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    padding-inline: 16px; padding-block: 32px 56px;
+  }
+  .display { font-family: 'Archivo', sans-serif; }
+  .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 26px; }
+
+  header { display: flex; flex-direction: column; gap: 10px; }
+  .eyebrow { font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--missing); font-weight: 600; }
+  h1 { margin: 0; font-weight: 900; font-size: clamp(26px, 4.2vw, 36px); letter-spacing: -0.01em; text-wrap: balance; }
+  .subtitle { margin: 0; color: var(--text-muted); font-size: 14.5px; max-width: 70ch; line-height: 1.55; }
+
+  .banner { display: flex; gap: 10px; align-items: flex-start; background: var(--missing-bg); border: 1px solid var(--missing-border); color: var(--missing); border-radius: 10px; padding: 12px 14px; font-size: 12.5px; line-height: 1.55; }
+  .banner svg { flex: none; width: 17px; height: 17px; margin-top: 1px; }
+  .banner strong { color: var(--text); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; }
+  .legend-item { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-muted); background: var(--surface); border: 1px solid var(--border); padding: 5px 10px 5px 8px; border-radius: 999px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.done { background: var(--done); } .dot.missing { background: var(--missing); }
+
+  .section { display: flex; flex-direction: column; gap: 14px; }
+  .section-head { display: flex; align-items: center; gap: 10px; }
+  .section-icon { width: 34px; height: 34px; border-radius: 10px; background: var(--band-dark); color: #fff; display: flex; align-items: center; justify-content: center; flex: none; }
+  .section-icon svg { width: 18px; height: 18px; }
+  .section-title { display: flex; flex-direction: column; }
+  .section-title .name { font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 17px; }
+  .section-title .sub { font-size: 11.5px; color: var(--text-faint); }
+
+  .flow { display: flex; align-items: center; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+  .flow-arrow { flex: none; color: var(--text-faint); }
+  .flow-arrow svg { width: 16px; height: 16px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+  .card {
+    border: 1px solid var(--border); border-radius: 12px; padding: 13px 14px; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 8px; background: var(--surface);
+  }
+  .card-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .card-icon { width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex: none; }
+  .card-icon svg { width: 16px; height: 16px; }
+  .card.done .card-icon { background: var(--done-bg); color: var(--done); border: 1px solid var(--done-border); }
+  .card.missing .card-icon { background: var(--missing-bg); color: var(--missing); border: 1px solid var(--missing-border); }
+  .status-pill { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .card.done .status-pill { color: var(--done); background: var(--done-bg); border: 1px solid var(--done-border); }
+  .card.missing .status-pill { color: var(--missing); background: var(--missing-bg); border: 1px solid var(--missing-border); }
+  .card-label { font-family: 'Archivo', sans-serif; font-weight: 700; font-size: 13.5px; line-height: 1.3; }
+  .card-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+  .card-ref { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--text-faint); line-height: 1.4; word-break: break-word; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 1px; }
+  .chip { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; padding: 2px 6px; border-radius: 5px; background: var(--lib-chip-bg); color: var(--lib-chip-text); }
+
+  .divider { display: flex; align-items: center; gap: 10px; color: var(--text-faint); font-size: 11px; }
+  .divider .line { flex: 1; height: 1px; background: var(--border); }
+
+  footer { border-top: 1px solid var(--border); padding-top: 16px; font-size: 12.5px; color: var(--text-faint); line-height: 1.6; }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">Phase 7 implemented 2026-09-22 &mdash; most of this page flipped from plan to reality</div>
+    <h1 class="display">RAG Guardrails Blueprint</h1>
+    <p class="subtitle">What Gates 1 (input) and 6 (output) of <code class="mono">docs/rag-validation-gates.html</code> actually check, at implementation detail. Gate 5 (live faithfulness) is the one deliberate exception - still red, on purpose.</p>
+  </header>
+
+  <div class="banner" style="background: var(--done-bg); border-color: var(--done-border); color: var(--done);">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+    <span><strong>Most of this page is built now</strong>, via NeMo Guardrails (`nemoguardrails==0.24.1`, `LLMRails.check_async()`) - not the stdlib regex/keyword approach originally sketched here. Two functions, `ai/pre_processing/guardrails_input.py :: check_input()` and `ai/rag_pipeline/response_generation/guardrails_output/ :: check_output()`, cover PII masking, prompt-injection/jailbreak, and toxicity in one call each. The one deliberate exception: faithfulness/groundedness (Gate 5) stays unbuilt as a live check - DeepEval's `FaithfulnessMetric` does that job offline instead (Phase 8), so it isn't duplicated.</span>
+  </div>
+
+  <div class="legend">
+    <span class="legend-item"><span class="dot done"></span>Built &amp; tested (schema layer, or NeMo Guardrails)</span>
+    <span class="legend-item"><span class="dot missing"></span>Deliberately not built here - done elsewhere instead</span>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <div class="section-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v5c0 5-3 7.5-7 9-4-1.5-7-4-7-9V7z"/></svg></div>
+      <div class="section-title">
+        <span class="name display">Input Guardrails</span>
+        <span class="sub">runs on the raw query, before retrieval - Gate 1 of the Firewall</span>
+      </div>
+    </div>
+
+    <div class="flow">
+      <span class="mono" style="font-size:11px;color:var(--text-faint);">query string in &rarr;</span>
+      <div class="flow-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+    </div>
+
+    <div class="grid">
+      <div class="card done">
+        <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 12h6M4 6h10M4 18h16"/></svg></div><span class="status-pill">Already done</span></div>
+        <div class="card-label">Length bound</div>
+        <div class="card-desc">1-2000 characters, rejected as 422 before this code would even run.</div>
+        <div class="card-ref">models/rag.py :: RagQueryRequest (min_length/max_length)</div>
+      </div>
+      <div class="card done">
+        <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1.5"/></svg></div><span class="status-pill">Done</span></div>
+        <div class="card-label">PII masking</div>
+        <div class="card-desc">Presidio-backed entity detection (PERSON, EMAIL_ADDRESS, US_SSN, CREDIT_CARD) - masks in place. Note: a query judged unsafe by the check below gets fully blocked first, so masking mostly applies to otherwise-benign queries that happen to include PII.</div>
+        <div class="card-ref">ai/pre_processing/guardrails_input.py :: check_input() &mdash; "mask sensitive data on input" rail</div>
+        <div class="chip-row"><span class="chip">nemoguardrails + presidio-analyzer/anonymizer</span></div>
+      </div>
+      <div class="card done">
+        <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg></div><span class="status-pill">Done</span></div>
+        <div class="card-label">Prompt-injection / jailbreak check</div>
+        <div class="card-desc">LLM-as-judge (gpt-4.1-mini) against a written policy: no jailbreaks, no "forget the rules," no system-prompt extraction, no abusive language. Verified live: an "ignore all previous instructions" query was blocked, 422.</div>
+        <div class="card-ref">ai/pre_processing/guardrails_input.py :: check_input() &mdash; "self check input" rail, ai/guardrails_config/prompts.yml</div>
+        <div class="chip-row"><span class="chip">nemoguardrails LLMRails.check_async()</span></div>
+      </div>
+    </div>
+
+    <div class="divider"><span>blocked request path</span><div class="line"></div></div>
+    <div class="grid">
+      <div class="card done">
+        <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2.5 18a1 1 0 0 0 .9 1.5h17.2a1 1 0 0 0 .9-1.5L13.7 3.9a1 1 0 0 0-1.7 0z"/></svg></div><span class="status-pill">Done</span></div>
+        <div class="card-label">On block: 422, INPUT_GUARDRAIL_BLOCKED</div>
+        <div class="card-desc">GuardrailBlockedError raised from check_input(), caught in retrieve_document.py, mapped to 422 - verified live against the real HTTP route, not mocked.</div>
+        <div class="card-ref">ai/pre_processing/guardrails_input.py :: GuardrailBlockedError, api/rag/retrieve_document.py, common/error_codes.py</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <div class="section-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v5c0 5-3 7.5-7 9-4-1.5-7-4-7-9V7z"/><path d="M9.5 12l1.8 1.8L15 10"/></svg></div>
+      <div class="section-title">
+        <span class="name display">Output Guardrails</span>
+        <span class="sub">runs on the generated answer, before it's returned - Gates 5 (Grounding) and 6 (Delivery)</span>
+      </div>
+    </div>
+
+    <div class="flow">
+      <span class="mono" style="font-size:11px;color:var(--text-faint);">&larr; generated answer</span>
+      <div class="flow-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+    </div>
+
+    <div class="grid">
+      <div class="card missing">
+        <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12l2.5 2.5L16 9"/></svg></div><span class="status-pill">Deliberately not here</span></div>
+        <div class="card-label">Faithfulness / groundedness check</div>
+        <div class="card-desc">Not built as a live per-request check, on purpose - NeMo's own "self check facts" rail was dropped from the config specifically to avoid two disagreeing faithfulness implementations. DeepEval's FaithfulnessMetric does this job instead, offline, against the golden dataset.</div>
+        <div class="card-ref">see instead: ai/rag_pipeline/evaluations/golden_dataset_harness.py (Phase 8)</div>
+        <div class="chip-row"><span class="chip">DeepEval, offline only - see rag-pipeline-status.md</span></div>
+      </div>
+      <div class="card done">
+        <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1.5"/></svg></div><span class="status-pill">Done</span></div>
+        <div class="card-label">PII masking + toxicity/policy check</div>
+        <div class="card-desc">Same PII entity masking as the input side, plus an LLM-as-judge policy check (no explicit/abusive/harmful/racially-insensitive content) on the generated answer, in one call.</div>
+        <div class="card-ref">response_generation/guardrails_output/ :: check_output() &mdash; "mask sensitive data on output" + "self check output" rails</div>
+        <div class="chip-row"><span class="chip">nemoguardrails LLMRails.check_async()</span></div>
+      </div>
+    </div>
+
+    <div class="divider"><span>blocked response path</span><div class="line"></div></div>
+    <div class="grid">
+      <div class="card done">
+        <div class="card-top"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M4 9h16M9 4v16"/></svg></div><span class="status-pill">Done</span></div>
+        <div class="card-label">On block: swap in a safe answer, still 200</div>
+        <div class="card-desc">check_output() returns SAFE_FALLBACK_ANSWER in place of the real answer on a block, still a 200 - no new error code, matches the decision made before implementation.</div>
+        <div class="card-ref">response_generation/guardrails_output/ :: SAFE_FALLBACK_ANSWER</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Snapshot: 2026-09-22. Implemented via NeMo Guardrails (<code class="mono">nemoguardrails==0.24.1</code>), not the stdlib regex/keyword approach this page originally sketched - checked with <code class="mono">pip install --dry-run</code> against this project's real pins before picking it (Guardrails AI silently downgrades against this project's langchain pin; LLM Guard pulls ~500MB of PyTorch/transformers). Integration shape also changed mid-build: <code class="mono">LLMRails.check_async()</code> called directly in <code class="mono">pipeline.py</code>, not the LCEL-chain-wrapping <code class="mono">RunnableRails</code> pattern first planned - see <code class="mono">docs/RAG-ROADMAP.md</code>'s Phase 7 entry for why. Six-gate status view: <code class="mono">docs/rag-validation-gates.html</code>. Full stage table: <code class="mono">docs/rag-pipeline-status.md</code>.
+  </footer>
+
+</div>

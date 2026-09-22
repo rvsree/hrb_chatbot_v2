@@ -26,8 +26,24 @@ def _fake_generate_answer_capturing(captured):
     return _fake
 
 
+# Guardrails pass the query/answer through unchanged - these tests are about
+# top_k/temperature resolution, not guardrail behavior (see test_pipeline_guardrails.py).
+async def _fake_check_input(query):
+    return query
+
+
+async def _fake_check_output(query, answer):
+    return answer
+
+
+def _patch_guardrails(monkeypatch):
+    monkeypatch.setattr(pipeline, "check_input", _fake_check_input)
+    monkeypatch.setattr(pipeline, "check_output", _fake_check_output)
+
+
 async def test_omitted_top_k_and_search_strategy_use_env_defaults(monkeypatch):
     captured = {}
+    _patch_guardrails(monkeypatch)
     monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve_chunks_capturing(captured))
     monkeypatch.setattr(pipeline, "generate_answer", _fake_generate_answer_capturing(captured))
 
@@ -39,6 +55,7 @@ async def test_omitted_top_k_and_search_strategy_use_env_defaults(monkeypatch):
 
 async def test_explicit_top_k_and_search_strategy_are_not_overridden(monkeypatch):
     captured = {}
+    _patch_guardrails(monkeypatch)
     monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve_chunks_capturing(captured))
     monkeypatch.setattr(pipeline, "generate_answer", _fake_generate_answer_capturing(captured))
 
@@ -50,6 +67,7 @@ async def test_explicit_top_k_and_search_strategy_are_not_overridden(monkeypatch
 
 async def test_omitted_temperature_uses_env_default(monkeypatch):
     captured = {}
+    _patch_guardrails(monkeypatch)
     monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve_chunks_capturing(captured))
     monkeypatch.setattr(pipeline, "generate_answer", _fake_generate_answer_capturing(captured))
 
@@ -63,6 +81,7 @@ async def test_explicit_temperature_zero_is_not_treated_as_omitted(monkeypatch):
     or default` would wrongly replace an explicit 0.0 (falsy) with the .env
     default - the code must check `is None`, not truthiness."""
     captured = {}
+    _patch_guardrails(monkeypatch)
     monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve_chunks_capturing(captured))
     monkeypatch.setattr(pipeline, "generate_answer", _fake_generate_answer_capturing(captured))
 
@@ -73,6 +92,7 @@ async def test_explicit_temperature_zero_is_not_treated_as_omitted(monkeypatch):
 
 async def test_explicit_nonzero_temperature_passes_through(monkeypatch):
     captured = {}
+    _patch_guardrails(monkeypatch)
     monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve_chunks_capturing(captured))
     monkeypatch.setattr(pipeline, "generate_answer", _fake_generate_answer_capturing(captured))
 

@@ -1,6 +1,6 @@
 """Tests for POST /v1/genai-rag/retrieve-document/query (api/rag/retrieve_document.py). The real
 pipeline exists now (ai/rag_pipeline/), so well-formed-request tests
-monkeypatch rag_service.answer_query() to a canned response - this file
+monkeypatch pipeline.answer_query() to a canned response - this file
 tests the ROUTE's contract (status codes, response shape), not retrieval/
 generation correctness itself (see
 tests/hrb_chatbot/ai/rag_pipeline/query_retrieval/test_retriever.py and
@@ -50,7 +50,7 @@ async def _fake_answer_query(params):
 
 
 def test_well_formed_query_returns_a_grounded_answer(monkeypatch):
-    monkeypatch.setattr(retrieve_document.rag_service, "answer_query", _fake_answer_query)
+    monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _fake_answer_query)
 
     response = client.post(
         "/v1/genai-rag/retrieve-document/query", json=_body(query="How many weeks of parental leave do I get?")
@@ -87,7 +87,7 @@ def test_top_k_above_the_maximum_is_rejected():
 def test_optional_generation_fields_are_accepted_and_passed_through(monkeypatch):
     """Confirms model_name/temperature/max_tokens are real, accepted request
     fields that reach the pipeline, not just documented intent."""
-    monkeypatch.setattr(retrieve_document.rag_service, "answer_query", _fake_answer_query)
+    monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _fake_answer_query)
 
     response = client.post(
         "/v1/genai-rag/retrieve-document/query",
@@ -105,7 +105,7 @@ def test_temperature_out_of_range_is_rejected():
 
 
 def test_search_strategy_field_is_accepted_and_passed_through(monkeypatch):
-    monkeypatch.setattr(retrieve_document.rag_service, "answer_query", _fake_answer_query)
+    monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _fake_answer_query)
 
     response = client.post(
         "/v1/genai-rag/retrieve-document/query", json=_body(search_options={"search_strategy": "mmr"})
@@ -138,7 +138,7 @@ def test_use_multi_query_and_use_self_query_are_accepted_and_passed_through(monk
         captured["params"] = params
         return await _fake_answer_query(params)
 
-    monkeypatch.setattr(retrieve_document.rag_service, "answer_query", _capturing_fake)
+    monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _capturing_fake)
 
     response = client.post(
         "/v1/genai-rag/retrieve-document/query",
@@ -162,7 +162,7 @@ def test_use_multi_query_and_use_self_query_default_to_false(monkeypatch):
         captured["params"] = params
         return await _fake_answer_query(params)
 
-    monkeypatch.setattr(retrieve_document.rag_service, "answer_query", _capturing_fake)
+    monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _capturing_fake)
 
     response = client.post("/v1/genai-rag/retrieve-document/query", json=_body())
 
@@ -189,7 +189,7 @@ def test_retrieval_without_any_identity_is_a_401():
 
 
 def test_retrieval_accepts_all_three_roles(monkeypatch):
-    monkeypatch.setattr(retrieve_document.rag_service, "answer_query", _fake_answer_query)
+    monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _fake_answer_query)
 
     for role in ("employee", "manager", "hr_support"):
         response = client.post(
@@ -218,7 +218,7 @@ def test_unexpected_pipeline_failure_returns_a_clean_500(monkeypatch):
     async def _raise(*args, **kwargs):
         raise RuntimeError("vector store unreachable")
 
-    monkeypatch.setattr(retrieve_document.rag_service, "answer_query", _raise)
+    monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _raise)
 
     response = client.post("/v1/genai-rag/retrieve-document/query", json=_body())
 

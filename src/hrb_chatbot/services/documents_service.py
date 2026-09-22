@@ -111,7 +111,12 @@ async def save_upload(
                 "No new document was created - use that document_id to re-index if needed."
             ),
             file_size_bytes=existing["file_size_bytes"],
-            versioning_info=VersioningInfo(document_version=existing["document_version"]),
+            versioning_info=VersioningInfo(
+                document_version=existing["document_version"],
+                is_current=existing.get("is_current"),
+                supersedes=existing.get("supersedes"),
+                superseded_by=existing.get("superseded_by"),
+            ),
         )
 
     if supersedes_document_id:
@@ -187,7 +192,13 @@ async def save_upload(
         document_metadata=DocumentMetadataResult(**document_metadata) if document_metadata else None,
         # 0 if indexing failed - matches what the row actually holds then
         # (create_document() inserts 0; only a successful index moves it to 1+).
-        versioning_info=VersioningInfo(document_version=index_outcome.get("document_version", 0)),
+        # is_current=True regardless: create_document() always inserts the new
+        # row as is_current=1 - nothing has superseded it yet.
+        versioning_info=VersioningInfo(
+            document_version=index_outcome.get("document_version", 0),
+            is_current=True,
+            supersedes=supersedes_document_id,
+        ),
     )
 
 

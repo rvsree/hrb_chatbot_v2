@@ -3,6 +3,8 @@ request (one embedding call, one chat completion, per query)."""
 
 from fastapi import APIRouter, Request
 
+from src.hrb_chatbot.ai.pre_processing.guardrails_input import GuardrailBlockedError
+from src.hrb_chatbot.ai.rag_pipeline import pipeline
 from src.hrb_chatbot.api.dependencies import json_error
 from src.hrb_chatbot.api.gateway.user_profile import resolve_user_from_profile
 from src.hrb_chatbot.api.gateway.rbac import check_role
@@ -12,7 +14,6 @@ from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rag_query_params import RagQueryParams
 from src.hrb_chatbot.common.rate_limiting.rate_limiter import enforce_rate_limit
 from src.hrb_chatbot.models.rag import AnswerInfo, RagQueryRequest, RagQueryResponse, RetrievalInfo
-from src.hrb_chatbot.services import rag_service
 
 logger = get_logger("retrieve_document")
 
@@ -21,8 +22,8 @@ router_retrieve_document = APIRouter(tags=["query"])
 
 def _params_from_request(payload: RagQueryRequest) -> RagQueryParams:
     """Map the nested request into the flat, framework-free dataclass every
-    layer below the route actually uses - keeps ai/rag_pipeline/ and
-    services/rag_service.py unaware of this endpoint's wire shape."""
+    layer below the route actually uses - keeps ai/rag_pipeline/ unaware
+    of this endpoint's wire shape."""
     search_options = payload.search_options
     generation_options = payload.generation_options
     return RagQueryParams(
@@ -42,9 +43,11 @@ def _params_from_request(payload: RagQueryRequest) -> RagQueryParams:
 async def _answer_query(payload: RagQueryRequest) -> RagQueryResponse | object:
     params = _params_from_request(payload)
     try:
-        result = await rag_service.answer_query(params)
+        result = await pipeline.answer_query(params)
     except NotImplementedError as error:
         return json_error(501, str(error), code=error_codes.NOT_IMPLEMENTED)
+    except GuardrailBlockedError as error:
+        return json_error(422, str(error), code=error_codes.INPUT_GUARDRAIL_BLOCKED)
     except ValueError as error:
         return json_error(422, str(error), code=error_codes.VALIDATION_ERROR)
     except Exception as error:
