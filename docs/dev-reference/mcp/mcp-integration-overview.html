@@ -1,0 +1,219 @@
+<title>MCP Integration Overview</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800;900&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #eef4f2; --surface: #ffffff; --surface-alt: #f3f7f5; --border: #d8e4e0;
+    --text: #131c1a; --text-muted: #4f5f5a; --text-faint: #839290;
+    --live: #14713f; --live-bg: #e3f6eb; --live-border: #b6e4c8;
+    --planned: #9a5a0c; --planned-bg: #fbf1dd; --planned-border: #edd6a2;
+    --proto: #106b78; --proto-bg: #e1f3f6; --proto-border: #b7e2e9;
+    --shadow: 0 2px 4px rgba(15,25,20,0.06), 0 12px 26px rgba(15,25,20,0.08);
+    --band-dark: #0e2e26; --band-mid: #16453a;
+    --lib-chip-bg: #eaf2ef; --lib-chip-text: #435750;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0a1310; --surface: #141f1a; --surface-alt: #16221c; --border: #253630;
+      --text: #e6efec; --text-muted: #9fb5ae; --text-faint: #647873;
+      --live: #4fc989; --live-bg: #132a1e; --live-border: #204a32;
+      --planned: #e0ac48; --planned-bg: #2c2311; --planned-border: #4a3a17;
+      --proto: #4fc7d6; --proto-bg: #0f2a2e; --proto-border: #1c454c;
+      --shadow: 0 2px 4px rgba(0,0,0,0.35), 0 14px 30px rgba(0,0,0,0.42);
+      --band-dark: #0a1f19; --band-mid: #123128;
+      --lib-chip-bg: #1c2823; --lib-chip-text: #a4bab3;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0a1310; --surface: #141f1a; --surface-alt: #16221c; --border: #253630;
+    --text: #e6efec; --text-muted: #9fb5ae; --text-faint: #647873;
+    --live: #4fc989; --live-bg: #132a1e; --live-border: #204a32;
+    --planned: #e0ac48; --planned-bg: #2c2311; --planned-border: #4a3a17;
+    --proto: #4fc7d6; --proto-bg: #0f2a2e; --proto-border: #1c454c;
+    --shadow: 0 2px 4px rgba(0,0,0,0.35), 0 14px 30px rgba(0,0,0,0.42);
+    --band-dark: #0a1f19; --band-mid: #123128;
+    --lib-chip-bg: #1c2823; --lib-chip-text: #a4bab3;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans', -apple-system, sans-serif; padding-inline: 16px; padding-block: 32px 56px; }
+  .display { font-family: 'Archivo', sans-serif; } .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+  .wrap { max-width: 1140px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+
+  header { display: flex; flex-direction: column; gap: 10px; }
+  .eyebrow { font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--proto); font-weight: 600; }
+  h1 { margin: 0; font-weight: 900; font-size: clamp(26px, 4.2vw, 34px); letter-spacing: -0.01em; text-wrap: balance; }
+  .subtitle { margin: 0; color: var(--text-muted); font-size: 14.5px; max-width: 78ch; line-height: 1.55; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; }
+  .legend-item { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-muted); background: var(--surface); border: 1px solid var(--border); padding: 5px 10px 5px 8px; border-radius: 999px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.live { background: var(--live); } .dot.planned { background: var(--planned); }
+
+  .phase-strip { display: flex; flex-wrap: wrap; gap: 10px; }
+  .phase-chip { display: flex; align-items: center; gap: 7px; border-radius: 10px; padding: 8px 13px; font-size: 12px; font-weight: 700; border: 1px solid; }
+  .phase-chip.live { background: var(--live-bg); border-color: var(--live-border); color: var(--live); }
+  .phase-chip.planned { background: var(--planned-bg); border-color: var(--planned-border); color: var(--planned); }
+  .phase-chip .num { font-family: 'Archivo', sans-serif; font-weight: 900; }
+
+  section.panel { display: flex; flex-direction: column; gap: 16px; border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; background: var(--surface); box-shadow: var(--shadow); }
+  .panel-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .panel-num { width: 32px; height: 32px; border-radius: 9px; background: var(--band-dark); color: #fff; display: flex; align-items: center; justify-content: center; flex: none; font-family: 'Archivo', sans-serif; font-weight: 900; font-size: 13px; }
+  .panel-title { display: flex; flex-direction: column; }
+  .panel-title .name { font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 17.5px; }
+  .panel-title .sub { font-size: 12px; color: var(--text-faint); }
+  .panel-badge { margin-left: auto; font-size: 11px; font-weight: 700; padding: 4px 11px; border-radius: 999px; text-transform: uppercase; }
+  .panel-badge.live { color: var(--live); background: var(--live-bg); border: 1px solid var(--live-border); }
+  .panel-badge.planned { color: var(--planned); background: var(--planned-bg); border: 1px solid var(--planned-border); }
+
+  .flow-strip { display: flex; align-items: stretch; gap: 6px; overflow-x: auto; padding: 6px 2px; }
+  .flow-node { flex: none; border-radius: 10px; padding: 10px 14px; font-size: 12px; font-weight: 600; text-align: center; min-width: 130px; display: flex; flex-direction: column; justify-content: center; gap: 3px; border: 1px solid; background: var(--proto-bg); color: var(--proto); border-color: var(--proto-border); }
+  .flow-node .mono { font-size: 10px; font-weight: 500; opacity: 0.85; }
+  .flow-arrow { flex: none; display: flex; align-items: center; color: var(--text-faint); }
+  .flow-arrow svg { width: 18px; height: 18px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .card { border: 1px solid var(--border); border-radius: 12px; padding: 13px 15px; background: var(--surface-alt); display: flex; flex-direction: column; gap: 6px; }
+  .card-label { font-family: 'Archivo', sans-serif; font-weight: 700; font-size: 13px; }
+  .card-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+  .chip { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; padding: 2px 6px; border-radius: 5px; background: var(--lib-chip-bg); color: var(--lib-chip-text); }
+
+  .tool-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tool-pill { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; padding: 4px 9px; border-radius: 999px; }
+  .tool-pill.wired { background: var(--live-bg); color: var(--live); border: 1px solid var(--live-border); }
+  .tool-pill.registered { background: var(--lib-chip-bg); color: var(--lib-chip-text); }
+
+  .callout { display: flex; align-items: flex-start; gap: 9px; font-size: 12.5px; border-radius: 10px; padding: 11px 14px; line-height: 1.55; }
+  .callout svg { flex: none; width: 16px; height: 16px; margin-top: 1px; }
+  .callout.planned { background: var(--planned-bg); border: 1px solid var(--planned-border); color: var(--planned); }
+  .callout.live { background: var(--live-bg); border: 1px solid var(--live-border); color: var(--live); }
+
+  footer { border-top: 1px solid var(--border); padding-top: 16px; font-size: 12.5px; color: var(--text-faint); line-height: 1.6; }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">how hrb_chatbot_v2 talks to real MCP servers - the full picture, four phases</div>
+    <h1 class="display">MCP Integration Overview</h1>
+    <p class="subtitle">Three phases shipped and live-verified against the real, running <span class="mono">hrb_lms_mcp</span> server this session; one more parked as a spec for later. Each phase is a separate concern - routing decides <em>when</em> to call MCP, the registry tracks <em>what's</em> reachable, auth decides <em>who's</em> allowed.</p>
+    <div class="legend">
+      <span class="legend-item"><span class="dot live"></span>Live, verified against the real server</span>
+      <span class="legend-item"><span class="dot planned"></span>Parking-lot spec only</span>
+    </div>
+    <div class="phase-strip">
+      <div class="phase-chip live"><span class="num">49</span>Routing</div>
+      <div class="phase-chip live"><span class="num">50</span>Registry</div>
+      <div class="phase-chip live"><span class="num">53</span>Auth</div>
+      <div class="phase-chip live"><span class="num">55</span>Single-agentic-rag</div>
+      <div class="phase-chip planned"><span class="num">52</span>Analytics MCP (planned)</div>
+    </div>
+  </header>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="panel-num">01</div>
+      <div class="panel-title"><span class="name display">End-to-end request flow</span><span class="sub">a real leave-balance query, start to finish</span></div>
+      <span class="panel-badge live">Live</span>
+    </div>
+    <div class="flow-strip">
+      <div class="flow-node">"What's my PTO balance?"<span class="mono">POST /v1/genai-rag/.../query</span></div>
+      <div class="flow-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="flow-node">Gate 1 guardrail<span class="mono">check_input()</span></div>
+      <div class="flow-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="flow-node">Keyword match<span class="mono">try_route_to_mcp() - Phase 49</span></div>
+      <div class="flow-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="flow-node">Bearer token attached<span class="mono">oauth_client.py - Phase 53</span></div>
+      <div class="flow-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="flow-node">hrb_lms_mcp<span class="mono">get_leave_balance tool</span></div>
+      <div class="flow-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="flow-node">Real answer returned<span class="mono">"available": 11.0</span></div>
+    </div>
+    <div class="callout live">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span>Retrieval and generation (the normal RAG path) never run for a matched query - this short-circuits before them. An unmatched query falls straight through unaffected, verified both ways in the same session.</span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="panel-num">02</div>
+      <div class="panel-title"><span class="name display">Phase 49 - Keyword Routing</span><span class="sub">a deliberately crude stand-in for real ReAct tool selection</span></div>
+      <span class="panel-badge live">Live</span>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="card-label">What decides "route to MCP" (genai-rag path)</div>
+        <div class="card-desc">A fixed keyword list (<span class="mono">"leave balance"</span>, <span class="mono">"pto balance"</span>, <span class="mono">"leave history"</span>, ...) against the query text. No NLU, no intent classifier - the honest, simple version, not the final design.</div>
+        <div class="chip-row"><span class="chip">ai/rag_pipeline/tools/mcp_tools/</span></div>
+      </div>
+      <div class="card">
+        <div class="card-label">What decides "route to MCP" (single-agentic-rag path)</div>
+        <div class="card-desc">Real LLM tool selection (Phase 55) - the model reads each tool's description and decides, no keyword list. Verified live: correctly chose GetLeaveBalance for a balance question, SearchKnowledgeBase for a policy question.</div>
+        <div class="chip-row"><span class="chip">ai/agents/workflow_agents/orchestration_agent.py</span></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Tools wired vs. only registered</div>
+        <div class="card-desc">Two of hrb_lms_mcp's six tools are actually callable from this project today - the other four are visible in the registry (Phase 50) but nothing routes to them yet.</div>
+        <div class="tool-list">
+          <span class="tool-pill wired">get_leave_balance</span>
+          <span class="tool-pill wired">get_leave_history</span>
+          <span class="tool-pill registered">submit_leave_request</span>
+          <span class="tool-pill registered">get_pending_approvals</span>
+          <span class="tool-pill registered">create_hitl_request</span>
+          <span class="tool-pill registered">get_hitl_status</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-label">Failure handling</div>
+        <div class="card-desc">Any MCP failure (network, auth, tool error) is caught and falls back to normal RAG, not a 500 - the pipeline never assumes MCP is available.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="panel-num">03</div>
+      <div class="panel-title"><span class="name display">Phase 50 - Server/Tool Registry</span><span class="sub">reused tables, not new ones - the same pattern as the user's own v1 project</span></div>
+      <span class="panel-badge live">Live</span>
+    </div>
+    <p style="margin:0; font-size:12.5px; color:var(--text-muted); line-height:1.55;">At every <span class="mono">hrb_chatbot_v2</span> startup, a real <span class="mono">tools/list</span> call populates <span class="mono">hr_chatbot.app_tracking</span>'s existing (previously empty) <span class="mono">mcp_server_registry</span>/<span class="mono">mcp_tools_registry</span>/<span class="mono">mcp_server_connections</span> tables - not hand-maintained, not simulated. A down server records a failed connection attempt and the app starts anyway.</p>
+    <div class="grid">
+      <div class="card">
+        <div class="card-label">Real numbers, last verified run</div>
+        <div class="card-desc">1 server, 6 tools, <span class="mono">connection_status: connected</span>, <span class="mono">consecutive_failures: 0</span>, real latency logged (796ms one run).</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Real bugs found live</div>
+        <div class="card-desc">3 CHECK constraints on the existing tables rejected values that seemed reasonable (<span class="mono">'streamable_http'</span>, <span class="mono">'configured'</span>, <span class="mono">'failed'</span>) - only discoverable by actually inserting, not documented anywhere.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="panel-num">04</div>
+      <div class="panel-title"><span class="name display">Phase 53 - Authentication</span><span class="sub">full detail in docs/dev-reference/oauth2-auth-architecture.html - summarized here</span></div>
+      <span class="panel-badge live">Live</span>
+    </div>
+    <p style="margin:0; font-size:12.5px; color:var(--text-muted); line-height:1.55;">Real OAuth2 client-credentials, both directions verified: no token -&gt; 401, wrong secret -&gt; 401, real credentials -&gt; real signed JWT -&gt; real authenticated call succeeds. Replaced a configured-but-completely-unenforced <span class="mono">X-API-Key</span> header found live in <span class="mono">hrb_lms_mcp</span>'s actual source this same session.</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="panel-num">05</div>
+      <div class="panel-title"><span class="name display">Phase 52 - Analytics MCP Server</span><span class="sub">parking-lot spec, researched, not started</span></div>
+      <span class="panel-badge planned">Planned</span>
+    </div>
+    <p style="margin:0; font-size:12.5px; color:var(--text-muted); line-height:1.55;">A third MCP server for aggregate/historical questions ("what % of PTO goes unused by department") that Phase 49's per-employee tools structurally can't answer - NL2SQL over <span class="mono">hrb_emp_lms.leave_balances</span>/<span class="mono">leave_requests</span> (already real data), Postgres first, Snowflake later. Researched against real 2026 patterns (Oracle/Microsoft/Google Cloud all shipped official NL2SQL MCP servers) - full spec in <span class="mono">docs/agent-reference/RAG-ROADMAP.md</span> Phase 52, deferred until ReAct orchestration exists to route to it.</p>
+    <div class="callout planned">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+      <span>Whatever OAuth2 pattern secures this later should extend Phase 53's, not reinvent client-credentials per MCP server - already flagged as an open question in the Phase 52 spec.</span>
+    </div>
+  </section>
+
+  <footer>
+    Snapshot: 2026-09-24. Related: <code class="mono">docs/dev-reference/oauth2-auth-architecture.html</code> (auth detail), <code class="mono">docs/dev-reference/db-model-overview.html</code> (every table this touches), <code class="mono">docs/dev-reference/rag-architecture-layers.html</code> (where MCP routing sits in the request lifecycle), <code class="mono">docs/dev-reference/rag-pipeline-current-state.html</code> (single-agentic-rag's own architecture lane), <code class="mono">docs/agent-reference/RAG-ROADMAP.md</code> Phases 49/50/52/53/55 (full specs).
+  </footer>
+
+</div>

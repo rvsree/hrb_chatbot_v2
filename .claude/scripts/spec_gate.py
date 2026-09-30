@@ -1,6 +1,6 @@
 """PreToolUse hook for hrb_chatbot_v2 - blocks a Write/Edit under
-src/hrb_chatbot/** unless at least one phase in docs/RAG-ROADMAP.md has a
-written, not-yet-done spec.
+src/hrb_chatbot/** unless at least one phase in
+docs/agent-reference/RAG-ROADMAP.md has a written, not-yet-done spec.
 
 Deliberately scoped to src/hrb_chatbot/** only (via `should_gate` below) -
 never .claude/, tests/, or docs/ - so this hook can never lock out fixing
@@ -10,7 +10,7 @@ this hook cannot verify a given edit falls inside a spec's declared
 boundary, only that some spec is in flight. That's implementer.md's job
 ("stay inside the phase's declared scope"), not this hook's.
 
-Detection: scans docs/RAG-ROADMAP.md's "## Phases" section for a top-level
+Detection: scans docs/agent-reference/RAG-ROADMAP.md's "## Phases" section for a top-level
 "- [ ]" bullet (not yet done) that has a nested "- **Spec:**" sub-item
 (see .claude/skills/spec-new/SKILL.md for the format). Any match -> allow.
 
@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-ROADMAP = PROJECT_ROOT / "docs" / "RAG-ROADMAP.md"
+ROADMAP = PROJECT_ROOT / "docs" / "agent-reference" / "RAG-ROADMAP.md"
 
 
 def should_gate(file_path: str) -> bool:
@@ -77,7 +77,7 @@ def main() -> None:
 
     if not has_open_spec():
         deny(
-            "No open spec found in docs/RAG-ROADMAP.md's ## Phases section "
+            "No open spec found in docs/agent-reference/RAG-ROADMAP.md's ## Phases section "
             "(a '- [ ]' phase with a nested '- **Spec:**' block). Write one "
             "with /spec-new before editing src/hrb_chatbot/**."
         )

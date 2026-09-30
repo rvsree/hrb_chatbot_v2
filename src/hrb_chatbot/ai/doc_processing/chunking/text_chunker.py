@@ -39,9 +39,7 @@ LARGE_DOCUMENT_CHUNK_SIZE = int(read_setting(None, "CHUNK_LARGE_DOCUMENT_CHUNK_S
 
 
 def extract_text_from_pdf(file_path: str) -> str:
-    """Return every page's text plus any tables (via pdfplumber -
-    table_extractor.py, since pypdf has no table awareness) appended as
-    their own markdown blocks after the page text, not inlined in place."""
+    """Return every page's text plus any tables, appended as markdown blocks after the page text."""
     reader = PdfReader(file_path)
     pages_text = [page.extract_text() or "" for page in reader.pages]
     text = "\n\n".join(pages_text)
@@ -122,9 +120,7 @@ CHUNKING_STRATEGIES = {
 
 
 def decide_chunking_strategy(text: str) -> str:
-    """Auto-pick a strategy when none was given - rules from the workshop's
-    own Decision Matrix, not invented thresholds. "semantic" stays explicit-
-    only (its "accuracy critical" trigger isn't detectable from text alone)."""
+    """Auto-pick a strategy when none was given - "semantic" stays explicit-only."""
     stripped = text.strip()
 
     # A line is a markdown heading only if "#" starts it after stripping
@@ -166,9 +162,7 @@ def decide_chunking_strategy(text: str) -> str:
 
 
 def decide_chunk_size(text: str) -> int:
-    """Auto-pick a chunk size when none was given - same "content decides,
-    not a hardcoded guess" idea as decide_chunking_strategy(). Only grows
-    past the default, never shrinks it - takes the max of both signals."""
+    """Auto-pick a chunk size when none was given - only grows past the default, never shrinks it."""
     stripped = text.strip()
 
     table_lengths = [len(block) for block in TABLE_BLOCK_PATTERN.findall(stripped)]
@@ -200,9 +194,7 @@ def chunk_text(
     chunk_size: int | None = None,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
 ) -> list[str]:
-    """Split text into chunks ready to embed, using the given strategy/
-    chunk_size - or, if not given, auto-selecting both (see
-    decide_chunking_strategy/decide_chunk_size)."""
+    """Split text using the given strategy/chunk_size, or auto-select both if not given."""
     if chunking_strategy:
         strategy = chunking_strategy
         logger.info("chunking: explicit strategy=%s", strategy)

@@ -1,5 +1,4 @@
-"""Shared interface every vector database client implements - ChromaDB,
-Pinecone, etc. behind four backend-agnostic operations."""
+"""Shared interface every vector database client implements - four backend-agnostic operations."""
 
 from abc import ABC, abstractmethod
 
@@ -20,8 +19,7 @@ class BaseVectorDBClient(ABC):
         embeddings: list[list[float]],
         metadatas: list[dict] | None = None,
     ) -> None:
-        """Add or update chunks in one collection. `documents` is the chunk text
-        (kept so a query result can return it, not just an id); `embeddings` must align by index with `ids`."""
+        """Add or update chunks in one collection - `embeddings` must align by index with `ids`."""
         raise NotImplementedError
 
     @abstractmethod
@@ -32,8 +30,7 @@ class BaseVectorDBClient(ABC):
         top_k: int = 5,
         where: dict | None = None,
     ) -> dict:
-        """Return the top_k chunks closest to query_embedding. `where` is an
-        optional metadata filter every backend must support (at least equality)."""
+        """Return the top_k chunks closest to query_embedding; `where` is an optional metadata filter."""
         raise NotImplementedError
 
     @abstractmethod
@@ -43,13 +40,10 @@ class BaseVectorDBClient(ABC):
 
     @abstractmethod
     def update_metadata(self, collection_name: str, ids: list[str], metadatas: list[dict]) -> None:
-        """Update only metadata on existing chunks, no re-embed. `metadatas[i]`
-        REPLACES the full dict for `ids[i]`, not a merge - pass every field
-        to keep, not just the ones changing."""
+        """Update only metadata on existing chunks - `metadatas[i]` REPLACES the full dict, not a merge."""
         raise NotImplementedError
 
     @abstractmethod
     def health_check(self) -> dict:
-        """Report whether this client is usable: makes one cheap real call
-        (listing collections/indexes) and reports the outcome - never raises."""
+        """Report whether this client is usable - one cheap real call, never raises."""
         raise NotImplementedError

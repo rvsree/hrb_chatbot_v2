@@ -15,7 +15,7 @@ fastapi==0.115.5
 uvicorn==0.30.6
 httpx==0.28.1
 aiofiles==25.1.0
-python-multipart==0.0.6
+python-multipart==0.0.20  # bumped from 0.0.6 for mcp==1.9.4 (Phase 49), which needs >=0.0.9
 requests==2.34.2
 
 # -----------------------------------------------------------------------------
@@ -76,7 +76,7 @@ psycopg-pool==3.2.5
 sqlalchemy==2.0.52
 # Phase 44: indexing reverted from LangChain's index() back to LlamaIndex's
 # VectorStoreIndex (course-ware alignment, reversing Phase 17 - see
-# docs/RAG-ROADMAP.md). Re-adding what Phase 17 removed: `pip install
+# docs/agent-reference/RAG-ROADMAP.md). Re-adding what Phase 17 removed: `pip install
 # --dry-run` against this project's current stack found no new conflicts -
 # llama-index-vector-stores-chroma/-pinecone were already installed and
 # never actually uninstalled, and llama-index-core's own dependency tree
@@ -131,7 +131,7 @@ langchain-pinecone==0.2.13
 # (SelfQueryRetriever's filter-language parser; langchain.chains.query_constructor
 # raises ImportError without it - confirmed live) are the only two genuinely
 # new dependencies this phase needed. No langchain-anthropic/langchain-aws -
-# see docs/RAG-ROADMAP.md's Phase 20 entry for why those don't install here
+# see docs/agent-reference/RAG-ROADMAP.md's Phase 20 entry for why those don't install here
 # at all (a real langchain-core/anthropic version deadlock), and
 # common/clients/llm_client/langchain_chat_model.py for the workaround.
 lark==1.3.1
@@ -158,6 +158,29 @@ presidio-anonymizer==2.2.364
 # checked with pip install --dry-run before picking it.
 # -----------------------------------------------------------------------------
 deepeval==3.3.9
+
+# -----------------------------------------------------------------------------
+# MCP client (Phase 49) - official SDK, same package hrb_lms_mcp's server
+# itself uses. Pinned to 1.9.4, not >=1.2.0: an unpinned install pulled
+# mcp==2.2.0 -> starlette==1.6.0, breaking FastAPI's own starlette<0.42.0
+# pin - caught live, not by dry-run alone. 1.6.0 (the first pin tried)
+# resolved clean but has no mcp.client.streamable_http - hrb_lms_mcp's
+# server only speaks streamable-http, not classic SSE, so 1.6.0 can't
+# actually call it. 1.9.4 has streamable_http and resolves clean, but
+# needs python-multipart>=0.0.9 (see that pin above) - verified with the
+# full document-upload test suite, not just a dry-run, since a past bug
+# in this exact area (multipart parsing) was a real regression once.
+# -----------------------------------------------------------------------------
+mcp==1.9.4
+
+# -----------------------------------------------------------------------------
+# OAuth2 app-to-app client credentials (Phase 53) - issues/verifies JWTs
+# for authenticating hrb_chatbot_v2's outbound MCP calls to hrb_lms_mcp.
+# Already a transitive dep of mcp (pyjwt[crypto]) in hrb_lms_mcp's own
+# env - pinned explicitly here too, not relied on as an undocumented
+# transitive install.
+# -----------------------------------------------------------------------------
+pyjwt==2.10.1
 
 # -----------------------------------------------------------------------------
 # Deferred Packages (Enable for Linux/Docker deployment)

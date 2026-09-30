@@ -15,9 +15,9 @@ from src.hrb_chatbot.services import documents_service
 client = TestClient(app)
 
 HR_SUPPORT_IDENTITY_BODY = {
-    "user_profile": {"employee_id": "E00001", "full_name": "Hana Support", "role": "hr_support"}
+    "user_profile": {"employee_id": "EMP051", "full_name": "Hana Support", "role": "hr_support"}
 }
-EMPLOYEE_USER_PROFILE = {"employee_id": "E00002", "full_name": "Eddy Employee", "role": "employee"}
+EMPLOYEE_USER_PROFILE = {"employee_id": "EMP052", "full_name": "Eddy Employee", "role": "employee"}
 
 SECRET_LOOKING_MESSAGE = "connection failed: password=supersecret123 at internal-db-host:5432"
 

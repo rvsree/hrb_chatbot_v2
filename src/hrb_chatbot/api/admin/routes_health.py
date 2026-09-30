@@ -1,6 +1,4 @@
-"""The health endpoints. GET /ping - free, instant, no provider calls (what
-a container HEALTHCHECK/deploy smoke test should point at). GET /health -
-the real diagnostic, actually calls each backend and reports reachability."""
+"""The health endpoints - GET /ping is free/instant, GET /health calls each backend for real."""
 
 from fastapi import APIRouter
 
@@ -18,9 +16,7 @@ router = APIRouter(tags=["health"])
 
 @router.get("/ping")
 def ping():
-    """Confirm the process is up and serving requests - nothing more. No
-    provider is called, so this never fails because a backend is down; use
-    GET /health for that."""
+    """Confirm the process is up - no provider is called, so this never fails on a down backend."""
     return {"status": "ok"}
 
 
@@ -30,10 +26,7 @@ def get_health(
     metadata_provider: MetadataStore = METADATA_PROVIDER_QUERY,
     vector_provider: VectorDB = VECTOR_PROVIDER_QUERY,
 ):
-    """Check every backend integration this app currently has wired up:
-    the LLM client, the vector store, and the document-metadata store.
-    Each check makes one real, free call to its backend - see health_checks.py.
-    """
+    """Check every backend integration (LLM, vector store, metadata store) with one real, free call each."""
     return health_response(
         agent_health.check_all_backend_services(
             provider=provider,

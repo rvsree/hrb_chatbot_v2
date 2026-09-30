@@ -19,7 +19,7 @@ def _fake_retrieve_chunks_capturing(captured, chunks=None):
 
 
 def _fake_generate_answer_capturing(captured):
-    def _fake(query, chunks, model_name=None, temperature=0.0, max_tokens=None):
+    def _fake(query, chunks, model_name=None, temperature=0.0, max_tokens=None, chat_history=None):
         captured["temperature"] = temperature
         return {"answer": "fake answer", "model_used": "gpt-4.1-mini"}
 
@@ -99,3 +99,105 @@ async def test_explicit_nonzero_temperature_passes_through(monkeypatch):
     await pipeline.answer_query(RagQueryParams(query="test", temperature=0.7))
 
     assert captured["temperature"] == 0.7
+
+
+# Phase 49: a matched query short-circuits before retrieve_chunks/generate_answer
+# are ever called - the two spies below prove retrieval/generation were skipped.
+async def test_mcp_routable_query_skips_retrieval_and_generation(monkeypatch):
+    called = {"retrieve": False, "generate": False}
+
+    async def _spy_retrieve_chunks(*args, **kwargs):
+        called["retrieve"] = True
+        return [], None
+
+    def _spy_generate_answer(*args, **kwargs):
+        called["generate"] = True
+        return {"answer": "should not be used", "model_used": "gpt-4.1-mini"}
+
+    async def _fake_try_route_to_mcp(query, employee_id):
+        return {"query": query, "answer": "MCP answer", "model_used": None, "sources": [],
+                "vector_db": None, "search_strategy": None, "applied_filter": None, "routed_to": "get_leave_balance"}
+
+    _patch_guardrails(monkeypatch)
+    monkeypatch.setattr(pipeline, "retrieve_chunks", _spy_retrieve_chunks)
+    monkeypatch.setattr(pipeline, "generate_answer", _spy_generate_answer)
+    monkeypatch.setattr(pipeline, "try_route_to_mcp", _fake_try_route_to_mcp)
+
+    result = await pipeline.answer_query(RagQueryParams(query="What's my PTO balance?", employee_id="EMP052"))
+
+    assert result["answer"] == "MCP answer"
+    assert called["retrieve"] is False
+    assert called["generate"] is False
+
+
+# Phase 58: server-side conversation memory - disabled by default, opt-in
+# via RagQueryParams.enable_conversation_memory.
+async def test_conversation_memory_disabled_by_default_no_conversation_id(monkeypatch):
+    _patch_guardrails(monkeypatch)
+    monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve_chunks_capturing({}))
+    monkeypatch.setattr(pipeline, "generate_answer", _fake_generate_answer_capturing({}))
+
+    result = await pipeline.answer_query(RagQueryParams(query="test"))
+
+    assert result["conversation_id"] is None
+
+
+async def test_enabling_conversation_memory_generates_and_saves_a_turn(monkeypatch):
+    from src.hrb_chatbot.ai.pre_processing import conversation_memory
+
+    conversation_memory._CONVERSATIONS.clear()
+    _patch_guardrails(monkeypatch)
+    monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve_chunks_capturing({}, chunks=[{"filename": "x", "chunk_index": 0, "text": "y"}]))
+    monkeypatch.setattr(pipeline, "generate_answer", _fake_generate_answer_capturing({}))
+
+    result = await pipeline.answer_query(RagQueryParams(query="test question", enable_conversation_memory=True))
+
+    assert result["conversation_id"] is not None
+    saved = conversation_memory.load_history(result["conversation_id"])
+    assert [m.content for m in saved] == ["test question", "fake answer"]
+
+
+async def test_mcp_routed_answer_echoes_conversation_id_but_does_not_save_a_turn(monkeypatch):
+    from src.hrb_chatbot.ai.pre_processing import conversation_memory
+
+    conversation_memory._CONVERSATIONS.clear()
+
+    async def _fake_try_route_to_mcp(query, employee_id):
+        return {"query": query, "answer": "MCP answer", "model_used": "mcp:x", "sources": [],
+                "vector_db": "n/a (mcp)", "search_strategy": "n/a (mcp)", "applied_filter": None}
+
+    _patch_guardrails(monkeypatch)
+    monkeypatch.setattr(pipeline, "try_route_to_mcp", _fake_try_route_to_mcp)
+
+    result = await pipeline.answer_query(
+        RagQueryParams(query="What's my PTO balance?", employee_id="EMP052", enable_conversation_memory=True)
+    )
+
+    assert result["conversation_id"] is not None
+    assert conversation_memory.load_history(result["conversation_id"]) == []
+
+
+async def test_an_existing_conversation_id_is_passed_to_generate_answer_as_chat_history(monkeypatch):
+    from src.hrb_chatbot.ai.pre_processing import conversation_memory
+
+    conversation_memory._CONVERSATIONS.clear()
+    conversation_memory.save_turn("conv-1", "earlier question", "earlier answer")
+    captured = {}
+    _patch_guardrails(monkeypatch)
+    monkeypatch.setattr(
+        pipeline,
+        "retrieve_chunks",
+        _fake_retrieve_chunks_capturing(captured, chunks=[{"filename": "x", "chunk_index": 0, "text": "y"}]),
+    )
+
+    def _fake_generate_answer(query, chunks, model_name=None, temperature=0.0, max_tokens=None, chat_history=None):
+        captured["chat_history"] = chat_history
+        return {"answer": "fake answer", "model_used": "gpt-4.1-mini"}
+
+    monkeypatch.setattr(pipeline, "generate_answer", _fake_generate_answer)
+
+    await pipeline.answer_query(
+        RagQueryParams(query="follow-up question", enable_conversation_memory=True, conversation_id="conv-1")
+    )
+
+    assert [m.content for m in captured["chat_history"]] == ["earlier question", "earlier answer"]

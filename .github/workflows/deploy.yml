@@ -4,7 +4,7 @@ name: Deploy
 # branch) never reaches AWS at all. The AWS credentials this job uses
 # belong to hrb-chatbot-github-actions-deploy, a dedicated IAM user created
 # specifically for this workflow - not the admin identity used to build
-# everything in docs/RAG-ROADMAP.md's Phase 10 by hand. That user can only
+# everything in docs/agent-reference/RAG-ROADMAP.md's Phase 10 by hand. That user can only
 # push to the hrb-chatbot ECR repository and trigger this one App Runner
 # service's deployment - see its inline policy for the exact permissions.
 #
@@ -14,7 +14,7 @@ name: Deploy
 # A GitHub branch rename deletes the old ref outright - it leaves no
 # redirect - so this trigger would have matched nothing at all (silently:
 # no error, the workflow just never runs again) if this line hadn't been
-# updated in the same change. See docs/CICD-BRANCHING-STRATEGY.md for the
+# updated in the same change. See docs/agent-reference/CICD-BRANCHING-STRATEGY.md for the
 # intended feature -> develop -> master flow, and why deploy.yml stays
 # scoped to master only for now - no staging App Runner service exists yet,
 # and standing one up is a real, costed AWS decision, not a code change.
@@ -53,7 +53,7 @@ jobs:
         # AND OCI-format manifests (as opposed to classic Docker v2 schema2)
         # both independently caused App Runner to pull the image
         # successfully and then silently fail to ever start the container
-        # (CREATE_FAILED, zero application logs) - see docs/RAG-ROADMAP.md's
+        # (CREATE_FAILED, zero application logs) - see docs/agent-reference/RAG-ROADMAP.md's
         # Phase 10 for the two real deployment failures this was found the
         # hard way from. Losing any one of these three flags reintroduces
         # one of those two bugs.
@@ -80,7 +80,7 @@ jobs:
         # outright if App Runner reports OPERATION_IN_PROGRESS for more
         # than ~5 minutes or the deployment fails - both real, seen
         # outcomes during Phase 10's three CREATE_FAILED attempts (see
-        # docs/RAG-ROADMAP.md), not hypothetical.
+        # docs/agent-reference/RAG-ROADMAP.md), not hypothetical.
         run: |
           for i in $(seq 1 30); do
             STATUS=$(aws apprunner describe-service \
@@ -104,6 +104,6 @@ jobs:
         # deployment succeeded: a real HTTP call to the live URL returns a
         # real 200. Hits /ping, not /health - this job has no reason to spend
         # a provider call just to confirm the container booted; see
-        # docs/AWS-DEVOPS-RUNBOOK.md for the deliberate, by-hand /health check.
+        # docs/agent-reference/AWS-DEVOPS-RUNBOOK.md for the deliberate, by-hand /health check.
         run: |
           curl --fail --silent --show-error "${{ env.APP_RUNNER_URL }}/ping"

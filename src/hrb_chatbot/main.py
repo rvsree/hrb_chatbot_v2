@@ -1,28 +1,47 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 
 from src.hrb_chatbot.api.admin import routes_health
+from src.hrb_chatbot.api.agentic_rag import query_agent
+from src.hrb_chatbot.api.multi_agentic_rag import query_agent as multi_query_agent
 from src.hrb_chatbot.api.dependencies import json_error
 from src.hrb_chatbot.api.rag import ingest_document, retrieve_document
 from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.observability.langsmith_tracing import enable_tracing_if_configured
+from src.hrb_chatbot.common.observability.mcp_registry_startup import register_configured_mcp_servers
 
 logger = get_logger("main")
 
 enable_tracing_if_configured()
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Phase 50: best-effort - a down MCP server or unreachable registry
+    database must never stop the app from starting."""
+    try:
+        await register_configured_mcp_servers()
+    except Exception as error:
+        logger.warning("MCP registry startup failed, app starting anyway: %s", error)
+    yield
+
+
 app = FastAPI(
     title="HRB Chatbot",
     version="0.1.0",
     description="An HR benefits chatbot backed by a RAG pipeline over the JPMC benefits knowledge base.",
+    lifespan=lifespan,
 )
 
 app.include_router(routes_health.router)
 
 app.include_router(ingest_document.router_ingest_document, prefix="/v1/genai-rag/ingest-document")
 app.include_router(retrieve_document.router_retrieve_document, prefix="/v1/genai-rag/retrieve-document")
+app.include_router(query_agent.router_query_agent, prefix="/v1/single-agentic-rag")
+app.include_router(multi_query_agent.router_query_agent, prefix="/v1/multi-agentic-rag")
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):

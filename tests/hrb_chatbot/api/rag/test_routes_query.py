@@ -8,7 +8,7 @@ tests/hrb_chatbot/ai/rag_pipeline/query_retrieval/test_retriever.py and
 a real network call or cost money.
 
 Phase 45: identity travels in the request body's user_profile sub-object,
-not shared client headers - see docs/endpoint-request-response-contracts.md."""
+not shared client headers - see docs/agent-reference/endpoint-request-response-contracts.md."""
 
 from fastapi.testclient import TestClient
 
@@ -17,7 +17,7 @@ from src.hrb_chatbot.main import app
 
 client = TestClient(app)
 
-EMPLOYEE_USER_PROFILE = {"employee_id": "E00002", "full_name": "Eddy Employee", "role": "employee"}
+EMPLOYEE_USER_PROFILE = {"employee_id": "EMP052", "full_name": "Eddy Employee", "role": "employee"}
 
 
 def _body(query: str = "test", user_profile=None, search_options=None, generation_options=None) -> dict:
@@ -45,7 +45,7 @@ async def _fake_answer_query(params):
         ],
         "vector_db": params.vector_db or "chromadb",
         "search_strategy": params.search_strategy or "similarity",
-        "applied_filter": {"doc_classification": {"$eq": "401k"}} if params.use_self_query else None,
+        "applied_filter": {"doc_description": {"$eq": "401k"}} if params.use_self_query else None,
     }
 
 
@@ -152,7 +152,7 @@ def test_use_multi_query_and_use_self_query_are_accepted_and_passed_through(monk
     assert captured["params"].use_multi_query is True
     assert captured["params"].use_self_query is True
     assert captured["params"].llm_provider == "anthropic"
-    assert response.json()["retrieval_info"]["applied_filter"] == {"doc_classification": {"$eq": "401k"}}
+    assert response.json()["retrieval_info"]["applied_filter"] == {"doc_description": {"$eq": "401k"}}
 
 
 def test_use_multi_query_and_use_self_query_default_to_false(monkeypatch):
@@ -194,7 +194,7 @@ def test_retrieval_accepts_all_three_roles(monkeypatch):
     for role in ("employee", "manager", "hr_support"):
         response = client.post(
             "/v1/genai-rag/retrieve-document/query",
-            json=_body(user_profile={"employee_id": "E00003", "full_name": "Someone", "role": role}),
+            json=_body(user_profile={"employee_id": "MGR006", "full_name": "Someone", "role": role}),
         )
         assert response.status_code == 200, role
 
@@ -205,7 +205,7 @@ def test_unknown_role_in_the_payload_is_a_401_not_a_422():
     # not fall through to Pydantic's automatic 422 for a bad enum value.
     response = client.post(
         "/v1/genai-rag/retrieve-document/query",
-        json=_body(user_profile={"employee_id": "E00002", "full_name": "Eddy Employee", "role": "made-up-role"}),
+        json=_body(user_profile={"employee_id": "EMP052", "full_name": "Eddy Employee", "role": "made-up-role"}),
     )
 
     assert response.status_code == 401

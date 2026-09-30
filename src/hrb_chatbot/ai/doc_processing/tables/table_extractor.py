@@ -9,16 +9,12 @@ from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("doc_processing.tables")
 
-# pdfminer (pdfplumber's own dependency) warns "Could not get FontBBox..."
-# on some real PDFs - a known, harmless quirk (falls back to a default
-# bbox), not a real problem - silenced here, not fixed upstream.
+# pdfminer warns "Could not get FontBBox..." on some real PDFs - a known, harmless quirk, silenced here.
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
 
 def extract_tables_from_pdf(file_path: str) -> list[str]:
-    """Return one formatted markdown-table string per table found, in
-    document order. Never raises - a page pdfplumber can't parse is logged
-    and skipped, not fatal to the rest of extraction."""
+    """Return one markdown-table string per table found - never raises, an unparseable page is skipped."""
     tables_as_text = []
 
     with pdfplumber.open(file_path) as pdf:
@@ -39,9 +35,7 @@ def extract_tables_from_pdf(file_path: str) -> list[str]:
 
 
 def _format_table_as_markdown(table: list[list[str | None]]) -> str | None:
-    """Turn pdfplumber's row/cell grid into a markdown table - a shape
-    embedding models handle far better than a flattened wall of numbers,
-    and one a human reading a chunk can still recognize as a table."""
+    """Turn pdfplumber's row/cell grid into a markdown table - embeds better than a flattened wall of numbers."""
     rows = [row for row in table if any(cell not in (None, "") for cell in row)]
     if not rows:
         return None

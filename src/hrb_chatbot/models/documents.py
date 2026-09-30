@@ -1,10 +1,4 @@
-"""Request/response contracts for the document upload API (Phase 45: nested
-sub-objects, identity via payload not headers - see
-docs/endpoint-request-response-contracts.md, the source of truth for these shapes).
-
-Per-file results, not one status for the whole batch: one bad file in a
-batch shouldn't fail the good ones - each gets its own status and reason.
-"""
+"""Request/response contracts for the document upload API - see docs/agent-reference/endpoint-request-response-contracts.md."""
 
 from pydantic import BaseModel, Field
 
@@ -12,20 +6,14 @@ from src.hrb_chatbot.common.config.settings import read_setting
 from src.hrb_chatbot.common.enums import ChunkingStrategy
 from src.hrb_chatbot.models.common import UserProfile
 
-# A benefits PDF is a handful of pages, not a data dump - 20MB is generous
-# headroom over anything in resources/kb_docs/ today, not an arbitrary number.
-# Server-side policy, not payload-overridable - see .env's comment on this var.
+# A benefits PDF is a handful of pages - 20MB is generous headroom, not arbitrary. Server-side, not payload-overridable.
 MAX_FILE_SIZE_BYTES = int(read_setting(None, "MAX_UPLOAD_FILE_SIZE_BYTES", 20 * 1024 * 1024))
 ALLOWED_CONTENT_TYPE = "application/pdf"
 
 # The raw `payload` form field's own length bound - see the contracts doc.
 PAYLOAD_MAX_LENGTH = 20000
 
-# Phase 46: a real document is always a real PDF, far larger than this -
-# every test-generated file across this project's suite is a short fake
-# string like "%PDF-1.4 fake content <uuid>". A structural signal for
-# test-noise cleanup, not a guess (employee_id/filename aren't safe -
-# a real manual test could reuse either).
+# A structural test-noise signal - real documents are far larger, test-generated files are short fake strings.
 TEST_NOISE_MAX_FILE_SIZE_BYTES = int(read_setting(None, "TEST_NOISE_MAX_FILE_SIZE_BYTES", 1024))
 
 
@@ -38,29 +26,28 @@ class ChunkInfoInput(BaseModel):
 
 
 class DocumentMetadataInput(BaseModel):
-    """Caller-supplied document metadata - overrides the LLM extraction
-    step's own guess for whatever field is sent, field left null still
-    gets filled in by extraction."""
+    """Caller-supplied document metadata - overrides extraction's guess, null fields still get filled in."""
 
     supersedes_document_id: str | None = Field(
         None,
         max_length=100,
         description="Marks this as a new version of an existing document (single-file uploads only).",
     )
-    doc_type: str | None = Field(None, max_length=100)
+    doc_category: str | None = Field(None, max_length=100)
     department: str | None = Field(None, max_length=100)
-    doc_classification: str | None = Field(None, max_length=100)
+    doc_description: str | None = Field(None, max_length=100)
     owner: str | None = Field(None, max_length=200)
     purpose: str | None = Field(None, max_length=500)
     effective_date: str | None = Field(None, max_length=100)
     audience: str | None = Field(None, max_length=200)
     confidentiality_level: str | None = Field(None, max_length=100)
+    author: str | None = Field(None, max_length=200)
+    doc_date: str | None = Field(None, max_length=100)
+    doc_version: str | None = Field(None, max_length=100)
 
 
 class UploadDocumentsPayload(BaseModel):
-    """Parsed from the `payload` multipart form field (a JSON string, not a
-    Form()-typed field - a file upload can't be pure JSON, but this
-    non-file part can)."""
+    """Parsed from the `payload` multipart form field - a JSON string, since a file upload can't be pure JSON."""
 
     user_profile: UserProfile | None = None
     chunk_info: ChunkInfoInput | None = None
@@ -79,12 +66,12 @@ class ChunkInfoResult(BaseModel):
 
 
 class DocumentMetadataResult(BaseModel):
-    doc_type: str | None = Field(
+    doc_category: str | None = Field(
         None, description="e.g. 'policy', 'regulatory', 'investment' - caller-supplied, or the "
         "extraction step's best guess, not a controlled vocabulary."
     )
     department: str | None = None
-    doc_classification: str | None = Field(
+    doc_description: str | None = Field(
         None,
         description="The specific topic this document covers, in the document's own terms (e.g. "
         "'401k') - caller-supplied, or the extraction step's best guess.",
@@ -94,6 +81,11 @@ class DocumentMetadataResult(BaseModel):
     effective_date: str | None = None
     audience: str | None = None
     confidentiality_level: str | None = None
+    author: str | None = Field(None, description="Caller-supplied, or the extraction step's best guess.")
+    doc_date: str | None = Field(
+        None, description="The document's own stated date (created/published), distinct from effective_date."
+    )
+    doc_version: str | None = Field(None, description="The document's own stated version, e.g. '1.0'.")
 
 
 class VersioningInfo(BaseModel):
@@ -194,8 +186,7 @@ class DocumentRecord(BaseModel):
 
     @classmethod
     def from_row(cls, document: dict) -> "DocumentRecord":
-        """Map a flat metadata-store row into this nested shape - the one
-        place that translation happens, not repeated at each call site."""
+        """Map a flat metadata-store row into this nested shape - the one place this translation happens."""
         return cls(
             id=document["id"],
             filename=document["filename"],
@@ -216,14 +207,17 @@ class DocumentRecord(BaseModel):
                 chunk_size=document.get("chunk_size"), chunk_overlap=document.get("chunk_overlap")
             ),
             document_metadata=DocumentMetadataResult(
-                doc_type=document.get("doc_type"),
+                doc_category=document.get("doc_category"),
                 department=document.get("department"),
-                doc_classification=document.get("doc_classification"),
+                doc_description=document.get("doc_description"),
                 owner=document.get("owner"),
                 purpose=document.get("purpose"),
                 effective_date=document.get("effective_date"),
                 audience=document.get("audience"),
                 confidentiality_level=document.get("confidentiality_level"),
+                author=document.get("author"),
+                doc_date=document.get("doc_date"),
+                doc_version=document.get("doc_version"),
             ),
             versioning_info=VersioningInfo(
                 document_version=document.get("document_version"),
@@ -242,9 +236,7 @@ class DocumentListResponse(BaseModel):
 
 
 class DocumentDeleteResponse(BaseModel):
-    """What DELETE /rag/documents/{id} returns - a full delete: vectors, the
-    metadata row, and the uploaded file, all removed. Not partial/selective -
-    a document has one current version, not a retained history to pick from."""
+    """What DELETE /rag/documents/{id} returns - a full delete, not partial/selective."""
 
     document_id: str
     filename: str = Field(..., description="The deleted document's filename, for confirmation.")
@@ -256,8 +248,7 @@ class DocumentDeleteResponse(BaseModel):
 
 
 class DocumentDeleteAllResponse(BaseModel):
-    """What DELETE /rag/documents (no id, Phase 27) returns - deletes every
-    document, same full-delete semantics as DocumentDeleteResponse."""
+    """What DELETE /rag/documents (no id) returns - same full-delete semantics as DocumentDeleteResponse."""
 
     documents_deleted: int = Field(..., description="How many documents were deleted.")
     chunks_removed: int = Field(..., description="Total vectors deleted across all documents.")
@@ -274,8 +265,7 @@ class TestNoiseDocument(BaseModel):
 
 
 class TestNoisePreviewResponse(BaseModel):
-    """What GET .../documents/cleanup/preview returns - deletes nothing,
-    just shows what DELETE .../documents/cleanup would remove."""
+    """What GET .../documents/cleanup/preview returns - deletes nothing, just previews it."""
 
     count: int = Field(..., description="How many documents are below the size threshold.")
     threshold_bytes: int = Field(..., description="file_size_bytes below this counts as test noise.")

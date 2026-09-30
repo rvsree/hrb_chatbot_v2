@@ -1,9 +1,10 @@
 """SessionStart hook for hrb_chatbot_v2.
 
 Prints a short "what's in flight" summary: current branch, last commit,
-how many phases in docs/RAG-ROADMAP.md's status table are still open, and
-how many docs/BACKLOG.md items are open. Cheap and read-only - no test run,
-no network call - so it's safe to run on every session start.
+how many phases in docs/agent-reference/RAG-ROADMAP.md's status table are
+still open, and how many docs/agent-reference/BACKLOG.md items are open.
+Cheap and read-only - no test run, no network call - so it's safe to run on
+every session start.
 
 Run manually with: python .claude/scripts/session_start.py
 """
@@ -25,7 +26,7 @@ def run_git(*args: str) -> str:
 def count_open_roadmap_phases() -> tuple[int, str | None]:
     """Count '📋' and '🚧' rows in RAG-ROADMAP.md's status table, return
     (count, name-of-first-open-phase-or-None)."""
-    roadmap = PROJECT_ROOT / "docs" / "RAG-ROADMAP.md"
+    roadmap = PROJECT_ROOT / "docs" / "agent-reference" / "RAG-ROADMAP.md"
     text = roadmap.read_text(encoding="utf-8")
 
     table_start = text.find("## Status at a glance")
@@ -46,7 +47,7 @@ def count_open_roadmap_phases() -> tuple[int, str | None]:
 def count_open_backlog_items() -> int:
     """Count '- **' bullet items in BACKLOG.md that are not struck through
     (~~...~~) - a rough proxy for "not yet resolved"."""
-    backlog = PROJECT_ROOT / "docs" / "BACKLOG.md"
+    backlog = PROJECT_ROOT / "docs" / "agent-reference" / "BACKLOG.md"
     text = backlog.read_text(encoding="utf-8")
 
     open_count = 0

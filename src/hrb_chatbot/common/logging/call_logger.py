@@ -1,5 +1,4 @@
-"""Logs the start/duration/outcome of one outbound backend call (LLM, vector
-store, metadata store) - a context manager so this lives here once, not per call site."""
+"""Logs the start/duration/outcome of one outbound backend call - a context manager, defined once."""
 
 import time
 from collections.abc import Iterator
@@ -9,10 +8,7 @@ from logging import Logger
 
 @contextmanager
 def log_backend_call(logger: Logger, service: str, operation: str, **context) -> Iterator[None]:
-    """Wrap one outbound call to a backend service with a start/end log.
-
-    Extra kwargs are logged as context - never pass secrets or raw prompt/document text.
-    """
+    """Wrap one outbound call with a start/end log - never pass secrets or raw prompt text as context."""
     started_at = time.perf_counter()
 
     try:

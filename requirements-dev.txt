@@ -14,7 +14,7 @@ pytest-asyncio==1.2.0
 httpx==0.28.1
 
 # CI/CD gates (added when the branch strategy was written up - see
-# docs/CICD-BRANCHING-STRATEGY.md). All three run in .github/workflows/ci.yml
+# docs/agent-reference/CICD-BRANCHING-STRATEGY.md). All three run in .github/workflows/ci.yml
 # on every branch, not just develop/master, so a merge is never the first
 # time one of these actually runs.
 #

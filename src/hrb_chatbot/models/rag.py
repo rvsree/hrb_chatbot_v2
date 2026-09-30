@@ -1,6 +1,4 @@
-"""Request/response contracts for the RAG query API (Phase 45: nested
-sub-objects, identity via payload not headers - see
-docs/endpoint-request-response-contracts.md, the source of truth for these shapes)."""
+"""Request/response contracts for the RAG query API - see docs/agent-reference/endpoint-request-response-contracts.md."""
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,7 +24,7 @@ class SearchOptions(BaseModel):
     use_self_query: bool = Field(
         False,
         description="Let an LLM parse the question itself into a structured metadata filter "
-        "(doc_type/department/doc_classification) before searching.",
+        "(doc_category/department/doc_description) before searching.",
     )
     llm_provider: LlmProvider | None = Field(
         None,
@@ -59,6 +57,14 @@ class RagQueryRequest(BaseModel):
     )
     search_options: SearchOptions | None = None
     generation_options: GenerationOptions | None = None
+    enable_conversation_memory: bool = Field(
+        False, description="Carry conversation history across calls, server-side, keyed by conversation_id."
+    )
+    conversation_id: str | None = Field(
+        None,
+        description="Pass back the value from a prior response to continue that conversation. Ignored if "
+        "enable_conversation_memory is false; a new one is generated if true and this is omitted.",
+    )
 
 
 class RetrievedChunk(BaseModel):
@@ -93,3 +99,8 @@ class RagQueryResponse(BaseModel):
     query: str = Field(..., description="The question that was asked.")
     answer_info: AnswerInfo
     retrieval_info: RetrievalInfo
+    conversation_id: str | None = Field(
+        None,
+        description="Echoed/generated when enable_conversation_memory was true - pass it back on the next "
+        "call to continue this conversation. Null when memory wasn't enabled.",
+    )

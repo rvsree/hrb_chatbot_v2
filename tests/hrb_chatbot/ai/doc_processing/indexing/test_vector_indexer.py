@@ -226,8 +226,8 @@ async def test_reindexing_a_document_does_not_repeat_the_supersede_flip(monkeypa
     assert metadata_store.documents["doc-1"]["is_current"] is True
 
 
-async def test_first_index_writes_chunks_with_no_doc_type_fields_yet(monkeypatch):
-    """Phase 19: a first index doesn't know doc_type/department/doc_classification
+async def test_first_index_writes_chunks_with_no_doc_category_fields_yet(monkeypatch):
+    """Phase 19: a first index doesn't know doc_category/department/doc_description
     yet (extraction hasn't run - see pipeline.py), so those keys are simply
     absent from the chunk metadata, not present-with-null."""
     metadata_store, vector_store, gateway = _new_setup()
@@ -237,13 +237,13 @@ async def test_first_index_writes_chunks_with_no_doc_type_fields_yet(monkeypatch
     result = await vector_indexer.write_chunks("doc-1", ["alpha"], [[0.1]])
 
     metadata = vector_store.metadata_for(vector_indexer.COLLECTION_NAME, result["chunk_ids"][0])
-    assert "doc_type" not in metadata
+    assert "doc_category" not in metadata
     assert "department" not in metadata
-    assert "doc_classification" not in metadata
+    assert "doc_description" not in metadata
 
 
-async def test_reindex_carries_forward_doc_type_fields_already_known_from_sql(monkeypatch):
-    """Phase 19: on a re-index, doc_type/department/doc_classification are
+async def test_reindex_carries_forward_doc_category_fields_already_known_from_sql(monkeypatch):
+    """Phase 19: on a re-index, doc_category/department/doc_description are
     already sitting in existing_document (extracted on the first index) -
     write_chunks() must put them straight into the new chunk metadata, no
     follow-up call needed."""
@@ -252,16 +252,16 @@ async def test_reindex_carries_forward_doc_type_fields_already_known_from_sql(mo
 
     await metadata_store.create_document("doc-1", "policy.pdf", "data/uploads/doc-1/policy.pdf")
     await vector_indexer.write_chunks("doc-1", ["alpha"], [[0.1]])
-    metadata_store.documents["doc-1"]["doc_type"] = "benefits"
+    metadata_store.documents["doc-1"]["doc_category"] = "benefits"
     metadata_store.documents["doc-1"]["department"] = "HR"
-    metadata_store.documents["doc-1"]["doc_classification"] = "401k"
+    metadata_store.documents["doc-1"]["doc_description"] = "401k"
 
     result = await vector_indexer.write_chunks("doc-1", ["alpha v2"], [[0.1]])
 
     metadata = vector_store.metadata_for(vector_indexer.COLLECTION_NAME, result["chunk_ids"][0])
-    assert metadata["doc_type"] == "benefits"
+    assert metadata["doc_category"] == "benefits"
     assert metadata["department"] == "HR"
-    assert metadata["doc_classification"] == "401k"
+    assert metadata["doc_description"] == "401k"
 
 
 async def test_apply_extracted_chunk_metadata_patches_chunks_after_first_index(monkeypatch):
@@ -279,16 +279,16 @@ async def test_apply_extracted_chunk_metadata_patches_chunks_after_first_index(m
         "doc-1",
         result["chunk_ids"],
         None,
-        doc_type="benefits",
+        doc_category="benefits",
         department="HR",
-        doc_classification="401k",
+        doc_description="401k",
     )
 
     for chunk_id in result["chunk_ids"]:
         metadata = vector_store.metadata_for(vector_indexer.COLLECTION_NAME, chunk_id)
-        assert metadata["doc_type"] == "benefits"
+        assert metadata["doc_category"] == "benefits"
         assert metadata["department"] == "HR"
-        assert metadata["doc_classification"] == "401k"
+        assert metadata["doc_description"] == "401k"
         assert metadata["is_current"] is True
         assert metadata["document_id"] == "doc-1"
 
@@ -301,10 +301,10 @@ async def test_apply_extracted_chunk_metadata_omits_fields_extraction_could_not_
     result = await vector_indexer.write_chunks("doc-1", ["alpha"], [[0.1]])
 
     await vector_indexer.apply_extracted_chunk_metadata(
-        "doc-1", result["chunk_ids"], None, doc_type=None, department=None, doc_classification=None
+        "doc-1", result["chunk_ids"], None, doc_category=None, department=None, doc_description=None
     )
 
     metadata = vector_store.metadata_for(vector_indexer.COLLECTION_NAME, result["chunk_ids"][0])
-    assert "doc_type" not in metadata
+    assert "doc_category" not in metadata
     assert "department" not in metadata
-    assert "doc_classification" not in metadata
+    assert "doc_description" not in metadata

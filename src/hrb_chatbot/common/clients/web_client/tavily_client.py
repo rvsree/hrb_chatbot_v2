@@ -1,5 +1,4 @@
-"""Tavily client - web search via plain HTTP (requests, no official library).
-Base URL is host-only; auth via an Authorization: Bearer header."""
+"""Tavily client - web search via plain HTTP, no official library."""
 
 import time
 
@@ -12,11 +11,7 @@ logger = get_logger("tavily_client")
 
 
 class TavilyClient:
-    """Runs web searches through Tavily.
-
-    This class does not inherit from BaseLLMClient because Tavily is not an LLM -
-    it has no `ask` method and no models. It only searches.
-    """
+    """Runs web searches through Tavily - doesn't inherit BaseLLMClient, isn't an LLM."""
 
     PROVIDER_NAME = "tavily"
     ENV_KEY = "TAVILY_API_KEY"
@@ -78,8 +73,7 @@ class TavilyClient:
         include_answer: bool = True,
         max_retries: int = 3,
     ) -> dict:
-        """Search the web; never raises - always returns a dict with results/answer/
-        query, plus "error" on failure. Retries with exponential backoff before giving up."""
+        """Search the web; never raises - retries with exponential backoff, "error" key on failure."""
         if not self.api_key:
             return self.build_empty_result(query, "TAVILY_API_KEY not configured")
 
@@ -130,8 +124,7 @@ class TavilyClient:
 
     @staticmethod
     def build_empty_result(query: str, error_message: str) -> dict:
-        """Build the "nothing found" reply used on failure - same shape as a
-        successful result, so calling code never has to guess which keys exist."""
+        """Build the "nothing found" reply used on failure - same shape as a successful result."""
         return {
             "results": [],
             "answer": "",
@@ -140,8 +133,7 @@ class TavilyClient:
         }
 
     def health_check(self) -> dict:
-        """Report whether this client is usable: calls GET /usage - free, and
-        shows remaining credits."""
+        """Report whether this client is usable - calls GET /usage, free and shows remaining credits."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 

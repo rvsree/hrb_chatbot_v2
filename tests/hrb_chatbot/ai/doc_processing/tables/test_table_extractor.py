@@ -1,7 +1,7 @@
 """Tests for _format_table_as_markdown() (ai/doc_processing/tables/table_extractor.py) -
 the pure formatting logic, tested directly against synthetic row data rather
 than a real PDF fixture (extract_tables_from_pdf() itself is exercised live
-against a real PDF, not in the automated suite - see docs/RAG-ROADMAP.md)."""
+against a real PDF, not in the automated suite - see docs/agent-reference/RAG-ROADMAP.md)."""
 
 from src.hrb_chatbot.ai.doc_processing.tables.table_extractor import _format_table_as_markdown
 

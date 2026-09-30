@@ -1,0 +1,210 @@
+<title>Course Topic Coverage Review</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800;900&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #f0f1f5; --surface: #ffffff; --surface-alt: #f5f6fa; --border: #dbdee7;
+    --text: #171a24; --text-muted: #555c70; --text-faint: #888fa3;
+    --built: #146b3f; --built-bg: #e3f6ea; --built-border: #b7e4c8;
+    --partial: #9a5a0c; --partial-bg: #fbf1dd; --partial-border: #edd6a2;
+    --gap: #6b7286; --gap-bg: #eef0f4; --gap-border: #d5d9e3;
+    --shadow: 0 2px 4px rgba(15,20,30,0.06), 0 10px 22px rgba(15,20,30,0.07);
+    --band: #232a42; --lib-chip-bg: #eef0f5; --lib-chip-text: #4b5468;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d0f16; --surface: #14161f; --surface-alt: #161923; --border: #292d3d;
+      --text: #e7e9f0; --text-muted: #a5abbf; --text-faint: #6b7288;
+      --built: #4fc989; --built-bg: #132a1e; --built-border: #204a32;
+      --partial: #e0ac48; --partial-bg: #2c2311; --partial-border: #4a3a17;
+      --gap: #8991a8; --gap-bg: #191d29; --gap-border: #2a2f42;
+      --shadow: 0 2px 4px rgba(0,0,0,0.35), 0 12px 26px rgba(0,0,0,0.4);
+      --band: #1a2038; --lib-chip-bg: #1e2230; --lib-chip-text: #a7aec4;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d0f16; --surface: #14161f; --surface-alt: #161923; --border: #292d3d;
+    --text: #e7e9f0; --text-muted: #a5abbf; --text-faint: #6b7288;
+    --built: #4fc989; --built-bg: #132a1e; --built-border: #204a32;
+    --partial: #e0ac48; --partial-bg: #2c2311; --partial-border: #4a3a17;
+    --gap: #8991a8; --gap-bg: #191d29; --gap-border: #2a2f42;
+    --shadow: 0 2px 4px rgba(0,0,0,0.35), 0 12px 26px rgba(0,0,0,0.4);
+    --band: #1a2038; --lib-chip-bg: #1e2230; --lib-chip-text: #a7aec4;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans', -apple-system, sans-serif; padding-inline: 16px; padding-block: 28px 56px; }
+  .display { font-family: 'Archivo', sans-serif; } .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+  .wrap { max-width: 1160px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+
+  header { display: flex; flex-direction: column; gap: 10px; }
+  .eyebrow { font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-faint); font-weight: 600; }
+  h1 { margin: 0; font-weight: 900; font-size: clamp(24px, 3.8vw, 32px); letter-spacing: -0.01em; text-wrap: balance; }
+  .subtitle { margin: 0; color: var(--text-muted); font-size: 13.5px; max-width: 82ch; line-height: 1.55; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; }
+  .legend-item { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-muted); background: var(--surface); border: 1px solid var(--border); padding: 5px 10px 5px 8px; border-radius: 999px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.built { background: var(--built); } .dot.partial { background: var(--partial); } .dot.gap { background: var(--gap); }
+
+  section.module { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+  .module-head { background: var(--band); color: #fff; padding: 12px 18px; display: flex; align-items: center; gap: 10px; }
+  .module-head .m-num { font-family: 'Archivo', sans-serif; font-weight: 900; font-size: 13px; background: rgba(255,255,255,0.15); border-radius: 6px; padding: 3px 9px; }
+  .module-head .m-name { font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 15px; }
+  .module-head .m-count { margin-left: auto; font-size: 11px; opacity: 0.75; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th { text-align: left; padding: 8px 14px; font-family: 'Archivo', sans-serif; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-faint); border-bottom: 1px solid var(--border); }
+  tbody td { padding: 8px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--surface-alt); }
+  .topic-name { font-weight: 600; }
+  .status-pill { font-size: 10px; font-weight: 700; padding: 2px 9px; border-radius: 999px; white-space: nowrap; display: inline-block; }
+  .status-pill.built { color: var(--built); background: var(--built-bg); border: 1px solid var(--built-border); }
+  .status-pill.partial { color: var(--partial); background: var(--partial-bg); border: 1px solid var(--partial-border); }
+  .status-pill.gap { color: var(--gap); background: var(--gap-bg); border: 1px solid var(--gap-border); }
+  .where { color: var(--text-muted); font-size: 11.5px; line-height: 1.5; }
+  .where .mono { font-size: 10.5px; color: var(--text-faint); }
+
+  footer { border-top: 1px solid var(--border); padding-top: 16px; font-size: 12px; color: var(--text-faint); line-height: 1.6; }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">status only - no ranking, no recommendation, no defer/drop call made here</div>
+    <h1 class="display">Course Topic Coverage Review</h1>
+    <p class="subtitle">Every distinct technique named in the workshop's own module notes/solutions (<span class="mono">SupportDesk-RAG-Workshop</span>, Modules 1-6), checked against what's actually in <span class="mono">hrb_chatbot_v2</span> today. This page only reports status - which topics to build, defer, or drop is your call, not made here.</p>
+    <div class="legend">
+      <span class="legend-item"><span class="dot built"></span>Built</span>
+      <span class="legend-item"><span class="dot partial"></span>Partially built / built differently</span>
+      <span class="legend-item"><span class="dot gap"></span>Not built</span>
+    </div>
+  </header>
+
+  <section class="module">
+    <div class="module-head"><span class="m-num">01</span><span class="m-name display">Embeddings</span><span class="m-count">15 topics</span></div>
+    <table>
+      <thead><tr><th style="width:26%">Topic</th><th style="width:12%">Status</th><th>Where / note</th></tr></thead>
+      <tbody>
+        <tr><td class="topic-name">Embedding model choice (3-small/large, ada-002)</td><td><span class="status-pill built">Built</span></td><td class="where">Uses <span class="mono">text-embedding-3-small</span> throughout - no side-by-side model comparison built as its own feature.</td></tr>
+        <tr><td class="topic-name">Generating embeddings (single + batch)</td><td><span class="status-pill built">Built</span></td><td class="where"><span class="mono">ai/doc_processing/embedding/embedding_generator.py</span></td></tr>
+        <tr><td class="topic-name">Cosine similarity as the metric</td><td><span class="status-pill built">Built</span></td><td class="where">Delegated to the vector store (Chroma/Pinecone) - not custom-coded, matches course's own recommendation of this as the standard.</td></tr>
+        <tr><td class="topic-name">Other distance metrics (Euclidean/dot/Manhattan)</td><td><span class="status-pill gap">Not built</span></td><td class="where">Course notes list these for contrast only, no exercise either.</td></tr>
+        <tr><td class="topic-name">Text preprocessing before embedding</td><td><span class="status-pill gap">Not built</span></td><td class="where">No explicit whitespace/unicode normalization step.</td></tr>
+        <tr><td class="topic-name">Token-limit awareness (8191 max)</td><td><span class="status-pill gap">Not built</span></td><td class="where">Not explicitly checked before an embedding call.</td></tr>
+        <tr><td class="topic-name">Batch processing for speed/cost</td><td><span class="status-pill built">Built</span></td><td class="where"><span class="mono">embedding_generator.py</span> embeds all chunks in one call.</td></tr>
+        <tr><td class="topic-name">Embedding caching</td><td><span class="status-pill gap">Not built</span></td><td class="where">Already flagged in <span class="mono">docs/agent-reference/BACKLOG.md</span> (found during an earlier courseware self-audit this project ran).</td></tr>
+        <tr><td class="topic-name">Similarity threshold filtering</td><td><span class="status-pill gap">Not built</span></td><td class="where"><span class="mono">retriever.py</span>'s own comment: "no relevance-bar filtering for the same reason" (no defined threshold).</td></tr>
+        <tr><td class="topic-name">Metadata/category filtering on results</td><td><span class="status-pill built">Built</span></td><td class="where">Self-Query (<span class="mono">doc_category</span>/<span class="mono">department</span>/<span class="mono">doc_description</span>), Phase 19-20.</td></tr>
+        <tr><td class="topic-name">Rate-limit retry handling on embedding calls</td><td><span class="status-pill gap">Not built</span></td><td class="where">This project's <span class="mono">rate_limiter.py</span> is for incoming requests, not outbound embedding-call retries.</td></tr>
+        <tr><td class="topic-name">Clustering / anomaly detection on embeddings</td><td><span class="status-pill gap">Not built</span></td><td class="where">Course's own "real-world applications" aside, not exercised in its own solutions.py either.</td></tr>
+        <tr><td class="topic-name">Dimension reduction, cost estimation, parallel/async embedding</td><td><span class="status-pill gap">Not built</span></td><td class="where">Course's own "Advanced Topics" - prose only there too.</td></tr>
+        <tr><td class="topic-name">Embedding-quality evaluation metrics</td><td><span class="status-pill gap">Not built</span></td><td class="where">DeepEval evaluates downstream RAG answers, not raw embedding quality itself.</td></tr>
+        <tr><td class="topic-name">Fine-tuning / multimodal / dynamic refresh</td><td><span class="status-pill gap">Not built</span></td><td class="where">Course's own "Advanced Topics," no code there either.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="module">
+    <div class="module-head"><span class="m-num">02</span><span class="m-name display">Chunking</span><span class="m-count">15 topics</span></div>
+    <table>
+      <thead><tr><th style="width:26%">Topic</th><th style="width:12%">Status</th><th>Where / note</th></tr></thead>
+      <tbody>
+        <tr><td class="topic-name">Fixed-size chunking</td><td><span class="status-pill built">Built</span></td><td class="where"><span class="mono">text_chunker.py :: chunk_fixed()</span></td></tr>
+        <tr><td class="topic-name">Recursive character splitting</td><td><span class="status-pill built">Built</span></td><td class="where"><span class="mono">chunk_recursive()</span> - the auto-selected default.</td></tr>
+        <tr><td class="topic-name">Semantic chunking</td><td><span class="status-pill built">Built</span></td><td class="where"><span class="mono">chunk_semantic()</span>, explicit-only (never auto-selected).</td></tr>
+        <tr><td class="topic-name">Markdown / HTML header splitting</td><td><span class="status-pill built">Built</span></td><td class="where"><span class="mono">chunk_markdown()</span> / <span class="mono">chunk_html()</span></td></tr>
+        <tr><td class="topic-name">Sentence window retrieval</td><td><span class="status-pill gap">Not built</span></td><td class="where">Already flagged in <span class="mono">docs/agent-reference/BACKLOG.md</span> (same self-audit as embedding caching).</td></tr>
+        <tr><td class="topic-name">Parent-child chunking</td><td><span class="status-pill gap">Not built</span></td><td class="where">Same flagged gap as sentence window.</td></tr>
+        <tr><td class="topic-name">Chunk size/overlap trade-offs (auto-selection)</td><td><span class="status-pill built">Built</span></td><td class="where"><span class="mono">decide_chunk_size()</span> - table-aware, Phase 37.</td></tr>
+        <tr><td class="topic-name">Token-based counting (tiktoken)</td><td><span class="status-pill gap">Not built</span></td><td class="where">Character-based counting only throughout.</td></tr>
+        <tr><td class="topic-name">Multi-representation / contextual enrichment / adaptive chunking</td><td><span class="status-pill gap">Not built</span></td><td class="where">Course's own "Advanced Techniques" section.</td></tr>
+        <tr><td class="topic-name">Vector store creation/querying (Chroma)</td><td><span class="status-pill built">Built</span></td><td class="where"><span class="mono">common/clients/db_client/chroma_client.py</span></td></tr>
+        <tr><td class="topic-name">Metadata filtering incl. compound filters</td><td><span class="status-pill built">Built</span></td><td class="where"><span class="mono">retriever.py :: _combine_with_current_only()</span> (<span class="mono">$and</span>)</td></tr>
+        <tr><td class="topic-name">Persist/reload vector store</td><td><span class="status-pill built">Built</span></td><td class="where">Inherent to the Chroma/Pinecone client setup.</td></tr>
+        <tr><td class="topic-name">MMR vs. plain similarity</td><td><span class="status-pill built">Built</span></td><td class="where">genai-rag's <span class="mono">search_options.search_strategy</span>; single-agentic-rag's <span class="mono">SearchKnowledgeBase</span> tool (Phase 56, today).</td></tr>
+        <tr><td class="topic-name">Chunk validation (min/max checks)</td><td><span class="status-pill gap">Not built</span></td><td class="where">No explicit validation step.</td></tr>
+        <tr><td class="topic-name">Parallel chunking / chunk caching</td><td><span class="status-pill gap">Not built</span></td><td class="where">Course's own prose-only aside too.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="module">
+    <div class="module-head"><span class="m-num">03</span><span class="m-name display">Indexing</span><span class="m-count">13 topics</span></div>
+    <table>
+      <thead><tr><th style="width:26%">Topic</th><th style="width:12%">Status</th><th>Where / note</th></tr></thead>
+      <tbody>
+        <tr><td class="topic-name">RAG-level vs. DB-level (ANN) indexing distinction</td><td><span class="status-pill built">Built</span></td><td class="where">Conceptual framing only in the course too - this project's design already separates them (LlamaIndex index type vs. Chroma/Pinecone's own ANN internals).</td></tr>
+        <tr><td class="topic-name">Vector Index (<span class="mono">VectorStoreIndex</span>)</td><td><span class="status-pill built">Built</span></td><td class="where"><span class="mono">indexing/vector_indexer.py</span>, Phase 44 (reverted to LlamaIndex).</td></tr>
+        <tr><td class="topic-name">Summary Index</td><td><span class="status-pill gap">Not built</span></td><td class="where"></td></tr>
+        <tr><td class="topic-name">Tree Index</td><td><span class="status-pill gap">Not built</span></td><td class="where">Course's own most-detailed walkthrough of the 3 modules - not built here.</td></tr>
+        <tr><td class="topic-name">Keyword Table Index</td><td><span class="status-pill gap">Not built</span></td><td class="where"></td></tr>
+        <tr><td class="topic-name">Hybrid retrieval (vector + keyword, RRF)</td><td><span class="status-pill gap">Not built</span></td><td class="where">This project is vector-only (plus Self-Query/MultiQuery, both still vector-based).</td></tr>
+        <tr><td class="topic-name">Metadata filtering at the index layer</td><td><span class="status-pill partial">Partial</span></td><td class="where">Filtering exists (via LangChain/Self-Query), not via LlamaIndex's own <span class="mono">MetadataFilters</span> API specifically - different mechanism, same outcome.</td></tr>
+        <tr><td class="topic-name">Index persistence/reload</td><td><span class="status-pill built">Built</span></td><td class="where">Inherent to Chroma/Pinecone persistence.</td></tr>
+        <tr><td class="topic-name">Index build-time benchmarking</td><td><span class="status-pill gap">Not built</span></td><td class="where"></td></tr>
+        <tr><td class="topic-name">Multi-index / <span class="mono">ComposableGraph</span> routing</td><td><span class="status-pill gap">Not built</span></td><td class="where">Course's own "Advanced Topics."</td></tr>
+        <tr><td class="topic-name">LlamaIndex &harr; LangChain interop</td><td><span class="status-pill partial">Partial</span></td><td class="where">Real interop exists structurally (indexing = LlamaIndex, retrieval = LangChain, deliberately, per <span class="mono">CLAUDE.md</span>) - not via the specific conversion utilities (<span class="mono">as_retriever</span>, custom <span class="mono">BaseRetriever</span> wrapper) the course describes.</td></tr>
+        <tr><td class="topic-name">Retrieval quality evaluation (P/R/latency, A/B)</td><td><span class="status-pill partial">Partial</span></td><td class="where">DeepEval covers P/R conceptually (LLM-judged, not the course's exact-set method); A/B comparison across index types not built.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="module">
+    <div class="module-head"><span class="m-num">04</span><span class="m-name display">RAG Pipeline</span><span class="m-count">8 topics</span></div>
+    <table>
+      <thead><tr><th style="width:26%">Topic</th><th style="width:12%">Status</th><th>Where / note</th></tr></thead>
+      <tbody>
+        <tr><td class="topic-name">Prompt template design</td><td><span class="status-pill partial">Partial</span></td><td class="where">genai-rag: built well (Phase 48, few-shot examples). single-agentic-rag: a thin 4-line prompt, no few-shot.</td></tr>
+        <tr><td class="topic-name"><span class="mono">k</span> parameter (coverage vs. relevance)</td><td><span class="status-pill partial">Partial</span></td><td class="where">Exposed in genai-rag (<span class="mono">search_options.top_k</span>); hardcoded to 3 in single-agentic-rag's tool.</td></tr>
+        <tr><td class="topic-name">MMR for diverse results</td><td><span class="status-pill built">Built</span></td><td class="where">Both pipelines now (Phase 56, today, for the agent).</td></tr>
+        <tr><td class="topic-name">Confidence-based fallbacks</td><td><span class="status-pill gap">Not built</span></td><td class="where">Neither pipeline does a distance-threshold fallback (course's <span class="mono">smart_rag()</span> pattern).</td></tr>
+        <tr><td class="topic-name">Chain type (stuff/map_reduce/refine)</td><td><span class="status-pill partial">Partial</span></td><td class="where">genai-rag: real stuff-chain (<span class="mono">response_generator.py</span>). single-agentic-rag: bypasses it, agent freeform-synthesizes from raw tool text instead. map_reduce/refine: not built anywhere.</td></tr>
+        <tr><td class="topic-name">Streaming responses</td><td><span class="status-pill gap">Not built</span></td><td class="where">Neither pipeline streams.</td></tr>
+        <tr><td class="topic-name">Multi-turn memory</td><td><span class="status-pill gap">Not built</span></td><td class="where">No conversation feature exists anywhere in this project yet.</td></tr>
+        <tr><td class="topic-name">LLM-as-judge hallucination detection</td><td><span class="status-pill partial">Partial</span></td><td class="where">genai-rag: yes (DeepEval Faithfulness + release gate). single-agentic-rag: not wired to any eval harness yet.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="module">
+    <div class="module-head"><span class="m-num">05</span><span class="m-name display">Evaluation</span><span class="m-count">8 topics</span></div>
+    <table>
+      <thead><tr><th style="width:26%">Topic</th><th style="width:12%">Status</th><th>Where / note</th></tr></thead>
+      <tbody>
+        <tr><td class="topic-name">Precision@K / Recall@K / F1@K</td><td><span class="status-pill partial">Partial</span></td><td class="where">DeepEval's <span class="mono">ContextualPrecision</span>/<span class="mono">Recall</span> (LLM-judged) instead of the course's exact-set-based calculation; F1 computed the same formula either way (Phase 55).</td></tr>
+        <tr><td class="topic-name">Groundedness</td><td><span class="status-pill built">Built</span></td><td class="where"><span class="mono">FaithfulnessMetric</span></td></tr>
+        <tr><td class="topic-name">Completeness</td><td><span class="status-pill partial">Partial</span></td><td class="where"><span class="mono">AnswerRelevancyMetric</span> used as the closest fit - not an exact match to the course's reference-answer-comparison definition.</td></tr>
+        <tr><td class="topic-name">Release gate (PASS/REVIEW/BLOCK)</td><td><span class="status-pill built">Built</span></td><td class="where"><span class="mono">golden_dataset_harness.py :: get_release_decision()</span>, Phase 55.</td></tr>
+        <tr><td class="topic-name">Failure pattern playbook (diagnostic reference)</td><td><span class="status-pill gap">Not built</span></td><td class="where">Reference material, not really "code" - not captured anywhere in this project's docs yet.</td></tr>
+        <tr><td class="topic-name">A/B testing across configurations</td><td><span class="status-pill gap">Not built</span></td><td class="where"></td></tr>
+        <tr><td class="topic-name">Continuous evaluation / monitoring dashboard / alerts</td><td><span class="status-pill partial">Partial</span></td><td class="where">The golden-dataset harness covers offline batch eval; live/continuous monitoring would come from LangSmith (built, off by default) - no dashboard/alerting built.</td></tr>
+        <tr><td class="topic-name">Human evaluation / inter-rater agreement</td><td><span class="status-pill gap">Not applicable</span></td><td class="where">Solo project, no second annotator - noted factually, not a judgment call.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="module">
+    <div class="module-head"><span class="m-num">06</span><span class="m-name display">Agentic RAG</span><span class="m-count">10 topics</span></div>
+    <table>
+      <thead><tr><th style="width:26%">Topic</th><th style="width:12%">Status</th><th>Where / note</th></tr></thead>
+      <tbody>
+        <tr><td class="topic-name">Tool-calling agent loop</td><td><span class="status-pill built">Built</span></td><td class="where"><span class="mono">ai/agents/workflow_agents/orchestration_agent.py</span>, Phase 55 - matches the course's real <span class="mono">solutions.py</span> pattern, not its notes' mention of <span class="mono">AgentExecutor</span>.</td></tr>
+        <tr><td class="topic-name">Tool design (name/func/description)</td><td><span class="status-pill built">Built</span></td><td class="where"><span class="mono">agentic_tools.py</span>, 3 tools.</td></tr>
+        <tr><td class="topic-name">Memory strategies (full/windowed/summary)</td><td><span class="status-pill gap">Not built</span></td><td class="where">Same "no memory feature exists yet" gap as Module 4.</td></tr>
+        <tr><td class="topic-name">Multi-agent systems</td><td><span class="status-pill gap">Not built</span></td><td class="where">Single agent only - the target-state diagram already marks the full multi-agent system as future scope.</td></tr>
+        <tr><td class="topic-name">Streaming agent responses</td><td><span class="status-pill gap">Not built</span></td><td class="where"></td></tr>
+        <tr><td class="topic-name">Custom agent types (<span class="mono">create_react_agent</span>, etc.)</td><td><span class="status-pill built">Built (deliberately not these)</span></td><td class="where">Used the course's own real hand-rolled function-calling loop instead - matches the actual reference code, not the heavier classes its notes mention.</td></tr>
+        <tr><td class="topic-name">Tool input validation via Pydantic</td><td><span class="status-pill gap">Not built</span></td><td class="where">Tools use plain JSON-schema dicts, no Pydantic model per tool.</td></tr>
+        <tr><td class="topic-name">Tool error handling (never crash)</td><td><span class="status-pill built">Built</span></td><td class="where">Every tool returns an error string, verified in tests.</td></tr>
+        <tr><td class="topic-name">Max iterations guard</td><td><span class="status-pill built">Built</span></td><td class="where">Default 5, matches the course.</td></tr>
+        <tr><td class="topic-name">Agent evaluation (tool-selection accuracy tracking)</td><td><span class="status-pill gap">Not built</span></td><td class="where">Verified manually/live this session, not as a repeatable eval harness.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer>
+    Snapshot: 2026-09-24. 69 topics total across 6 modules. Extracted directly from the workshop's own notes/solutions files, not from memory. This page reports status only - no topic here has been marked for defer, drop, or priority; that decision is yours to make per topic.
+  </footer>
+
+</div>

@@ -5,10 +5,7 @@ from fastapi.responses import JSONResponse
 
 from src.hrb_chatbot.common.enums import LlmProvider, MetadataStore, VectorDB
 
-# Query()'s enum default is what makes /docs render a dropdown, and what
-# makes FastAPI reject a typo with a 422 before any check runs. Phase 43
-# hybrid: /health is a plain read-only lookup with no security/parsing
-# weight, so it keeps this typed shortcut rather than hand-rolled parsing.
+# Query()'s enum default makes /docs render a dropdown and rejects a typo with a 422 before any check runs.
 PROVIDER_QUERY = Query(
     default=LlmProvider.OPENAI,
     description="Which LLM provider to check.",
@@ -36,17 +33,14 @@ VECTOR_PROVIDER_QUERY = Query(
 def json_error(
     status_code: int, message: str, code: str, headers: dict | None = None, **extra
 ) -> JSONResponse:
-    """Build a consistent error shape: {"error": ..., "code": ..., ...extra}.
-    `code` is required (from common/error_codes.py), never defaulted.
-    `headers` becomes real HTTP headers, kept separate so it can't leak into the body."""
+    """Build a consistent error shape: {"error": ..., "code": ..., ...extra}."""
     body = {"error": message, "code": code}
     body.update(extra)
     return JSONResponse(status_code=status_code, content=body, headers=headers)
 
 
 def health_response(report: dict) -> JSONResponse:
-    """Turn a health report into a response with the right status code - 200 when
-    healthy, 503 otherwise, since a monitoring tool reads the status code, not the body."""
+    """Turn a health report into a response - 200 when healthy, 503 otherwise."""
     if report["status"] == "healthy":
         status_code = 200
     else:

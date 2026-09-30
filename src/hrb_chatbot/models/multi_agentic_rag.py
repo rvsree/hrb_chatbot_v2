@@ -1,0 +1,42 @@
+"""Request/response contracts for multi-agentic-rag - see
+docs/agent-reference/endpoint-request-response-contracts.md. Phase 61: the contract is real, the pipeline behind it is stubbed."""
+
+from pydantic import BaseModel, Field
+
+from src.hrb_chatbot.models.agentic_rag import ToolCallInfo
+from src.hrb_chatbot.models.common import UserProfile
+
+
+class MultiAgenticRagRequest(BaseModel):
+    user_profile: UserProfile | None = None
+    query: str = Field(..., min_length=1, max_length=2000, description="The question to ask the multi-agent system.")
+    enable_conversation_memory: bool = Field(
+        False, description="Carry conversation history across calls, server-side, keyed by conversation_id."
+    )
+    conversation_id: str | None = Field(
+        None,
+        description="Pass back the value from a prior response to continue that conversation. Ignored if "
+        "enable_conversation_memory is false; a new one is generated if true and this is omitted.",
+    )
+
+
+class AgentTaskInfo(BaseModel):
+    agent: str = Field(..., description="Which sub-agent handled this task.")
+    focus: str = Field(..., description="What the router asked this sub-agent to do.")
+
+
+class MultiAgenticRagResponse(BaseModel):
+    """What POST /query returns."""
+
+    query: str = Field(..., description="The question that was asked.")
+    answer: str = Field(..., description="The final, synthesized answer.")
+    tasks: list[AgentTaskInfo] = Field(..., description="Which sub-agent(s) the router dispatched to, and why.")
+    tools_used: list[ToolCallInfo] = Field(
+        ..., description="Every tool call any sub-agent made, in order, aggregated across all of them."
+    )
+    iterations: int = Field(..., description="Total reasoning rounds across every sub-agent.")
+    conversation_id: str | None = Field(
+        None,
+        description="Echoed/generated when enable_conversation_memory was true - pass it back on the next "
+        "call to continue this conversation. Null when memory wasn't enabled.",
+    )

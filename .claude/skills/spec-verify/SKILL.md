@@ -10,7 +10,7 @@ allowed-tools: Read Grep Glob Bash(.venv/Scripts/python.exe -m pytest *)
 
 # Verify a spec's acceptance criteria are actually tested
 
-1. Read the target phase's `**Spec:**` block in `docs/RAG-ROADMAP.md`.
+1. Read the target phase's `**Spec:**` block in `docs/agent-reference/RAG-ROADMAP.md`.
 2. For each "User-visible behavior" and "Failure modes" line, find the test
    that exercises it. `tests/` mirrors `src/` 1:1 (see `CLAUDE.md`), so a
    change in `src/hrb_chatbot/ai/doc_processing/chunking/text_chunker.py`

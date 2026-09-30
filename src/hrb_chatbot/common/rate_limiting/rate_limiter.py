@@ -1,5 +1,4 @@
-"""In-memory rate limiter - fixed window, one per client. Single-process
-only; a real distributed store (Redis) is the fix once this runs as more than one instance."""
+"""In-memory rate limiter, fixed window - single-process only, Redis is the fix once this scales out."""
 
 import time
 
@@ -16,9 +15,7 @@ def _setting_is_true(value: str) -> bool:
 
 
 class RateLimiter:
-    """Counts requests per client key in a fixed time window, and raises
-    HTTPException(429) once a client exceeds the configured limit within
-    the current window."""
+    """Counts requests per client key, raising HTTPException(429) past the configured limit."""
 
     def __init__(
         self,
@@ -35,8 +32,7 @@ class RateLimiter:
         self._windows: dict[str, tuple[float, int]] = {}
 
     def check(self, client_key: str) -> None:
-        """Record one request from client_key. Raises HTTPException(429) if
-        this pushes them over the limit for the current window."""
+        """Record one request from client_key - raises HTTPException(429) if this pushes them over the limit."""
         if not self.enabled:
             return
 
@@ -87,17 +83,13 @@ def get_rate_limiter() -> RateLimiter:
 
 
 def reset_rate_limiter() -> None:
-    """Throw away the shared limiter so the next call builds a fresh one.
-
-    Only needed in tests - same reasoning as reset_client_gateway()/reset_db_gateway().
-    """
+    """Throw away the shared limiter so the next call builds a fresh one - only needed in tests."""
     global _shared_rate_limiter
     _shared_rate_limiter = None
 
 
 def enforce_rate_limit(request: Request) -> None:
-    """Call directly from a route body to rate-limit it. Keys on the
-    caller's IP, or "unknown" if request.client is unset."""
+    """Call directly from a route body to rate-limit it - keys on the caller's IP, or "unknown"."""
     if request.client:
         client_key = request.client.host
     else:

@@ -2,7 +2,7 @@
 name: code-reviewer
 description: >
   Reviews a phase's code changes against hrb_chatbot_v2's
-  docs/CODING-STANDARDS.md and error-handling-by-layer rules, in an
+  docs/agent-reference/CODING-STANDARDS.md and error-handling-by-layer rules, in an
   isolated context, after implementation and before its roadmap checkbox
   is flipped to done. Read-only - flags issues, never fixes them. Use as a
   second pair of eyes distinct from spec-verify, which checks test
@@ -22,9 +22,9 @@ most of all.
 ## What you check
 
 1. **Scope.** Compare `git diff --stat` against the phase's declared
-   `**Spec:**` block in `docs/RAG-ROADMAP.md` - flag any changed file the
+   `**Spec:**` block in `docs/agent-reference/RAG-ROADMAP.md` - flag any changed file the
    spec doesn't mention.
-2. **`docs/CODING-STANDARDS.md` adherence.** Read it first. In particular:
+2. **`docs/agent-reference/CODING-STANDARDS.md` adherence.** Read it first. In particular:
    comments explain *why*, not *what*, and stay under two lines outside a
    genuinely critical spot; errors are handled per-layer (a client returns
    errors as data, a service raises, a route returns a consistent JSON

@@ -1,6 +1,4 @@
-"""OpenAI clients: chat (+ tools) and embeddings. Base URL must include "/v1"
-- unlike Anthropic, omitting it 404s. Organization/Project (optional) tag
-request cost when one key is shared across apps."""
+"""OpenAI clients: chat (+ tools) and embeddings - base URL must include "/v1" or it 404s."""
 
 from openai import OpenAI
 
@@ -113,8 +111,7 @@ class OpenAIChatClient(BaseLLMClient):
         return response.model_dump()
 
     def health_check(self) -> dict:
-        """Report whether this client is usable: calls GET /models - free, but
-        proves the API key, base URL and network path all actually work."""
+        """Report whether this client is usable - calls GET /models, free but proves the key/URL/network work."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 
@@ -136,11 +133,7 @@ class OpenAIChatClient(BaseLLMClient):
 
 
 class OpenAIEmbeddingClient:
-    """Turns text into embeddings (lists of numbers) using OpenAI.
-
-    This class does not inherit from BaseLLMClient because it does not chat -
-    it has no `ask` method. It only needs `get_embeddings` and `health_check`.
-    """
+    """Turns text into embeddings - doesn't inherit BaseLLMClient, has no `ask` method."""
 
     PROVIDER_NAME = "openai_embedding"
     ENV_KEY = "OPENAI_API_KEY"
@@ -156,8 +149,7 @@ class OpenAIEmbeddingClient:
         organization: str | None = None,
         project: str | None = None,
     ):
-        """Same settings as OpenAIChatClient, but the model comes from
-        OPENAI_EMBED_MODEL instead of OPENAI_CHAT_MODEL."""
+        """Same settings as OpenAIChatClient, but the model comes from OPENAI_EMBED_MODEL."""
         self.api_key = read_setting(api_key, "OPENAI_API_KEY")
         self.model = read_setting(model, "OPENAI_EMBED_MODEL", self.DEFAULT_MODEL)
         self.base_url = read_url_setting(base_url, "OPENAI_BASE_URL", self.DEFAULT_BASE_URL)
@@ -194,8 +186,7 @@ class OpenAIEmbeddingClient:
         }
 
     def get_embeddings(self, texts: list[str], model: str | None = None) -> list[list[float]]:
-        """Turn a list of texts into embeddings, same order as input. `model` overrides
-        the configured model for this call only - it must match the target index's embedding dimension."""
+        """Turn texts into embeddings, same order as input - `model` must match the target index's dimension."""
         if not texts:
             return []
 
@@ -211,8 +202,7 @@ class OpenAIEmbeddingClient:
         return embeddings
 
     def health_check(self) -> dict:
-        """Report whether this client is usable: also checks that the configured
-        embedding model is one this key is actually allowed to see."""
+        """Report whether this client is usable, including that the configured model is visible to this key."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 

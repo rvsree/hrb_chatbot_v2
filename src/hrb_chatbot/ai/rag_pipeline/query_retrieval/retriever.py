@@ -1,6 +1,4 @@
-"""Searches the vector store for chunks matching a query (workshop Module
-4) - two plain functions (similarity, MMR), no classes. Phase 20 layers
-MultiQueryRetriever/SelfQueryRetriever on top (LangChain's own classes)."""
+"""Searches the vector store for chunks matching a query - similarity/MMR, plus LangChain's own retrievers layered on top."""
 
 from langchain.chains.query_constructor.schema import AttributeInfo
 from langchain.retrievers.multi_query import MultiQueryRetriever
@@ -21,18 +19,16 @@ logger = get_logger("rag_pipeline.retriever")
 # older chunks have no is_current key at all and would be wrongly excluded by equality.
 CURRENT_CHUNKS_ONLY = {"is_current": {"$ne": False}}
 
-# Self-Query's LLM may only parse a filter on these three fields (Phase 19).
-# is_current is deliberately absent - it's this project's own bookkeeping,
-# never something a parsed filter can turn off (see _combine_with_current_only).
+# Self-Query's LLM may only parse a filter on these three fields - is_current is deliberately absent (bookkeeping only).
 METADATA_FIELD_INFO = [
     AttributeInfo(
-        name="doc_type",
+        name="doc_category",
         description="The kind of document: one of policy, regulatory, investment, benefits, other.",
         type="string",
     ),
     AttributeInfo(name="department", description="Which company department this document belongs to.", type="string"),
     AttributeInfo(
-        name="doc_classification",
+        name="doc_description",
         description=(
             "The specific topic this document covers, in the document's own terms, e.g. '401k', "
             "'health benefits', 'leave policy'."
@@ -50,7 +46,7 @@ DOCUMENT_CONTENTS_DESCRIPTION = (
 _STRUCTURED_QUERY_TRANSLATORS = {"chromadb": ChromaTranslator, "pinecone": PineconeTranslator}
 
 # top_k always returns that many results even if irrelevant - vector search
-# has no "good enough" concept. Calibrated in Phase 4.5 (see docs/RAG-ROADMAP.md).
+# has no "good enough" concept. Calibrated in Phase 4.5 (see docs/agent-reference/RAG-ROADMAP.md).
 MAX_CHROMA_DISTANCE = float(read_setting(None, "RAG_MAX_CHROMA_DISTANCE", 1.1))
 MIN_PINECONE_SCORE = float(read_setting(None, "RAG_MIN_PINECONE_SCORE", 0.5))
 
@@ -147,9 +143,7 @@ def search_multi_query(
 def _parse_self_query_filter(
     store, provider: str, query: str, llm_provider: str
 ) -> dict | None:
-    """Parse `query` into a filter over METADATA_FIELD_INFO's three fields
-    (e.g. "what's my 401k vesting schedule" -> {"doc_classification":
-    {"$eq": "401k"}}), or None - NOT yet combined with is_current."""
+    """Parse `query` into a filter over METADATA_FIELD_INFO, or None - not yet combined with is_current."""
     translator = _STRUCTURED_QUERY_TRANSLATORS[provider]()
     self_query_retriever = SelfQueryRetriever.from_llm(
         GatewayChatModel(provider=llm_provider),
@@ -174,9 +168,7 @@ async def retrieve_chunks(
     use_self_query: bool = False,
     llm_provider: str | None = None,
 ) -> tuple[list[dict], dict | None]:
-    """Search for the query. Returns (chunks, applied_filter) - score is
-    null for MMR/MultiQuery results; applied_filter is what Self-Query
-    parsed, or None."""
+    """Returns (chunks, applied_filter) - score is null for MMR/MultiQuery results."""
     resolved_strategy = search_strategy or "similarity"
     resolved_llm_provider = get_active_llm_provider(llm_provider)
     logger.info(

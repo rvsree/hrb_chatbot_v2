@@ -1,6 +1,4 @@
-"""Fixed value sets for "which backend" fields, as StrEnum (like a Java enum)
-- FastAPI rejects an unknown value with a 422 at the boundary, and each
-member compares/serializes as its plain string, no `.value` needed."""
+"""Fixed value sets for "which backend" fields, as StrEnum - FastAPI rejects an unknown value with a 422."""
 
 from enum import StrEnum
 
@@ -29,8 +27,7 @@ class LlmProvider(StrEnum):
 
 
 class ChunkingStrategy(StrEnum):
-    """How to split text into chunks - see text_chunker.CHUNKING_STRATEGIES
-    (must keep matching) and decide_chunking_strategy()'s auto-selected default."""
+    """How to split text into chunks - must keep matching text_chunker.CHUNKING_STRATEGIES."""
 
     FIXED = "fixed"
     RECURSIVE = "recursive"
@@ -41,16 +38,14 @@ class ChunkingStrategy(StrEnum):
 
 
 class SearchStrategy(StrEnum):
-    """Which retrieval technique to run a query with - see
-    retriever.SEARCH_STRATEGIES (the dict these values must keep matching)."""
+    """Which retrieval technique to run a query with - must keep matching retriever.SEARCH_STRATEGIES."""
 
     SIMILARITY = "similarity"
     MMR = "mmr"
 
 
 class Role(StrEnum):
-    """Who's calling the API, for the gateway's role-based access check -
-    see api/gateway/rbac.py. HR_SUPPORT uploads documents; all three can retrieve."""
+    """Who's calling the API - HR_SUPPORT uploads documents, all three can retrieve."""
 
     EMPLOYEE = "employee"
     MANAGER = "manager"

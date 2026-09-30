@@ -1,6 +1,4 @@
-"""SQLite client - one row per uploaded document. Uses aiosqlite (not stdlib
-sqlite3) since a sync call would block the async event loop; the table is
-created lazily on first real use, not in __init__."""
+"""SQLite client - one row per uploaded document. Uses aiosqlite since a sync call would block the event loop."""
 
 import json
 import sqlite3
@@ -27,8 +25,7 @@ CREATE TABLE IF NOT EXISTS documents (
 )
 """
 
-# Columns added after the table already existed - SQLite has no ADD COLUMN
-# IF NOT EXISTS, so the duplicate-column error is caught and ignored below.
+# SQLite has no ADD COLUMN IF NOT EXISTS - the duplicate-column error is caught and ignored below.
 ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN chunk_ids TEXT",
     "ALTER TABLE documents ADD COLUMN document_version INTEGER NOT NULL DEFAULT 1",
@@ -46,24 +43,29 @@ ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN superseded_by TEXT",
     "ALTER TABLE documents ADD COLUMN owner TEXT",
     "ALTER TABLE documents ADD COLUMN department TEXT",
-    "ALTER TABLE documents ADD COLUMN doc_type TEXT",
+    "ALTER TABLE documents ADD COLUMN doc_category TEXT",
     "ALTER TABLE documents ADD COLUMN purpose TEXT",
-    "ALTER TABLE documents ADD COLUMN doc_classification TEXT",
+    "ALTER TABLE documents ADD COLUMN doc_description TEXT",
     "ALTER TABLE documents ADD COLUMN effective_date TEXT",
     "ALTER TABLE documents ADD COLUMN audience TEXT",
     "ALTER TABLE documents ADD COLUMN confidentiality_level TEXT",
-    # Phase 45: the caller's employee_id, from the request payload's
-    # user_profile - an audit trail, not part of the RBAC decision.
+    # The caller's employee_id, from user_profile - an audit trail, not part of the RBAC decision.
     "ALTER TABLE documents ADD COLUMN uploaded_by TEXT",
+    # Provenance/citation fields, not filter dimensions like doc_category/department/doc_description.
+    "ALTER TABLE documents ADD COLUMN author TEXT",
+    "ALTER TABLE documents ADD COLUMN doc_date TEXT",
+    "ALTER TABLE documents ADD COLUMN doc_version TEXT",
 ]
+
+# Rename rather than add-new/leave-old, so stored values survive - checked against real column names first.
+RENAME_COLUMNS = [("doc_type", "doc_category"), ("doc_classification", "doc_description")]
 
 # Speeds up find_by_content_hash() - one lookup per upload, worth an index.
 CREATE_CONTENT_HASH_INDEX = (
     "CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash)"
 )
 
-# One row per chunk, not a JSON blob on documents.chunk_ids - makes "which
-# chunks are current" a real indexable SQL query, not app-code JSON parsing.
+# One row per chunk, not a JSON blob - makes "which chunks are current" a real indexable SQL query.
 CREATE_CHUNKS_TABLE = """
 CREATE TABLE IF NOT EXISTS chunks (
     chunk_id TEXT PRIMARY KEY,
@@ -96,6 +98,13 @@ class SQLiteClient(BaseMetadataClient):
 
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(CREATE_DOCUMENTS_TABLE)
+
+            cursor = await db.execute("PRAGMA table_info(documents)")
+            existing_columns = {row[1] for row in await cursor.fetchall()}
+            for old_name, new_name in RENAME_COLUMNS:
+                if old_name in existing_columns and new_name not in existing_columns:
+                    await db.execute(f"ALTER TABLE documents RENAME COLUMN {old_name} TO {new_name}")
+
             for add_column in ADD_COLUMNS:
                 try:
                     await db.execute(add_column)
@@ -124,9 +133,7 @@ class SQLiteClient(BaseMetadataClient):
 
         with log_backend_call(logger, "sqlite", "metadata.create_document", document_id=document_id):
             async with aiosqlite.connect(self.db_path) as db:
-                # document_version starts at 0, not 1 - "no successfully
-                # indexed version yet". record_successful_index() below
-                # always does version + 1, so the first real index lands on 1.
+                # document_version starts at 0 ("no successfully indexed version yet") - the first real index lands on 1.
                 await db.execute(
                     "INSERT INTO documents (id, filename, file_path, status, error_message, "
                     "created_at, updated_at, document_version, file_size_bytes, content_hash, "
@@ -228,8 +235,7 @@ class SQLiteClient(BaseMetadataClient):
                 )
                 row = await cursor.fetchone()
 
-                # Replace this document's rows in `chunks` - delete-then-insert,
-                # same diff-and-replace shape as the vector store's own stale-chunk cleanup.
+                # Replace this document's rows in `chunks` - same delete-then-insert shape as the vector store's cleanup.
                 await db.execute("DELETE FROM chunks WHERE document_id = ?", (document_id,))
                 await db.executemany(
                     "INSERT INTO chunks (chunk_id, document_id, chunk_index, created_at, is_current) "
@@ -269,12 +275,15 @@ class SQLiteClient(BaseMetadataClient):
         document_id: str,
         owner: str | None,
         department: str | None,
-        doc_type: str | None,
+        doc_category: str | None,
         purpose: str | None,
-        doc_classification: str | None,
+        doc_description: str | None,
         effective_date: str | None = None,
         audience: str | None = None,
         confidentiality_level: str | None = None,
+        author: str | None = None,
+        doc_date: str | None = None,
+        doc_version: str | None = None,
     ) -> None:
         await self._ensure_table()
         now = datetime.now(UTC).isoformat()
@@ -282,18 +291,21 @@ class SQLiteClient(BaseMetadataClient):
         with log_backend_call(logger, "sqlite", "metadata.record_document_metadata", document_id=document_id):
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute(
-                    "UPDATE documents SET owner = ?, department = ?, doc_type = ?, purpose = ?, "
-                    "doc_classification = ?, effective_date = ?, audience = ?, confidentiality_level = ?, "
-                    "updated_at = ? WHERE id = ?",
+                    "UPDATE documents SET owner = ?, department = ?, doc_category = ?, purpose = ?, "
+                    "doc_description = ?, effective_date = ?, audience = ?, confidentiality_level = ?, "
+                    "author = ?, doc_date = ?, doc_version = ?, updated_at = ? WHERE id = ?",
                     (
                         owner,
                         department,
-                        doc_type,
+                        doc_category,
                         purpose,
-                        doc_classification,
+                        doc_description,
                         effective_date,
                         audience,
                         confidentiality_level,
+                        author,
+                        doc_date,
+                        doc_version,
                         now,
                         document_id,
                     ),
@@ -333,8 +345,7 @@ class SQLiteClient(BaseMetadataClient):
                 await db.commit()
 
     def health_check(self) -> dict:
-        """Report whether this store is usable: opens the file, creates the
-        table if missing, and queries it."""
+        """Report whether this store is usable - opens the file, creates the table if missing, queries it."""
         result = {"provider": self.PROVIDER_NAME, "db_path": self.db_path}
 
         try:

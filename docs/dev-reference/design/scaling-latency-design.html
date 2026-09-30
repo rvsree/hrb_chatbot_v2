@@ -1,0 +1,353 @@
+<title>Scaling &amp; Latency Design</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800;900&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #eef3f1; --surface: #ffffff; --surface-alt: #f2f6f4; --border: #d7e1dd;
+    --text: #131b18; --text-muted: #526059; --text-faint: #85958c;
+    --live: #147a4a; --live-bg: #e3f5eb; --live-border: #b5e3c8;
+    --design: #9a5a0c; --design-bg: #fbf1dd; --design-border: #edd6a2;
+    --accent: #0f7d6b; --accent-bg: #e2f4f0; --accent-border: #b9e5db;
+    --cost: #a4321f; --cost-bg: #fbe9e5; --cost-border: #f0c3b8;
+    --shadow: 0 2px 4px rgba(15,25,20,0.06), 0 12px 26px rgba(15,25,20,0.08);
+    --band-dark: #0d3d34; --band-mid: #0f7d6b;
+    --lib-chip-bg: #eaf1ee; --lib-chip-text: #43554c;
+    --bar-track: #e2ece8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1310; --surface: #161f1a; --surface-alt: #17211c; --border: #263329;
+      --text: #e6ece8; --text-muted: #9fb0a5; --text-faint: #67766c;
+      --live: #52c98a; --live-bg: #12261a; --live-border: #1f4530;
+      --design: #e0ac48; --design-bg: #2c2311; --design-border: #4a3a17;
+      --accent: #3fc2a8; --accent-bg: #102822; --accent-border: #1c473c;
+      --cost: #e2795f; --cost-bg: #2c1712; --cost-border: #4a271e;
+      --shadow: 0 2px 4px rgba(0,0,0,0.35), 0 14px 30px rgba(0,0,0,0.42);
+      --band-dark: #0b2b25; --band-mid: #123f36;
+      --lib-chip-bg: #1c2622; --lib-chip-text: #a7b8ae;
+      --bar-track: #1c2622;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1310; --surface: #161f1a; --surface-alt: #17211c; --border: #263329;
+    --text: #e6ece8; --text-muted: #9fb0a5; --text-faint: #67766c;
+    --live: #52c98a; --live-bg: #12261a; --live-border: #1f4530;
+    --design: #e0ac48; --design-bg: #2c2311; --design-border: #4a3a17;
+    --accent: #3fc2a8; --accent-bg: #102822; --accent-border: #1c473c;
+    --cost: #e2795f; --cost-bg: #2c1712; --cost-border: #4a271e;
+    --shadow: 0 2px 4px rgba(0,0,0,0.35), 0 14px 30px rgba(0,0,0,0.42);
+    --band-dark: #0b2b25; --band-mid: #123f36;
+    --lib-chip-bg: #1c2622; --lib-chip-text: #a7b8ae;
+    --bar-track: #1c2622;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    padding-inline: 16px; padding-block: 32px 56px;
+  }
+  .display { font-family: 'Archivo', sans-serif; }
+  .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+
+  .wrap { max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; gap: 30px; }
+
+  header { display: flex; flex-direction: column; gap: 10px; }
+  .eyebrow { font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+  h1 { margin: 0; font-weight: 900; font-size: clamp(26px, 4.2vw, 36px); letter-spacing: -0.01em; text-wrap: balance; }
+  .subtitle { margin: 0; color: var(--text-muted); font-size: 14.5px; max-width: 76ch; line-height: 1.55; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; }
+  .legend-item { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-muted); background: var(--surface); border: 1px solid var(--border); padding: 5px 10px 5px 8px; border-radius: 999px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.live { background: var(--live); } .dot.design { background: var(--design); } .dot.cost { background: var(--cost); }
+
+  section.panel { display: flex; flex-direction: column; gap: 16px; border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; background: var(--surface); box-shadow: var(--shadow); }
+  .panel-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .panel-num { width: 30px; height: 30px; border-radius: 9px; background: var(--band-dark); color: #fff; display: flex; align-items: center; justify-content: center; flex: none; font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 13px; }
+  .panel-title { display: flex; flex-direction: column; }
+  .panel-title .name { font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 18px; }
+  .panel-title .sub { font-size: 12px; color: var(--text-faint); }
+
+  /* Latency waterfall */
+  .waterfall { display: flex; flex-direction: column; gap: 9px; }
+  .wf-row { display: grid; grid-template-columns: 168px 1fr 70px; align-items: center; gap: 10px; }
+  @media (max-width: 620px) { .wf-row { grid-template-columns: 100px 1fr 56px; } .wf-row .wf-label .mono { display: none; } }
+  .wf-label { font-size: 12.5px; font-weight: 600; display: flex; flex-direction: column; }
+  .wf-label .mono { font-size: 10px; color: var(--text-faint); font-weight: 500; }
+  .wf-track { position: relative; height: 22px; background: var(--bar-track); border-radius: 6px; overflow: hidden; }
+  .wf-fill { height: 100%; border-radius: 6px; background: var(--accent); }
+  .wf-fill.llm { background: var(--cost); }
+  .wf-fill.io { background: var(--accent); }
+  .wf-time { font-family: 'IBM Plex Mono', monospace; font-size: 12px; text-align: right; color: var(--text-muted); }
+  .wf-total { display: flex; justify-content: space-between; align-items: baseline; border-top: 1px dashed var(--border); padding-top: 10px; margin-top: 2px; }
+  .wf-total .label { font-size: 12.5px; color: var(--text-muted); }
+  .wf-total .value { font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 20px; }
+  .wf-note { font-size: 12px; color: var(--text-faint); line-height: 1.5; }
+
+  .callout { display: flex; align-items: flex-start; gap: 9px; font-size: 12.5px; border-radius: 10px; padding: 11px 14px; line-height: 1.55; }
+  .callout svg { flex: none; width: 16px; height: 16px; margin-top: 1px; }
+  .callout.cost { background: var(--cost-bg); border: 1px solid var(--cost-border); color: var(--cost); }
+  .callout.live { background: var(--live-bg); border: 1px solid var(--live-border); color: var(--live); }
+  .callout.design { background: var(--design-bg); border: 1px solid var(--design-border); color: var(--design); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+  .grid.two { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .card { border: 1px solid var(--border); border-radius: 12px; padding: 14px 15px; background: var(--surface-alt); display: flex; flex-direction: column; gap: 7px; }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .card-label { font-family: 'Archivo', sans-serif; font-weight: 700; font-size: 13.5px; }
+  .status-pill { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.03em; }
+  .status-pill.live { color: var(--live); background: var(--live-bg); border: 1px solid var(--live-border); }
+  .status-pill.design { color: var(--design); background: var(--design-bg); border: 1px solid var(--design-border); }
+  .status-pill.gap { color: var(--cost); background: var(--cost-bg); border: 1px solid var(--cost-border); }
+  .card-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+  .chip { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; padding: 2px 6px; border-radius: 5px; background: var(--lib-chip-bg); color: var(--lib-chip-text); }
+
+  /* pipeline strip for async decoupling */
+  .pipe-strip { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 4px 0; }
+  .pipe-node { flex: none; border-radius: 9px; padding: 9px 13px; font-size: 12px; font-weight: 600; text-align: center; min-width: 118px; }
+  .pipe-node.live { background: var(--live-bg); color: var(--live); border: 1px solid var(--live-border); }
+  .pipe-node.design { background: var(--design-bg); color: var(--design); border: 1px solid var(--design-border); }
+  .pipe-node .mono { display: block; font-size: 10px; font-weight: 500; color: var(--text-faint); margin-top: 2px; }
+  .pipe-arrow { flex: none; color: var(--text-faint); }
+  .pipe-arrow svg { width: 16px; height: 16px; }
+
+  /* reference pattern chips */
+  .ref-list { display: flex; flex-direction: column; gap: 10px; }
+  .ref-item { display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .ref-item:last-child { border-bottom: none; }
+  @media (max-width: 620px) { .ref-item { grid-template-columns: 1fr; gap: 4px; } }
+  .ref-name { font-family: 'Archivo', sans-serif; font-weight: 700; font-size: 13px; }
+  .ref-desc { font-size: 12.5px; color: var(--text-muted); line-height: 1.55; }
+  .ref-desc .mono { font-size: 11px; color: var(--text-faint); }
+
+  footer { border-top: 1px solid var(--border); padding-top: 16px; font-size: 12.5px; color: var(--text-faint); line-height: 1.6; }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">system design reference - grounded in this project's real deployment, not generic advice</div>
+    <h1 class="display">Scaling &amp; Latency Design</h1>
+    <p class="subtitle">How this project's own request chain spends its time today, what actually helps at each layer, and what changes once agentic-rag adds multi-step tool calls on top. Written for the "how do you scale an AI system beyond Docker/Kubernetes" interview question.</p>
+    <div class="legend">
+      <span class="legend-item"><span class="dot live"></span>Live in this project</span>
+      <span class="legend-item"><span class="dot design"></span>Design only, not built</span>
+      <span class="legend-item"><span class="dot cost"></span>Where latency/cost concentrates</span>
+    </div>
+  </header>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="panel-num">1</div>
+      <div class="panel-title">
+        <span class="name display">Latency budget - the real chain, today</span>
+        <span class="sub">every guardrailed query now makes three LLM round-trips, not one</span>
+      </div>
+    </div>
+
+    <div class="waterfall">
+      <div class="wf-row">
+        <div class="wf-label">Input guardrail<span class="mono">check_input()</span></div>
+        <div class="wf-track"><div class="wf-fill llm" style="width:22%"></div></div>
+        <div class="wf-time">~300-600ms</div>
+      </div>
+      <div class="wf-row">
+        <div class="wf-label">Embed query<span class="mono">text-embedding-3-small</span></div>
+        <div class="wf-track"><div class="wf-fill io" style="width:6%"></div></div>
+        <div class="wf-time">~50-100ms</div>
+      </div>
+      <div class="wf-row">
+        <div class="wf-label">Vector search<span class="mono">Pinecone / Chroma</span></div>
+        <div class="wf-track"><div class="wf-fill io" style="width:8%"></div></div>
+        <div class="wf-time">~80-150ms</div>
+      </div>
+      <div class="wf-row">
+        <div class="wf-label">Generation<span class="mono">gpt-4.1-mini</span></div>
+        <div class="wf-track"><div class="wf-fill llm" style="width:40%"></div></div>
+        <div class="wf-time">~1.0-2.5s</div>
+      </div>
+      <div class="wf-row">
+        <div class="wf-label">Output guardrail<span class="mono">check_output()</span></div>
+        <div class="wf-track"><div class="wf-fill llm" style="width:22%"></div></div>
+        <div class="wf-time">~300-600ms</div>
+      </div>
+      <div class="wf-total">
+        <span class="label">Rough end-to-end, sequential</span>
+        <span class="value display">~2-4s</span>
+      </div>
+    </div>
+
+    <div class="callout cost">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+      <span><strong>Guardrails tripled the LLM call count per query</strong> (input check, generation, output check - all real gpt-4.1-mini calls), each one a full network round-trip. This is the single biggest lever in this project's own latency story, and it's a direct consequence of Phase 7 landing - not a hypothetical.</span>
+    </div>
+
+    <div class="grid two">
+      <div class="card">
+        <div class="card-head"><span class="card-label">Run checks in parallel, not sequentially</span><span class="status-pill design">not built</span></div>
+        <p class="card-desc">The output guardrail can't start before generation finishes (it checks the answer), but nothing requires the input guardrail and the embedding call to run one-after-another - they read the same query, independently. A true win only shows up once independent steps are actually awaited together.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="card-label">Stream the generation response</span><span class="status-pill design">not built</span></div>
+        <p class="card-desc">Today the client waits for the full answer before anything renders. Streaming tokens as they're generated makes the <em>perceived</em> latency the time-to-first-token (~500ms-1s), not the full 2-4s - the actual work doesn't get faster, but the wait feels shorter.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="card-label">Cheaper model for guardrail checks</span><span class="status-pill design">not built</span></div>
+        <p class="card-desc">Guardrail checks are yes/no safety classifications, not open-ended generation - they don't need the same model tier as the actual answer. A smaller/faster judge model for <span class="mono">self_check_input</span>/<span class="mono">self_check_output</span> shrinks two of the three LLM legs.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="card-label">Token logging is already there</span><span class="status-pill live">live</span></div>
+        <p class="card-desc">Every client (<span class="mono">openai_client.py</span>, <span class="mono">anthropic_client.py</span>, <span class="mono">open_router_client.py</span>) already logs prompt/completion tokens per call - the raw data for a real latency/cost dashboard exists today, just not visualized yet.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="panel-num">2</div>
+      <div class="panel-title">
+        <span class="name display">Caching layers</span>
+        <span class="sub">what caching actually saves at each stage - and where it can't help</span>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="card-head"><span class="card-label">Embedding cache</span><span class="status-pill gap">known gap</span></div>
+        <p class="card-desc">Same query text embedded twice pays the embedding-API cost twice. A hash-of-query -&gt; vector cache removes that - flagged in this session's own IK courseware self-audit, not yet built.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="card-label">Semantic response cache</span><span class="status-pill design">not built</span></div>
+        <p class="card-desc">Near-duplicate questions ("what's the 401k match" vs "how much does the company match on 401k") could reuse a prior full answer if judged similar enough - higher payoff than embedding caching, also higher risk of serving a stale/wrong-context answer.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="card-label">Retrieval cache</span><span class="status-pill design">not built</span></div>
+        <p class="card-desc">Cache the vector-search result for a query hash, skip re-querying Pinecone/Chroma on a repeat. Cheap to add, but retrieval is already the smallest slice of the latency budget above - low leverage compared to caching the LLM calls.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="card-label">What caching can't touch</span><span class="status-pill live">by design</span></div>
+        <p class="card-desc">Guardrail checks and generation both depend on the live query text and retrieved context - caching helps repeat or near-repeat questions, not the first time any specific question is asked. It shrinks the tail, not the floor.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="panel-num">3</div>
+      <div class="panel-title">
+        <span class="name display">Horizontal scaling</span>
+        <span class="sub">why this API can safely run many replicas, and what would break it</span>
+      </div>
+    </div>
+    <div class="grid two">
+      <div class="card">
+        <div class="card-head"><span class="card-label">Already stateless-safe</span><span class="status-pill live">live</span></div>
+        <p class="card-desc">Every request carries its own identity (<span class="mono">user_profile</span>) and every dependency (LLM, vector DB, metadata store) is an external service reached through a gateway - no in-process session state to keep replicas in sync. Any number of App Runner instances can serve requests interchangeably today.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="card-label">App Runner autoscaling</span><span class="status-pill live">live</span></div>
+        <p class="card-desc">The deployed service already runs on App Runner (see <span class="mono">docs/agent-reference/AWS-DEVOPS-RUNBOOK.md</span>), which scales instance count off concurrent request volume automatically - no separate Kubernetes/ECS layer needed for this project's current scale.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="card-label">What would break it</span><span class="status-pill cost">watch for this</span></div>
+        <p class="card-desc">Adding an in-memory cache, an in-memory rate limiter, or agent conversation memory that isn't backed by an external store (Redis, Postgres) would silently break horizontal scaling - a second replica wouldn't see the first replica's state. Worth flagging explicitly before agentic-rag's memory work starts.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="card-label">Postgres metadata store</span><span class="status-pill gap">not yet live</span></div>
+        <p class="card-desc">Code is fully implemented (Phase 2.5) but the deployed service still runs on SQLite - blocked on provisioning a hosted Postgres (Neon), not on code. SQLite doesn't handle concurrent writers from multiple replicas safely; this becomes a real blocker the moment there's more than one instance writing metadata.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="panel-num">4</div>
+      <div class="panel-title">
+        <span class="name display">Async decoupling for ingestion</span>
+        <span class="sub">why the write path (upload/index) and read path (query) should scale independently</span>
+      </div>
+    </div>
+    <p class="card-desc" style="margin:0;">Today, ingestion is synchronous and in-request: a document upload blocks on extract -&gt; chunk -&gt; embed -&gt; index, all in the same HTTP call (<span class="mono">ai/doc_processing/pipeline.py</span>). That's fine for one document at a time, but it means a large batch upload ties up a request thread for as long as indexing takes, and couples query-path scaling to ingestion-path load.</p>
+    <div class="pipe-strip">
+      <div class="pipe-node live">Upload<span class="mono">in-request today</span></div>
+      <div class="pipe-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="pipe-node design">S3 presigned POST<span class="mono">designed, not built</span></div>
+      <div class="pipe-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="pipe-node design">s3:ObjectCreated:*<span class="mono">S3 event notification</span></div>
+      <div class="pipe-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="pipe-node design">SQS queue<span class="mono">batch, backpressure</span></div>
+      <div class="pipe-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="pipe-node design">Lambda worker<span class="mono">chunk/embed/index</span></div>
+    </div>
+    <div class="callout design">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+      <span><strong>One open design question, not yet resolved:</strong> the existing <span class="mono">docs/agent-reference/S3-ASYNC-UPLOAD-DESIGN.md</span> has S3 events triggering Lambda directly, with SQS used only as a dead-letter queue for failed Lambda invocations. Batch processing (queuing many documents, controlling concurrency, retry-with-backoff across a large upload) genuinely wants SQS as the <em>main</em> queue between S3 and Lambda, not just the DLQ - that's a real change to the existing design doc, worth deciding deliberately rather than drifting into during implementation.</span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="panel-num">5</div>
+      <div class="panel-title">
+        <span class="name display">What changes once agentic-rag lands</span>
+        <span class="sub">the same latency/scaling questions, with a multi-step loop instead of one pass</span>
+      </div>
+    </div>
+    <div class="grid two">
+      <div class="card">
+        <div class="card-head"><span class="card-label">Latency multiplies, not adds</span><span class="status-pill cost">watch for this</span></div>
+        <p class="card-desc">A ReAct loop that calls 3 tools sequentially before answering isn't "generation + a bit more" - it's several more full round-trips, each with its own guardrail exposure if guardrails wrap every step. The waterfall in section 1 becomes a loop, not a line.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="card-label">Parallel tool calls, where independent</span><span class="status-pill design">not built</span></div>
+        <p class="card-desc">If an agent decides to check two unrelated tools (e.g. a benefits lookup and a PTO balance lookup), running them concurrently instead of one-after-another is the single biggest lever once tool-calling exists - same principle as the input-guardrail/embedding overlap in section 1, at a bigger scale.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="card-label">Timeouts and circuit breakers</span><span class="status-pill design">not built</span></div>
+        <p class="card-desc">A single slow LLM call today just makes one query slow. A stuck tool call inside a multi-step agent loop can hang the whole interaction - each tool call needs its own timeout and a circuit breaker so one bad tool doesn't take down every agent request using it.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="card-label">This is when LangSmith earns its keep</span><span class="status-pill live">already built, off</span></div>
+        <p class="card-desc">Tracing is built and toggled off today because a single retrieve-then-generate pass has little to trace. A multi-step agent loop is exactly the case tracing exists for - debugging "why did the agent call tool B instead of tool A" without a trace is close to impossible.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="panel-num">6</div>
+      <div class="panel-title">
+        <span class="name display">How real systems approach this</span>
+        <span class="sub">industry reference points - clearly separate from what's built here</span>
+      </div>
+    </div>
+    <div class="ref-list">
+      <div class="ref-item">
+        <span class="ref-name">Model cascading</span>
+        <span class="ref-desc">Route the easy/cheap classification calls (like guardrail checks) to a small fast model, reserve the expensive model for the actual generation step - the same idea flagged as "not built" in section 1's guardrail-model card, generalized.</span>
+      </div>
+      <div class="ref-item">
+        <span class="ref-name">Speculative retrieval</span>
+        <span class="ref-desc">Start the vector search before the input guardrail check finishes, since they read independent inputs, and simply discard the retrieval result if the guardrail blocks the query - trades a little wasted work for a shorter worst-case path.</span>
+      </div>
+      <div class="ref-item">
+        <span class="ref-name">Read replicas for the vector DB</span>
+        <span class="ref-desc">Managed vector DBs (Pinecone, already this project's live backend) handle this internally; a self-hosted Chroma at real scale would need its own replica strategy, which is exactly why the managed option was chosen for production here.</span>
+      </div>
+      <div class="ref-item">
+        <span class="ref-name">Backpressure over autoscaling alone</span>
+        <span class="ref-desc">Autoscaling (App Runner today) handles smooth load growth well but not sudden spikes or a slow downstream dependency - a queue in front of expensive work (ingestion, batch eval) absorbs bursts instead of scaling infrastructure to match every spike.</span>
+      </div>
+      <div class="ref-item">
+        <span class="ref-name">Cost and latency are the same lever</span>
+        <span class="ref-desc">Every technique above (smaller judge model, caching, streaming) reduces both at once - in an LLM-backed system, unlike a traditional API, latency and per-request cost are rarely separate problems to solve independently.</span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Snapshot: 2026-09-22. Live/design status verified against <code class="mono">docs/agent-reference/AWS-DEVOPS-RUNBOOK.md</code>'s "What's actually live vs. planned" table and this session's own guardrails/observability work (Phases 7-8). Latency figures are estimates for this project's real call chain, not measured production numbers. Related: <code class="mono">docs/dev-reference/rag-architecture-layers.html</code> (component view this doc extends), <code class="mono">docs/agent-reference/S3-ASYNC-UPLOAD-DESIGN.md</code> (the ingestion design this doc flags an open question against), <code class="mono">docs/dev-reference/oauth2-cot-feasibility.html</code> (companion feasibility doc from the same session).
+  </footer>
+
+</div>

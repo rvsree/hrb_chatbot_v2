@@ -1,8 +1,8 @@
 """A simulated A/B test - a REFERENCE PATTERN, not real evaluation
-infrastructure (that's Phase 8, not built yet - see docs/RAG-ROADMAP.md).
+infrastructure (that's Phase 8, not built yet - see docs/agent-reference/RAG-ROADMAP.md).
 Demonstrates the shape of a comparison - run config A, run config B,
 compare one concrete metric - using only chunking, since it needs no
-network call. See docs/TESTING-GUIDE.md for the full walkthrough."""
+network call. See docs/agent-reference/TESTING-GUIDE.md for the full walkthrough."""
 
 from src.hrb_chatbot.ai.doc_processing.chunking.text_chunker import chunk_text
 

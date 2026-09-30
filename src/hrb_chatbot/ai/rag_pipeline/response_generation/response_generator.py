@@ -1,9 +1,7 @@
-"""Generates a grounded answer from retrieved chunks - a real LCEL chain
-(ChatPromptTemplate | GatewayChatModel | result-mapper), matching the IK
-cohort's own Module 4 pattern instead of a hand-rolled ask() call."""
+"""Generates a grounded answer from retrieved chunks - a real LCEL chain, not a hand-rolled ask() call."""
 
-from langchain_core.messages import AIMessage
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableLambda
 
 from src.hrb_chatbot.common.clients.llm_client.client_gateway import get_client_gateway
@@ -55,6 +53,9 @@ Context:
 RAG_PROMPT = ChatPromptTemplate.from_messages(
     [
         ("system", SYSTEM_PROMPT_TEMPLATE),
+        # Phase 58: prior conversation turns, if any - empty when
+        # conversation memory isn't enabled, unchanged behavior then.
+        MessagesPlaceholder("chat_history", optional=True),
         ("human", "{question}"),
     ]
 )
@@ -81,9 +82,9 @@ def generate_answer(
     model_name: str | None = None,
     temperature: float = 0.0,
     max_tokens: int | None = None,
+    chat_history: list[BaseMessage] | None = None,
 ) -> dict:
-    """Returns {"answer": str, "model_used": str} - model_used is the
-    actually-resolved model."""
+    """Returns {"answer": str, "model_used": str} - chat_history is empty/omitted when memory isn't enabled."""
     if not chunks:
         logger.info("No chunks retrieved for %r - returning the no-context answer, not calling the LLM", query)
         return {"answer": NO_CONTEXT_ANSWER, "model_used": model_name or get_client_gateway().openai_chat().model}
@@ -97,7 +98,7 @@ def generate_answer(
     chain = RAG_PROMPT | llm | RunnableLambda(_to_result)
 
     context = _build_context(chunks)
-    result = chain.invoke({"context": context, "question": query})
+    result = chain.invoke({"context": context, "question": query, "chat_history": chat_history or []})
 
     logger.info("Generated a %d-character answer from %d chunk(s)", len(result["answer"]), len(chunks))
     return result

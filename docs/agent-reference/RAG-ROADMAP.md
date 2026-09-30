@@ -1,0 +1,4804 @@
+# RAG boilerplate roadmap — division of labor
+
+Durable copy of the plan agreed on 2026-09-07, so it survives independently
+of any one chat session. Update the phase statuses below as they land; don't
+delete a row when it's done.
+
+## Why this split exists
+
+This project is being built by hand, deliberately, to apply what's being
+learned in the Interview Kickstart FDE cohort's RAG modules (the instructor's
+own workshop, `support_desk_rag_workshop/SupportDesk-RAG-Workshop`, was
+reviewed to inform this roadmap: embeddings → chunking → indexing strategies
+→ RAG pipeline with anti-hallucination → two-layer evaluation → agentic RAG).
+
+So the split is intentional: Claude Code builds the boilerplate - FastAPI
+endpoints, request/response models, and the client files that read `.env` and
+connect to backend services. Every piece of actual RAG logic - chunking,
+embedding orchestration, indexing, retrieval, grounded response generation,
+evaluation - is implemented by hand, using the workshop's concepts.
+
+A second reference project, `hrb_emp_assist`, was reviewed and deliberately
+**not** reused above the vector-DB-client layer - its service/repo/router/model
+layers for this same feature run ~2,550 lines for what should be small,
+a direct result of repeated refactoring visible in its own `docs/` folder.
+Only its small, clean `chroma_db_client.py` (127 lines) informed (not was
+copied into) the client below.
+
+## The seam
+
+| Layer | Who | Location |
+|---|---|---|
+| FastAPI routes, request/response models | Claude Code | `api/rag/`, `models/` |
+| Raw file storage, document metadata | Claude Code | `services/documents_service.py` |
+| Vector DB client (ChromaDB active, Pinecone real+tested alternative) + gateway | Claude Code | `common/clients/db_client/` |
+| Document-metadata client (SQLite active, Postgres real+tested alternative) + gateway | Claude Code | `common/clients/db_client/` |
+| Health check wiring | Claude Code | `api/admin/health_checks.py` |
+| Chunking strategy | Claude Code *(planned hand-written; built on explicit request - see Phase 4)* | `ai/doc_processing/chunking/` |
+| Embedding orchestration | Claude Code *(same override)* | `ai/doc_processing/embedding/` |
+| Indexing, insert/update logic | Claude Code *(same override)* | `ai/doc_processing/indexing/` |
+| Retrieval + grounded generation | **Hand-written** | `ai/rag_pipeline/query_retrieval/`, `ai/rag_pipeline/response_generation/` |
+| Evaluation | **Hand-written** | `ai/rag_pipeline/evaluations/` |
+| Agentic RAG (later, optional) | **Hand-written** | `ai/agents/` |
+
+Claude Code's boilerplate calls into the hand-written code through plain
+Python entry points (`index_document(...)`, `answer_query(...)`) that raise
+`NotImplementedError` naming the module to fill in, until it exists - the
+same pattern already used for `PineconeClient`'s stub and for `check_tools()`
+in `health_checks.py`.
+
+## Status at a glance
+
+Updated 2026-09-08. This table is the fast-read summary; the full "Phases"
+section below it is the authoritative detail - if the two ever disagree,
+the detail below is correct and this table is stale, not the other way
+around.
+
+**`Spec` column, added 2026-09-14 when SDD was adopted** (see `CLAUDE.md`'s
+SDD section): `Retrofitted (pre-SDD)` means the phase shipped before specs
+were written first - its detail entry below is the historical record, not
+reconstructed after the fact. `📋 pending` means no spec exists yet; one
+must be written (`/spec-new`, or see `.claude/skills/spec-new/SKILL.md`) and
+reviewed before that phase's code starts.
+
+| Phase | Who | Status | Spec |
+|---|---|---|---|
+| 1 — ChromaDB client + gateway | Claude Code | ✅ Done | Retrofitted (pre-SDD) |
+| 2 — Document upload API | Claude Code | ✅ Done | Retrofitted (pre-SDD) |
+| 2.5 — Postgres metadata store | Claude Code | ✅ Done | Retrofitted (pre-SDD) |
+| 2.6 — Pinecone vector store | Claude Code | ✅ Done | Retrofitted (pre-SDD) |
+| 3 — Indexing trigger endpoint | Claude Code | ✅ Done | Retrofitted (pre-SDD) |
+| 4 — Chunking/embedding/indexing | Claude Code (override) | ✅ Done | Retrofitted (pre-SDD) |
+| 4.1 — Per-call config overrides | Claude Code (override) | ✅ Done | Retrofitted (pre-SDD) |
+| 4.2 — Document metadata expansion + content-hash dedup | Claude Code (override) | ✅ Done, 2026-09-10 | Retrofitted (pre-SDD) |
+| 4.3 — Delete endpoint | Claude Code (override) | ✅ Done, 2026-09-10 | Retrofitted (pre-SDD) |
+| 4.4 — Document versioning (supersede + is_current retrieval filtering), table extraction, document-metadata extraction | Claude Code (override) | ✅ Done, 2026-09-11 | Retrofitted (pre-SDD) |
+| 4.5 — Retrieval relevance threshold, standardized error codes | Claude Code | ✅ Done, 2026-09-11 | Retrofitted (pre-SDD) |
+| 5 — Query endpoint, stubbed | Claude Code | ✅ Done | Retrofitted (pre-SDD) |
+| 5.1 — Query decomposition | Hand-written | 📋 Planned | 📋 pending |
+| 5.2 — Query variants | Hand-written | 📋 Planned | 📋 pending |
+| 5.3 — Prompt chaining + versioning | Hand-written | 📋 Planned | 📋 pending |
+| 6 — Retrieval + grounded generation | Claude Code (override, 2026-09-10) | 🚧 MVP done - real retrieval + generation, no COT/guardrails yet; see Phase 6 detail below | Retrofitted (pre-SDD) for the MVP shipped; the COT/guardrails remainder needs its own spec |
+| 6.1 — Contracts/validation for query path | Claude Code | ✅ Done alongside the Phase 6 MVP - `model_used` added to `RagQueryResponse` | Retrofitted (pre-SDD) |
+| 7 — Guardrails (input + output), NeMo Guardrails via LLMRails.check_async() | Hand-written | ✅ Done, 2026-09-22 - integration shape changed from spec (check_async(), not RunnableRails), see detail below | ✅ Spec'd and implemented - see detail below |
+| 8 — Golden dataset + evaluations + A/B, DeepEval | Hand-written | ✅ Harness done, 2026-09-22 - found 3/6 KB docs not indexed (real data gap, not a harness bug), see detail below. Formal CI gate/A/B still follow-up work | ✅ Spec'd and implemented (harness) - see detail below; golden dataset itself Retrofitted (pre-SDD) |
+| 9 — Bedrock as an LLM provider | Claude Code | ✅ Done | Retrofitted (pre-SDD) |
+| 10 — Docker + AWS deployment (App Runner) | Claude Code | ✅ Done - `RUNNING`, verified live (shallow + deep health, real Pinecone query); Postgres/Neon leg still pending the user's Neon signup (documented compromise, not a blocker) | Retrofitted (pre-SDD) |
+| 11 — CI/CD + GitHub | Claude Code | ✅ CI verified passing on GitHub Actions (pytest included as of Phase 12); deploy workflow written but unexercised - needs `main` merge + 2 GitHub Secrets still pending from the user | Retrofitted (pre-SDD) |
+| 12 — REST API contract-first hardening | Claude Code | ✅ Done - versioning, idempotency, rate limiting, validation bounds, error handling, pre-flight checks, all verified live and unit-tested | Retrofitted (pre-SDD) |
+| 13 — Branch restructuring + CI/CD gates | Claude Code | ✅ Done - `main`/`developer`/`feature-kb-indexing-rag-pipeline` renamed to `master`/`develop`/`feature-langchain-rag-pipeline` on GitHub; `deploy.yml`/`ci.yml` triggers fixed to match; coverage floor, `bandit`, `pip-audit`, and a real post-deploy smoke test added to CI/CD; see `docs/agent-reference/CICD-BRANCHING-STRATEGY.md` | Retrofitted (pre-SDD) |
+| 14 — LangChain/LlamaIndex pipeline rewrite (chunking, indexing, search), idempotency removed | Claude Code | ✅ Done, on `feature-langchain-rag-pipeline`. All of 14.1 (idempotency removal) and 14.2 (chunking, indexing, search/retrieval sub-phases) complete | Retrofitted (pre-SDD) |
+| 15 — Evaluation (Module 5) against the rebuilt pipeline | Claude Code | 📋 Planned, added 2026-09-13 - not started | 📋 pending - next candidate for `/spec-new` |
+| 16 — Content-hash duplicate-upload detection, reinstated | Claude Code | ✅ Done, 2026-09-14 | ✅ Spec'd, reviewed, and implemented via the SDD process end to end - first phase to go through it - see detail below |
+| 17 — Indexing write path standardized on LangChain's `index()`/`SQLRecordManager`, replacing LlamaIndex | Claude Code | ✅ Done, 2026-09-14 | ✅ Spec'd, reviewed (two real gaps found and resolved *during* implementation, not glossed over - see detail below), and implemented - see detail below |
+| 18 — Chunking-strategy auto-selection: log the rationale, not just the result | Claude Code | ✅ Done, 2026-09-14 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 19 — Chunk-level metadata expansion (`doc_type`, `department`, new `doc_classification`) for filtering | Claude Code | ✅ Done, 2026-09-14 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 20 — MultiQueryRetriever + Self-Query Retriever | Claude Code | ✅ Done, 2026-09-14 | ✅ Spec'd, reviewed (real dependency deadlock found and resolved *during* implementation, and one real free-text-filter limitation found during live verification - both recorded, not glossed over - see detail below), and implemented - see detail below |
+| 21 — Remove the duplicate per-strategy endpoints; one endpoint each for ingestion and retrieval | Claude Code | ✅ Done, 2026-09-14 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 22 — Comment-length cleanup across `src/hrb_chatbot/` + a codified 2-line rule | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 23 — FastAPI gateway layer: role-based access (RBAC) in front of RAG ingestion + retrieval, OAuth placeholder | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 24 — Fix: `validation_exception_handler` crashes on a malformed (non-JSON) body instead of returning a clean 422 | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 25 — Reindex by filename, not just `document_id` | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 26 — Simplify: one ingestion endpoint (upload+chunk+embed+store combined), separate index/reindex endpoint removed | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 27 — Delete-all-documents endpoint | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 28 — Fix: document_version reports 2 on a document's first-ever index | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 29 — Suppress misleading pdfminer FontBBox console warning | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 30 — Fix: running the test suite silently wiped the shared dev DB | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 31 — ACTIVE_VECTOR_DB/ACTIVE_LLM_PROVIDER .env vars, one resolver helper each | Claude Code | ✅ Done, 2026-09-15 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 32 — Pilot: one `RagQueryParams` dataclass replaces the 10-field parameter list repeated across retrieve_document.py/rag_service.py/pipeline.answer_query() | Claude Code | ✅ Done, 2026-09-16 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 33 — Remove dead pass-through wrapper functions in both pipeline.py files | Claude Code | ✅ Done, 2026-09-16 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 34 — Simplify retrieve_chunks() to a single query; remove decompose_query() | Claude Code | ✅ Done, 2026-09-16 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 35 — Add a real system prompt (role definition) for answer generation | Claude Code | ✅ Done, 2026-09-18 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 36 — Three new document-metadata attributes: effective_date, audience, confidentiality_level | Claude Code | ✅ Done, 2026-09-18 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 37 — decide_chunk_size(): table-aware and large-document-aware auto chunk sizing | Claude Code | ✅ Done, 2026-09-18 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 38 — .env audit: move hardcoded tuning/limit constants to .env; re-expose chunk_size/chunking_strategy on POST /documents | Claude Code | ✅ Done, 2026-09-18 | ✅ Spec'd, reviewed, and implemented - see detail below |
+| 39 — Sync tests/docs/Postman after user's manual endpoint rename (routes_documents.py/routes_query.py -> ingest_document.py/retrieve_document.py, new URL prefixes) | Claude Code | ✅ Done, 2026-09-18 | N/A - tests/docs/Postman only, no src/hrb_chatbot/** touched, spec_gate doesn't apply |
+| 40 — Trim supersedes_document_id's Form description for concision | Claude Code | ✅ Done, 2026-09-18 | ✅ Spec'd and implemented - see detail below |
+| 41 — User-directed: rebuild response generation as a real LCEL chain, matching IK cohort Module 4 | Claude Code | ✅ Done, 2026-09-19 | ✅ Spec'd and implemented - see detail below |
+| 42 — User-directed: extract POST /documents' Form fields into a Pydantic model | Claude Code | ✅ Done, 2026-09-19 | ✅ Spec'd and implemented - see detail below |
+| 43 — User-directed: remove FastAPI Depends()/Query() binding app-wide, including Phase 23's centralized RBAC wiring | Claude Code | ✅ Done, 2026-09-19 | ✅ Spec'd and implemented - see detail below |
+| 44 — User-directed: revert indexing from LangChain back to LlamaIndex's `VectorStoreIndex`, reversing Phase 17 | Claude Code | ✅ Done, 2026-09-19 | ✅ Spec'd and implemented - see detail below |
+| 45 — User-directed: nested request/response contracts for every endpoint, identity moved from headers to a JSON body everywhere | Claude Code | 🚧 Code done and tested, 2026-09-20 - Postman/CLAUDE.md sync still pending | ✅ Spec'd and implemented - see detail below, full contracts in docs/agent-reference/endpoint-request-response-contracts.md |
+| 46 — User-directed: isolate the test suite's SQLite DB from the real dev DB, add a test-noise cleanup endpoint | Claude Code | ✅ Done, 2026-09-20 | ✅ Spec'd and implemented - see detail below |
+| 47 — User-directed: rename CurrentUser/current_user/UserMetadata/user_metadata to UserProfile/user_profile throughout | Claude Code | ✅ Done, 2026-09-20 | N/A - a rename, not a design change; see detail below |
+| 48 — User-directed: multi-shot prompting (Module 4) for genai-rag generation | Claude Code | ✅ Done, 2026-09-21 | ✅ Spec'd and implemented - see detail below |
+| 49 — User-directed: MCP client prototype, manual keyword routing to hrb_lms_mcp for leave-balance/leave-history queries | Claude Code | ✅ Done, verified live against the real hrb_lms_mcp server, 2026-09-22 | ✅ Spec'd and implemented - see detail below |
+| 50 — User-directed: MCP server/tool registry at startup, reusing hr_chatbot's own app_tracking tables | Claude Code | ✅ Done, verified live, 2026-09-22 | ✅ Spec'd and implemented - see detail below |
+| 51 — User-directed: NFR-specific golden dataset + harness for guardrails/validation-gateway | Claude Code | ✅ Done, verified live, 2026-09-22 - found 1 real false-positive bug (documented, not fixed) | ✅ Spec'd and implemented - see detail below |
+| 52 — Planned: analytics MCP server (NL2SQL over aggregate/historical HR data) | Claude Code | ⬜ Not started - parking-lot spec only, 2026-09-22 | 🚧 Parking-lot spec only - real spec deferred until picked up |
+| 53 — User-directed: real OAuth2 client-credentials auth, hrb_chatbot_v2 <-> hrb_lms_mcp, both sides | Claude Code | ✅ Done, verified live both directions, 2026-09-22 | ✅ Spec'd and implemented - see detail below |
+| 54 — User-directed: extract-method refactor of vector_indexer.py's write_chunks(), no behavior change | Claude Code | ✅ Done, verified, 2026-09-23 | ✅ Spec'd and implemented - see detail below |
+| 55 — User-directed: single-agentic-rag tool-calling endpoint (IK Module 6) + DeepEval release-gate scoring (Module 5 gap) | Claude Code | ✅ Done, verified live both tool paths, 2026-09-24 | ✅ Spec'd and implemented - see detail below |
+| 56 — User-directed: MMR support for single-agentic-rag's SearchKnowledgeBase tool | Claude Code | ✅ Done, verified live both strategies, 2026-09-24 | ✅ Spec'd and implemented - see detail below |
+| 57 — User-directed: rename doc_type/doc_classification to doc_category/doc_description, Postman sample data | Claude Code | ✅ Done, verified live against real dev DB, 2026-09-25 | ✅ Spec'd and implemented - see detail below |
+| 58 — User-directed: server-side multi-turn conversation memory (in-memory, timestamped), shared across genai-rag and single-agentic-rag | Claude Code | ✅ Done, verified live on both endpoints, 2026-09-25 | ✅ Spec'd and implemented - see detail below |
+| 59 — User-directed: three new document-metadata fields (author, doc_date, doc_version) | Claude Code | ✅ Done, verified live, 2026-09-25 | ✅ Spec'd and implemented - see detail below |
+| 60 — User-directed: require_role() auth-composition helper + comment-length compliance sweep across all of src/ | Claude Code | ✅ Done, verified, 2026-09-25 | ✅ Spec'd and implemented - see detail below |
+| 61 — User-directed: multi-agentic-rag scaffolding (real contract + stubbed pipeline, no orchestration logic yet) | Claude Code | ✅ Done, verified, 2026-09-27 | ✅ Spec'd and implemented - see detail below |
+
+
+**If you're picking this up after a restart with no session memory**, the
+one thing to check first is Phase 10's actual live AWS state - it does not
+show up by reading code, only by querying AWS directly:
+```
+aws apprunner describe-service --region us-east-1 \
+  --service-arn arn:aws:apprunner:us-east-1:418884736369:service/hrb-chatbot/f957548202f343aa8ca91f341d71d85a
+```
+(needs `aws-cli` ≥ 2.something-with-apprunner, or run the equivalent
+`boto3` call - see Phase 10 below for why the CLI here may still be too old).
+Note the ARN above is the **final, working** service - two earlier attempts
+(`63fcfce613a5425ab43cf8fd8dad8228`, `09f425485ee646379d68acc950570bcd`)
+were deleted after `CREATE_FAILED` and are dead references if you find them
+anywhere else in this file's own history below - see Phase 10's "Three real
+bugs found the hard way" for why.
+
+## Phases
+
+- [x] **Phase 1 (Claude Code) — ChromaDB client + gateway.**
+  `common/clients/db_client/chroma_client.py`, `db_gateway.py`.
+  `health_checks.py`'s `check_vector_database()` wired into `check_all_backend_services()`.
+  Verified: `GET /health?deep=true` reports ChromaDB healthy (persistent
+  mode, `data/chroma_db/chroma.sqlite3` created).
+- [x] **Phase 2 (Claude Code) — Document upload API.** `POST /rag/documents`
+  (single/batch, one result per file - partial success, not all-or-nothing),
+  `GET /rag/documents`, `GET /rag/documents/{id}`. Raw file storage in
+  `data/uploads/{document_id}/`. Metadata behind the same abstract-client
+  pattern as the vector store: `base_metadata_client.py` (the contract),
+  `sqlite_client.py` (real), `postgres_client.py` (stub, same reasoning as
+  `PineconeClient` - not something the original plan called out explicitly,
+  added because the same swap-later need applies here). PDF-only and
+  20MB-max validation in `services/documents_service.py`.
+  Verified live: single upload, a real PDF from `resources/kb_docs/`; batch
+  upload with one valid PDF + one deliberately invalid `.txt` file, confirmed
+  the good one is stored and the bad one is rejected with a clear reason in
+  the same response, not a blocked batch; list, get-by-id, and 404-on-unknown-id
+  all confirmed. `GET /health?deep=true` now also reports `metadata_database`
+  (SQLite) alongside `vector_database` (renamed from `database` for clarity
+  now that there are two kinds).
+- [x] **Phase 3 (Claude Code) — Indexing trigger, stubbed.** `POST
+  /rag/documents/{id}/index` in `api/rag/routes_documents.py`, calling
+  `ai/doc_processing/pipeline.py::index_document()` - a scaffold, not an
+  implementation: `chunk_document()` / `embed_chunks()` / `index_chunks()`
+  each raise `NotImplementedError` naming the folder and workshop module to
+  use, with the already-working calls to reach for
+  (`get_client_gateway().openai_embedding()`, `get_db_gateway().chroma()`)
+  spelled out in the docstrings. Verified live: a real uploaded document
+  returns `501` with the exact message above, an unknown id returns `404`,
+  and the document's status correctly stays `uploaded` rather than being
+  falsely marked `indexed` when the pipeline isn't implemented.
+- [x] **Phase 4 (Claude Code, built on explicit request 2026-09-08 —
+  overrides the original "hand-written" plan).** The user asked for this
+  phase by name, after being told directly it was the pipeline they'd
+  earlier said they wanted to write themselves - a deliberate, informed
+  choice to have it built now, not drift. Recorded here so it's clear this
+  one didn't follow the original division of labor, and why.
+
+  - **`ai/doc_processing/chunking/text_chunker.py`** - a recursive
+    character splitter written natively (no `langchain-text-splitters`):
+    tries paragraph breaks first, falls back to sentences then plain
+    characters for a piece still too big, then merges small pieces back up
+    to `chunk_size` (1000 chars) with `chunk_overlap` (150 chars) carried
+    forward. Workshop Module 2's strategy.
+  - **`ai/doc_processing/embedding/embedding_generator.py`** - calls the
+    already-built `client_gateway().openai_embedding().get_embeddings()`.
+    Workshop Module 1.
+  - **`ai/doc_processing/indexing/vector_indexer.py`** - the insert/update
+    logic. Chunk ids are deterministic
+    (`f"{document_id}:{chunk_index}"`), so a re-index naturally overwrites
+    chunks that still exist - but a document that *shrinks* would leave
+    its excess old chunks orphaned in the vector store if that were all
+    this did. So a `chunk_ids` column was added to the metadata store
+    (SQLite/Postgres - see `base_metadata_client.py`'s `set_chunk_ids()`)
+    recording exactly which ids a document's *previous* index produced;
+    a re-index diffs against that list and deletes whatever isn't part of
+    the new set before recording the new one. Writes through
+    `db_gateway().vector_store()` - never a hardcoded backend - so this
+    logic is identical regardless of `RAG_VECTOR_DB`.
+  - **`RAG_VECTOR_DB=chromadb|pinecone`** (new `.env` switch) - read once,
+    in `db_gateway.vector_store()`.
+
+  Verified live, real cost incurred (a few cents, embedding actual PDF
+  text): `POST /rag/documents/{id}/index` on `JPMC Healthcare Benefits.pdf`
+  → 39 real chunks, `action: "insert"`. Re-running the identical call →
+  `action: "update"`, `chunks_removed: 0` (nothing stale, same content).
+  Then the case that actually proves the update logic, not just its
+  reporting: called `index_chunks()` directly with 3 fake chunks for the
+  *same* document (simulating a shrink) → `chunks_removed: 36`, and the
+  ChromaDB collection's real vector count dropped to exactly 3, not 42 -
+  confirming the old chunks were actually deleted, not left behind
+  alongside the new ones. Restored the document to its real 39-chunk
+  content afterward. Switched `RAG_VECTOR_DB` to `pinecone`, indexed a
+  second document (`JPMC Paid TimeOff.pdf`) → 45 chunks landed in
+  Pinecone's `hrb_chatbot_kb` namespace while ChromaDB's count stayed at
+  39, untouched - confirming the switch actually isolates the two
+  backends rather than one silently winning. Re-indexed that same
+  document on Pinecone → `action: "update"` there too. `RAG_VECTOR_DB`
+  restored to `chromadb` afterward (the established default).
+
+- [x] **Phase 4.1 (Claude Code, on request 2026-09-08) — per-call config
+  overrides.** `POST /rag/documents/{id}/index` now takes an optional JSON
+  body (`models/documents.py`'s `IndexRequest`) - `vector_db`, `chunk_size`,
+  `chunk_overlap`, `embedding_model` - each defaulting to the .env-wide
+  setting when omitted. `db_gateway.vector_store()` now takes a `provider`
+  override and **raises on an unrecognized name** instead of silently
+  falling back to ChromaDB (a gap the user's own audit questions surfaced -
+  see the "Known gaps" note below). The response (`IndexResponse`) reports
+  which resolved values actually ran, not just the outcome - useful for
+  confirming an override took effect without re-reading `.env`.
+
+  **Known limitation, documented in `vector_indexer.py`, not solved:** if
+  the same document is indexed to store A, then later indexed again with
+  `vector_db` overridden to store B, the metadata store's `chunk_ids`
+  afterward only describes store B - store A's chunks are neither migrated
+  nor cleaned up, and a subsequent default-store re-index will report
+  `chunks_removed` against ids that live in the *other* store (a harmless
+  no-op there, but the count is misleading). Reproduced live while testing
+  this feature, not hypothetical - cleaned up by hand afterward. Safe as
+  long as one document is always indexed to the same store; switching
+  per-document is out of scope for what this override was built for.
+
+  Verified: indexing with no body → defaults reported back exactly
+  (`chromadb`, `text-embedding-3-small`, 1000/150); indexing with
+  `{"vector_db": "pinecone", "chunk_size": 500, "chunk_overlap": 50}` →
+  76 chunks (smaller chunk size, more chunks, as expected), landed in
+  Pinecone for that call; `{"chunk_size": 500, "chunk_overlap": 600}`
+  (overlap ≥ size) → `422` with a clear validation message, not a
+  confusing failure downstream.
+
+- [x] **Phase 4.2 (Claude Code, on request 2026-09-10) — document metadata
+  expansion + content-hash dedup.** Two related changes to the `documents`
+  table (SQLite + Postgres, migrated the same lazy `ADD COLUMN` way
+  `chunk_ids` was):
+
+  - **New columns**: `document_version` (1 on upload, +1 on every
+    successful index), `chunk_count`, `embedding_model`,
+    `embedding_dimension` (measured from the real embedding vector's
+    length, not a hardcoded model→dimension table), `vector_db`,
+    `chunk_size`, `chunk_overlap`, `last_indexed_at` (distinct from
+    `updated_at`, which also moves on a failed attempt), `file_size_bytes`.
+    All written in one new `record_successful_index()` call, replacing the
+    old separate `set_chunk_ids()` + `update_status("indexed")` pair.
+  - **Content-hash dedup**: every upload is SHA-256'd; a match against an
+    existing document's `content_hash` (new column + index) returns that
+    existing document instead of creating a new one (`status: "duplicate"`
+    in the response, plus a new `duplicate_count` on
+    `DocumentUploadResponse`). Persistent and header-independent - unlike
+    the `Idempotency-Key` cache, it catches identical content uploaded at
+    any time, survives restarts, since it's backed by the real DB.
+
+  Verified live: re-uploading the identical file twice → second call
+  returns `status: "duplicate"` pointing at the first upload's
+  `document_id`, no new row created. Verified the full insert→update cycle
+  separately: upload → `document_version: 1`; first `/index` →
+  `action: "insert"`, version → 2; second `/index` on the same id →
+  `action: "update"`, version → 3. 11 tests (8 upload/dedup, uuid-salted
+  content per test since these hit the real persistent SQLite file with no
+  per-test reset - a fixed literal would collide across separate test
+  *runs*, not just within one).
+
+- [x] **Phase 4.3 (Claude Code, on request 2026-09-10) — delete endpoint.**
+  `DELETE /v1/rag-ingestion/documents/{id}` (`documents_service.delete_document()`) -
+  a full delete, not selective: a document has one current state (no
+  retained version history to pick a version from - see Phase 4.2's
+  `document_version`, which is a counter, not stored history). Removes, in
+  order: the vector store's chunks (using the metadata store's `chunk_ids` -
+  skipped if the document was never indexed), the metadata row, and the
+  uploaded file on disk.
+
+  **Ordering is deliberate, same safety reasoning as the insert/update
+  path**: vectors are deleted first, while `chunk_ids` still exists to find
+  them; the metadata row (the only record of which vector ids belong to
+  this document) is removed last, once vectors are confirmed gone. A crash
+  mid-way leaves the metadata row intact so a retry can still finish the
+  job, rather than orphaning vectors with no way left to find them.
+
+  Verified live against real data, not just SQLite: indexed a real document
+  (40 real chunks) → confirmed via a direct Chroma query
+  (`collection.count()`, `collection.get(where={"document_id": ...})`) that
+  the vector store held 85 total / 40 for this document → called `DELETE`
+  → vector store count dropped to 45 (exactly the 40 removed), `GET` on the
+  id now `404`, and `data/uploads/{id}/` gone from disk. 4 new tests
+  (delete-then-gone, unknown id `404`, double-delete `404` the second
+  time) - vector-store deletion itself is verified live rather than
+  in the automated suite, matching this project's existing practice of not
+  spending real embedding/API cost inside `pytest`.
+
+- [x] **Phase 4.4 (Claude Code, on request 2026-09-11) — document versioning,
+  table extraction, document-metadata extraction.** Three related additions,
+  built and tested primarily against ChromaDB (free, local) - Pinecone
+  portability confirmed by design (both clients share `BaseVectorDBClient`;
+  `update_metadata()` was added to both), not yet exercised live against a
+  real Pinecone index; that's the deliberately deferred next step, once this
+  round is stable.
+
+  **Normalized `chunks` table** (SQLite + Postgres) - one row per chunk
+  (`chunk_id`, `document_id`, `chunk_index`, `created_at`, `is_current`),
+  replacing the need to parse `documents.chunk_ids`' JSON blob for any
+  per-chunk query. Populated inside `record_successful_index()` (delete-then-
+  insert per document, same shape as the vector store's own stale-chunk
+  cleanup).
+
+  **Document versioning via explicit supersede** - `POST
+  /v1/rag-ingestion/documents` gained an optional `supersedes_document_id`
+  form field (rejected with 422 on a batch upload - ambiguous which file
+  would supersede it; rejected as a per-file "rejected" result if the target
+  id doesn't exist). Upload only *records* the intent
+  (`documents.supersedes`); the old document isn't flipped until the *new*
+  one successfully indexes (`metadata_store.mark_superseded()`, called from
+  `vector_indexer.py`, only on that document's first index - not repeated on
+  a later re-index) - so there is never a window where neither version's
+  content is live. The flip touches three places: the old document's own SQL
+  row (`is_current=false`, `superseded_by` set), its rows in `chunks`, and -
+  via the vector store's new `update_metadata()` (added to
+  `BaseVectorDBClient`, implemented in both Chroma and Pinecone) - its actual
+  vectors' metadata, without a wasted re-embed.
+
+  **Retrieval excludes superseded chunks by default** -
+  `retriever.py`'s vector-store query now always filters
+  `where={"is_current": {"$ne": False}}` - `$ne`, not an `is_current: true`
+  equality match, deliberately: chunks indexed before this field existed
+  have no `is_current` key at all, and an equality filter would have
+  silently excluded those too. Only a chunk explicitly flipped to `false`
+  is excluded; nothing is deleted, so superseded content stays available for
+  direct/audit lookup (`collection.get(ids=...)`), just not surfaced to a
+  normal query.
+
+  **Table-aware PDF extraction** - new `ai/doc_processing/tables/table_extractor.py`
+  (pdfplumber, a new dependency - pypdf's `extract_text()` has no table
+  awareness at all). Tables are extracted separately per page, formatted as
+  markdown, and appended after the main extracted text (not inlined at their
+  original position - reconstructing exact layout position isn't needed for
+  chunking, only keeping row/column structure readable is).
+
+  **LLM-based document-metadata extraction** - new
+  `ai/doc_processing/metadata_extraction/document_metadata_extractor.py`.
+  Sends the first ~3000 characters of extracted text to the chat LLM, asking
+  for owner/department/doc_type/purpose as JSON (explicitly told to answer
+  `null`, not guess, for anything the text doesn't support). Runs once, on a
+  document's first successful index only (the result can't change between
+  re-indexes of the same content, so it's never re-billed on a re-index).
+  Best-effort by design: any extraction or parsing failure is logged and
+  swallowed, never allowed to fail the index itself.
+
+  **Verified live, real cost incurred** (not just unit-tested): uploaded a
+  real PDF with a real table (years-of-service → disability-pay-percentage),
+  indexed it, and confirmed via a direct Chroma query that a chunk contained
+  the table correctly reformatted as markdown. Confirmed document-metadata
+  extraction produced an accurate `doc_type` and one-sentence `purpose`
+  summary, and correctly returned `null` (not a hallucinated guess) for
+  `owner`/`department`, which the source document doesn't state. Ran the
+  full supersede flow end to end: uploaded v1, indexed it; uploaded v2 with
+  `supersedes_document_id` pointing at v1, indexed v2; confirmed v1 flipped
+  to `is_current: false` with `superseded_by` set, confirmed v1's vectors
+  are still physically present in Chroma (`collection.get(ids=...)` still
+  returns them) but `is_current: false`; then ran a real
+  `POST /v1/rag-retrieval/query` and confirmed **all 5** returned sources
+  were v2's chunks, **zero** from v1 - the actual point of the whole feature,
+  proven against a real query, not inferred from the write path alone.
+
+  17 new tests (fakes only, zero network): `vector_indexer.py`'s
+  `is_current`/timestamp tagging and full supersede-propagation flow
+  (including that a *second* re-index doesn't repeat the flip);
+  `retriever.py`'s exclusion of superseded chunks and backward-compatible
+  handling of chunks with no `is_current` field at all;
+  `document_metadata_extractor.py`'s clean/messy/failed LLM-response
+  handling; `table_extractor.py`'s markdown formatting; and route-level
+  validation for `supersedes_document_id` (batch rejection, unknown-target
+  rejection, successful recording). 76/76 total suite passing, stable across
+  repeated runs.
+
+- [x] **Phase 4.5 (Claude Code) — retrieval relevance threshold, standardized
+  error codes.** Two fixes found by reviewing a real query response, not
+  planned in advance.
+
+  **Relevance threshold**: `retriever.py` previously returned exactly
+  `top_k` results regardless of whether any were actually relevant - a
+  question about content nothing indexed covers still got "sources" that
+  looked plausible next to a correctly-hedged answer. Root cause in the one
+  case that surfaced this was pure data (a document uploaded but never
+  indexed), not a bug - but the underlying gap (no relevance floor) is
+  real regardless. Added `_meets_relevance_bar()`, direction-aware per
+  backend (Chroma's distance is lower=better, Pinecone's score is
+  higher=better). `MAX_CHROMA_DISTANCE = 1.1` is empirically calibrated,
+  not guessed: a real query's genuinely relevant chunks scored ~0.69-0.97,
+  its irrelevant ones (once nothing relevant was indexed) scored
+  ~1.22-1.27 - 1.1 sits between the two clusters with margin either side.
+  `MIN_PINECONE_SCORE = 0.5` is a reasoned starting point only, not yet
+  calibrated against a real Pinecone query. When every retrieved chunk
+  fails the bar, `chunks` comes back empty, which already triggers
+  `generate_answer()`'s existing no-context short-circuit - so this also
+  means a genuinely unanswerable question no longer spends an LLM call at
+  all. Verified live: re-ran the exact query that surfaced this after
+  indexing the real content it needed (10/10 correctly-sourced chunks),
+  then a genuinely unanswerable question (`sources: []`, no LLM call).
+
+  **Standardized error codes**: every error response now carries a stable
+  `code` (new `common/error_codes.py`) alongside its human-readable
+  `error` message - `json_error()`'s `code` parameter is required, not
+  optional, so a call site can't silently omit one. Found two real shape
+  inconsistencies while doing this, not just adding a field on top of what
+  existed: `RequestValidationError` (422) and `rate_limiter.py`'s raw
+  `HTTPException(429)` both bypassed `json_error()` entirely, returning
+  FastAPI's own `{"detail": ...}` shape - contradicting what
+  `docs/agent-reference/HANDOFF.md`/`README_TEST.md` already claimed ("every error has the
+  same shape"). Two new global handlers in `main.py` fix both, and
+  `json_error()` gained a `headers` parameter (separate from the JSON body
+  extras) so the 429 handler can preserve the real `Retry-After` header
+  rather than accidentally serializing it into the response body.
+  `DocumentUploadResult` also gained `error_code` for per-file upload
+  rejections (`INVALID_FILE_TYPE`, `EMPTY_FILE`, `FILE_TOO_LARGE`, etc.) -
+  the same "give a caller something to branch on, not just prose"
+  reasoning applies to a batch-uploading caller deciding which files are
+  worth retrying. Motivated directly by the planned agent work: a
+  LangGraph tool-calling loop needs a stable decision surface, not string-
+  matching message text. 9 new/extended tests, including two direct unit
+  tests of the new exception handlers (not routed through 100 real
+  requests to trip rate limiting) and live verification that the 422 shape
+  actually changed. 81/81 total suite passing.
+
+## Phase 5 onward — RAG query, evaluations, guardrails, deployment
+
+Added 2026-09-09, tracking a much larger discussion in one place rather
+than losing it across chat history. Confirmed with the user: the original
+division of labor (Claude Code = boilerplate/contracts, hand-written = RAG
+logic) **still holds** for everything below - chunking/embedding/indexing
+(Phase 4) was a one-time, explicitly-requested exception, not a precedent.
+Every phase below says who builds it for that reason. ChromaDB only for
+all of this, per explicit instruction - Pinecone stays available (Phase
+2.6) but isn't exercised again until this core is standardized. Explicitly
+**deferred, not forgotten**: ReAct multi-agents, MCP tools, caching - a
+later, separate wave once this core is solid.
+
+- [x] **Phase 5 (Claude Code) — Query endpoint, stubbed.** `POST /rag/query`
+  (`api/rag/retrieve_document.py`) - real request/response contract
+  (`RagQueryRequest`/`RagQueryResponse` in `models/rag.py`, including
+  `RetrievedChunk` for sources), logging, error handling - calling
+  `services/rag_service.py` → `ai/rag_pipeline/pipeline.py::answer_query()`,
+  a three-function scaffold (`decompose_query`/`retrieve_chunks`/
+  `generate_answer`, mirroring `ai/doc_processing/pipeline.py`'s pattern
+  exactly) that raises `NotImplementedError` naming the exact file and
+  workshop module for each step.
+
+  Verified live at the time: a valid query → `501` naming
+  `ai/pre_processing/query_decompose.py` and Phase 5.1 specifically (not a
+  generic error); empty `query` → `422` (min length); `top_k=100` → `422`
+  (max 20) - both caught by the contract before a handler ever runs, not
+  downstream. Confirmed no regression on `/health`, `/docs`, or the
+  existing `/rag/documents` endpoints. **Superseded by Phase 6 below** -
+  the `501` is no longer what a valid query returns; the `422` validation
+  behavior is unchanged.
+- [ ] **Phase 5.1 (hand-written) — Query decomposition.** `ai/pre_processing/
+  query_decompose.py`. **LLM-based, not classical NLP** - confirmed with
+  the user: a single prompt asking the model to break a complex question
+  into 2-4 simpler sub-questions (the pattern LlamaIndex's own
+  `SubQuestionQueryEngine` uses), not POS-tagging/dependency-parsing. No
+  new dependency needed - the existing OpenAI client covers this.
+- [ ] **Phase 5.2 (hand-written) — Query variants (multi-query expansion).**
+  Generating alternate phrasings of one query to widen retrieval recall
+  before merging results. `ai/pre_processing/` or a new module alongside
+  query decomposition - exact home to be decided when this is picked up.
+- [ ] **Phase 5.3 (hand-written) — Prompt chaining + prompt versioning.**
+  `ai/rag_pipeline/prompts/` (currently empty). A registry/versioning
+  scheme for prompts used across decomposition, generation, and
+  evaluation - not just a hardcoded string per call site.
+- [x] **Phase 6 (Claude Code, built on explicit request 2026-09-10 - overrides
+  the original "hand-written" plan, same pattern as Phase 4) — MVP
+  retrieval + grounded generation.** The user asked directly for this
+  ("impl logic for rag search... endpoint"), after Phase 4's chunking/
+  embedding/indexing had already set the precedent that this project's
+  division of labor bends when explicitly, knowingly overridden - not a
+  silent drift. Recorded here for the same reason Phase 4 was: so it's
+  clear this didn't follow the original hand-written boundary, and why.
+
+  - **`ai/rag_pipeline/query_retrieval/retriever.py`** - embeds the query
+    (`OpenAIEmbeddingClient`), searches the configured vector store,
+    deduplicates chunks by `(document_id, chunk_index)` (so a chunk found
+    by more than one sub-query is only returned once - already written to
+    support Phase 5.1's future multi-query output without its own
+    signature changing), and attaches each chunk's source `filename` from
+    the metadata store - one lookup per distinct document, not per chunk.
+  - **`ai/rag_pipeline/response_generation/response_generator.py`** - builds a
+    grounded prompt (context blocks labeled `[filename, chunk N]`, an
+    explicit "answer using ONLY the context... say you don't know
+    otherwise" instruction folded into the question text, since
+    `BaseLLMClient.ask()` has no separate system-message parameter).
+    Empty retrieval short-circuits to a fixed "no information" answer
+    without spending an LLM call. `model_name` override builds a fresh,
+    one-off `OpenAIChatClient` (mirroring how `IndexRequest.embedding_model`
+    overrides `get_embeddings()`, since `ask()` has no per-call model
+    parameter to piggyback on); no override uses the shared `ClientGateway`
+    instance.
+  - **`ai/rag_pipeline/pipeline.py`'s `decompose_query()`** stays a
+    **trivial passthrough** (`return [query]`) - this is explicitly NOT
+    Phase 5.1. Real LLM-based decomposition remains hand-written, untouched,
+    in `ai/pre_processing/query_decompose.py` (still empty). The passthrough
+    exists only so `retrieve_chunks()` already accepts a list of sub-queries
+    without needing a signature change once Phase 5.1 lands for real.
+  - **Deliberately not built in this MVP**: chain-of-thought prompting,
+    query decomposition, multi-query expansion, prompt versioning (Phase
+    5.1-5.3), and both directions of guardrails (Phase 7) - explicitly
+    scoped out by the user ("keeping MVP deliverables in mind... I will
+    identify and pick up some other tasks later").
+
+  **Response contract also updated** (folded into this phase rather than
+  a separate Phase 6.1 pass): `RagQueryResponse` gained `model_used` -
+  the actually-resolved chat model, not just the possibly-null override -
+  matching the same "report what actually ran" convention `IndexResponse`
+  already established. `RetrievedChunk.filename` (added ahead of this
+  phase, alongside the document-metadata expansion) is now genuinely
+  populated instead of an unused contract field.
+
+  **Verified live, real cost incurred** (one real embedding call + one real
+  chat completion): asked "How many weeks of paid time off do employees
+  get per year?" against a real indexed document
+  (`JPMC Paid TimeOff.pdf`) → a correct, grounded answer ("3 to 5 weeks of
+  vacation annually based on years of service and pay grade"), traceable
+  to the real retrieved chunk text, with `sources` correctly showing the
+  real `filename`. Also unit-tested with fakes (no network): 9 tests
+  across `retriever.py` (filename attachment, sub-query dedup, missing-
+  metadata fallback, `top_k` limiting) and `response_generator.py` (no-chunks
+  short-circuit, grounding instruction present in the prompt, shared vs.
+  overridden client selection). Route-level tests updated to monkeypatch
+  `rag_service.answer_query()` rather than asserting the old `501` - one
+  of the pre-existing tests was found making a real, uncontrolled OpenAI
+  call before this fix.
+- [x] **Phase 6.1 (Claude Code) — Contracts/validation/logging for the query
+  path.** Folded into Phase 6 above rather than a separate pass -
+  `model_used` is the concrete contract addition; the existing
+  `json_error()`/try-except/logging shape from upload/indexing already
+  covered the rest and needed no changes.
+- [x] **Phase 7 (hand-written) — Guardrails, both directions.**
+  `ai/pre_processing/guardrails_input.py` (currently empty) - a validation
+  gateway for the incoming query before it reaches retrieval.
+  `ai/rag_pipeline/response_generation/guardrails_output/` (currently
+  empty) - validates/filters the generated answer before it's returned.
+
+  **Spec (added 2026-09-22):**
+  - **Context:** self-audit against IK FDE cohort material plus a real
+    library-selection process found three candidates (Guardrails AI, LLM
+    Guard, NVIDIA NeMo Guardrails) - `pip install --dry-run` against this
+    project's actual `requirements.txt` (not in isolation) eliminated the
+    first two: Guardrails AI's real dependency (`langchain-core>=1.0`)
+    conflicts with this project's pinned `langchain==0.3.20`
+    (`langchain-core<1.0.0`) and silently resolves down to
+    `guardrails-ai==0.1.8` - a release that predates the modern Guardrails
+    Hub validator API, not the library actually being evaluated; LLM
+    Guard resolves clean but pulls ~500MB of PyTorch/transformers/spacy.
+    **NeMo Guardrails resolves clean at its current latest version
+    (0.24.1), lighter than LLM Guard, no forced downgrade** - verified,
+    not asserted.
+  - **Data/API contracts:** N/A - rails run transparently around the
+    existing `POST /v1/genai-rag/retrieve-document/query` request/response
+    shape, no new fields.
+  - **User-visible behavior:** blocked input -> `422`,
+    `INPUT_GUARDRAIL_BLOCKED` (new `error_codes.py` entry). Blocked output
+    -> swap in a safe canned message, still `200` (decided earlier: it's
+    the app's own generated content, not the caller's fault).
+  - **Integration shape:** `RunnableRails` (NeMo's LangChain `Runnable`
+    integration) composes with the existing LCEL chain via the same `|`
+    operator `response_generator.py` already uses -
+    `guarded_chain = guardrails | chain` - the Phase 48 multi-shot prompt
+    and the existing chain are wrapped, not replaced.
+  - **Deliberate scope cut, confirmed 2026-09-22:** the config does **NOT**
+    include NeMo's built-in `self check facts` (and drops `self check
+    output` if it turns out to be scoring quality rather than pure
+    toxicity, needs confirming during implementation) - faithfulness/
+    groundedness scoring is owned by Phase 8's `FaithfulnessMetric`
+    (DeepEval) instead, so there is exactly one groundedness
+    implementation, not two disagreeing ones. Config keeps: `self check
+    input` (prompt-injection/jailbreak), `mask sensitive data on
+    input`/`on output` (PII, entities: PERSON/EMAIL_ADDRESS/US_SSN/
+    CREDIT_CARD).
+  - **Reusability requirement:** the guardrail wrapper must be a plain
+    function taking any LCEL `Runnable` (`with_guardrails(chain) ->
+    Runnable`), not hardcoded to `response_generator.py`'s specific chain -
+    single-agentic-rag/multi-agentic-rag reuse the same wrapper around
+    their own chains later, not a second implementation.
+  - **Failure modes:** NeMo rail evaluation itself failing/timing out
+    (network, model) must fail closed (block) not open (silently skip the
+    check) - exact behavior to confirm against NeMo's own error handling
+    during implementation, not assumed.
+  - **Out of scope:** Gate 2's document-level ACL
+    (`ai/rag_pipeline/helper/access_control.py`) and Gate 4's context
+    grading - neither is a guardrails-library concern, both stay
+    unbuilt/separate.
+  - **Open questions:** exact wiring for `self check input`'s underlying
+    prompt customization (`prompts.yml`) not yet verified against NeMo's
+    docs - confirm before implementing, don't guess the syntax.
+
+  **Implementation note - the integration shape changed from the spec above,
+  for a real reason found while building it.** `RunnableRails`'s
+  `guardrails | chain` composition (what the spec above describes) turned
+  out to expect a specific input shape (string, or a dict with `input`/
+  `messages` keys) and to own the chain via a `runnable=` constructor
+  parameter, not a plain LCEL pipe - wiring our existing two-key
+  `{"context": ..., "question": ...}` chain through it would have added
+  real complexity. Switched to `LLMRails.check_async()` instead - two
+  plain functions (`check_input()`, `check_output()`) called explicitly in
+  `pipeline.py`, before/after retrieval+generation. `response_generator.py`'s
+  chain is untouched either way.
+
+  **Two real bugs found and fixed during implementation, not just
+  wiring:**
+  1. `check_async()`, not the sync `check()` - `pipeline.answer_query()` is
+     async, and NeMo raises `RuntimeError` if its sync method is called
+     from inside a running event loop. Both guardrail functions and their
+     callers in `pipeline.py` are `async def`/`await` throughout.
+  2. `presidio-analyzer`/`presidio-anonymizer` aren't pulled in by
+     `nemoguardrails` itself - the `mask sensitive data` rail needs them
+     installed separately, plus a one-time `python -m spacy download
+     en_core_web_lg` (~400MB, hardcoded by NeMo's own code, not
+     configurable to a smaller model) - confirmed via a live failure
+     before either was installed, not assumed. Both added to
+     `requirements.txt` with a comment explaining why.
+
+  **Also required, not mentioned in the original spec:** `prompts.yml`
+  alongside `config.yml` - NeMo does not ship default prompts for
+  `self check input`/`self check output`; a bare config with those flows
+  enabled fails to load at all without one. Used the same prompt content
+  as NeMo's own example bot (`nemoguardrails/examples/bots/abc/prompts.yml`),
+  adapted for the HR benefits domain.
+
+  **One behavior worth knowing, not a bug:** a query containing what looks
+  like an SSN gets **blocked** by `self check input`, not masked by `mask
+  sensitive data on input` - the input rails run in sequence and
+  `self check input`'s own policy judgment flags it first, so the masking
+  rail never gets a turn. Verified live. Arguably safer than masking-and-
+  proceeding, but different from the original "mask PII, don't block"
+  framing - left as-is, flagged for a decision if the stricter behavior
+  isn't wanted.
+
+  **Verified:** full suite green (151/151, 6 new guardrail tests added,
+  `get_rails()` faked so no real API key/cost). `bandit -r src/hrb_chatbot
+  -ll`: 0 issues. Live end-to-end via the real HTTP route: a real question
+  about parental leave returned a real grounded 200 answer with guardrails
+  passing silently; an injected "ignore all previous instructions" query
+  returned 422 with `INPUT_GUARDRAIL_BLOCKED`, both against the real
+  OpenAI API, not mocked.
+
+- [x] **Phase 8 (hand-written, golden dataset sub-item overridden 2026-09-08) —
+  Golden dataset + A/B testing + evaluations.**
+  `ai/rag_pipeline/evaluations/` (currently empty) - the evaluation metrics
+  and A/B harness themselves remain hand-written and unbuilt: Workshop
+  Module 5 (retrieval metrics: Precision@K/Recall@K/F1; generation
+  metrics: groundedness/completeness via LLM-as-judge).
+
+  **The golden dataset itself is done** - `resources/golden_dataset/golden_dataset.json`,
+  22 cases, every fact read directly from the real PDF text in
+  `resources/kb_docs/` (not summarized from memory): 18 grounded
+  single-document cases across all six documents, 1 cross-document
+  synthesis case, and 3 adversarial cases (a question entirely outside
+  the knowledge base, a number the source document genuinely doesn't
+  state, and a false-premise question the answer should correct rather
+  than agree with). Built as an explicit, one-time override of this
+  phase's hand-written boundary - same pattern as Phase 4
+  (chunking/embedding/indexing), not a precedent for the rest of Phase 8.
+  Can now actually be exercised against `POST /v1/rag-retrieval/query`
+  since Phase 6's MVP landed - the evaluation metrics/A/B harness
+  themselves (Precision@K/Recall@K/F1, groundedness via LLM-as-judge)
+  are still the unbuilt, hand-written part of this phase.
+
+  **Correction 2026-09-21:** the golden dataset file actually has 23
+  cases, not 22 - `_meta.case_count` said 22, was stale, fixed. Category
+  breakdown: 18 happy, 1 happy_multi_document, 2 unhappy_out_of_scope, 1
+  unhappy_unanswerable, 1 unhappy_adversarial. `_meta.description`/
+  `how_to_grade` also still referenced the pre-Phase-45 `POST /rag/query`
+  endpoint and the pre-Phase-45 flat `response.sources[]` shape - both
+  fixed to `POST /v1/genai-rag/retrieve-document/query` and
+  `response.retrieval_info.sources[]`.
+
+  **Spec (added 2026-09-22):**
+  - **Context:** same self-audit that produced Phase 7's spec. DeepEval
+    checked the same way - `pip install --dry-run` against this project's
+    real `requirements.txt` resolves clean at current version
+    (`deepeval==3.3.9`), no conflicts, no forced downgrade, no heavy ML
+    stack.
+  - **Data/API contracts:** N/A - the harness calls the existing
+    `POST /v1/genai-rag/retrieve-document/query` (or `pipeline.answer_query()`
+    directly) once per golden-dataset case; no new endpoint.
+  - **User-visible behavior:** a new pytest tier, not part of the default
+    run - `@pytest.mark.eval` (or equivalent), excluded from the
+    zero-cost/zero-API-key suite the rest of this project's tests are
+    (matches `docs/agent-reference/TESTING-GUIDE.md`'s stated guarantee; golden-dataset
+    grading needs real embedding + chat calls, so it can never join the
+    145 that run on every commit).
+  - **Metrics:** `ContextualPrecisionMetric`/`ContextualRecallMetric`
+    (retrieval - Module 5's Precision@K/Recall@K/F1, computed the 2026
+    RAG-Triad-standard way, not hand-rolled set overlap) and
+    `FaithfulnessMetric`/`AnswerRelevancyMetric` (generation -
+    groundedness/completeness). `FaithfulnessMetric` is the single
+    implementation also referenced by Phase 7's dropped `self check facts`
+    - not reimplemented twice.
+  - **CI threshold:** practical-significance bar already written down in
+    `docs/agent-reference/CICD-BRANCHING-STRATEGY.md`'s "A/B testing, once Phase 8 exists"
+    section - challenger beats baseline by >= 5 points average, no
+    single-case regression > 10 points; 23 cases is too small for a real
+    p-value, so no formal significance test until the dataset grows past
+    ~50/variant. This spec doesn't change that guidance, just finally
+    gives it code to gate.
+  - **One thing to verify before implementing, not assume:** DeepEval
+    ships with anonymous telemetry (`posthog`/`sentry-sdk` showed up in
+    the dry-run) - confirm the opt-out mechanism and set it before this
+    ships, don't find out later what it sent.
+  - **Reusability requirement:** the harness takes a callable ("ask this
+    question, return an answer + sources") as a parameter, not a hardcoded
+    import of `genai-rag`'s `pipeline.answer_query()` - so the same 23
+    golden-dataset cases can grade single-agentic-rag/multi-agentic-rag
+    later by passing a different callable in, not a second harness.
+  - **Out of scope:** growing the dataset past 23 cases, formal
+    statistical significance testing - both explicitly deferred in the
+    existing CI/CD doc.
+  - **Open questions:** none blocking - telemetry opt-out is a
+    pre-ship checklist item, not an open design question.
+
+  **Implementation, 2026-09-22:** `ai/rag_pipeline/evaluations/
+  golden_dataset_harness.py` - `load_golden_cases()` and `score_case(case,
+  ask)`, where `ask` is any `async def ask(query: str) -> {"answer": str,
+  "retrieved_texts": list[str]}` - genai-rag's own adapter
+  (`ask_genai_rag()`) lives in the test file, not the harness, keeping the
+  harness itself pipeline-agnostic per the reusability requirement.
+  `DEEPEVAL_TELEMETRY_OPT_OUT=YES` added to `.env`, confirmed via
+  `deepeval/telemetry.py`'s own source before setting it, not guessed.
+  `pytest.ini` gained `markers = eval: ...` and `addopts = -m "not eval"` -
+  verified live that a plain `pytest -q` deselects the eval test (151
+  passed, 1 deselected) and `pytest -m eval` correctly overrides the
+  addopts default to run only it.
+
+  **A real finding, not a harness bug:** running the harness against real
+  golden-dataset cases surfaced `contextual_precision`/`contextual_recall`
+  scores of 0.00 - traced this down rather than reporting the raw numbers
+  as-is. Root cause: **only 3 of the 6 real KB documents are currently
+  indexed** (Tuition Assistance, Paid TimeOff, Healthcare Benefits) - the
+  401(k), Unpaid TimeOff, and Sedgwick Unpaid Timeoff documents are
+  missing, left over from the earlier session incident where 900 rows
+  were deleted from the live DB and only some PDFs were manually
+  re-uploaded afterward. A 401(k) question retrieved zero 401(k) content
+  (5 chunks, all leave/healthcare) - the pipeline correctly said "I don't
+  have that information" rather than hallucinating (faithfulness 0.67),
+  but that's irrelevant to the actual question (answer_relevancy 0.33,
+  contextual precision/recall both 0.00 since nothing retrieved supports
+  the expected answer). **This is the harness working exactly as
+  intended** - it caught a real data gap immediately. Re-uploading the 3
+  missing PDFs is separate, simple follow-up work, not done as part of
+  this phase (flagged, not silently fixed).
+
+  **Verified:** full suite green (151 passed, 1 deselected by default).
+  `pytest -m eval -v`: 1 passed, real API calls, real scores returned (not
+  zeros-by-bug, not errors) - confirmed by tracing one case's actual
+  retrieval+generation+scores end to end, not just reading the pass/fail
+  result. `bandit -r src/hrb_chatbot -ll`: 0 issues. The committed test
+  scores only 3 of 23 cases (a smoke test confirming the harness works),
+  not all 23 - a full 23-case run is manual/CI work, not something to run
+  on every `pytest -m eval` invocation given real cost per run.
+- [x] **Phase 9 (Claude Code) — Bedrock as an LLM provider.**
+  `BedrockChatClient` implementing `BaseLLMClient` via the Converse API, wired
+  into `/health` the same way as OpenAI/Anthropic/OpenRouter
+  (`provider=bedrock`) and into `client_gateway.py`'s lazy accessor pattern.
+  `ask_with_tools()`'s OpenAI↔Bedrock tool-format conversion is untested
+  against a real tool-calling request - only `ask()` and the deep health
+  check have been exercised live.
+
+  One thing worth knowing, not glossed over: the deep health check
+  (`GET /health?deep=true&provider=bedrock`) passed against a real AWS
+  account (122 models visible) using credentials this project never
+  configured - `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` are both blank in
+  `.env`, so boto3's default credential chain fell through to a
+  pre-existing `~/.aws/credentials` file already on this machine (confirmed
+  via `boto3.Session().get_credentials().method` ==
+  `"shared-credentials-file"`), unrelated to this project. Asked the user
+  whether to pin project-specific credentials instead; the user chose to
+  keep relying on the default chain deliberately - the same mechanism an
+  ECS/App Runner task role will use in Phase 10, so nothing here needs to
+  change before deployment. Just worth knowing that "healthy" today reflects
+  whatever AWS identity happens to be ambient on this machine, not one
+  scoped to `hrb_chatbot_v2`.
+- [x] **Phase 10 (Claude Code) — Docker + AWS deployment via App Runner.**
+  Target chosen over ECS Fargate (simpler for one container, no ALB/task-def
+  to hand-wire) and over AgentCore Runtime (per the earlier confirmed
+  decision). Deploying under the same ambient AWS identity Phase 9 found
+  (`BedrockAgentCore` user, account `418884736369`, region `us-east-1`) -
+  confirmed via `aws sts get-caller-identity` / `iam list-attached-user-policies`
+  that this identity holds `AdministratorAccess` and the account already
+  hosts unrelated projects (`ai-workflows/vacation-planner-*` in ECR,
+  `us-east-2`) - not a project-dedicated account, the user's own general
+  sandbox, used deliberately with informed consent.
+
+  **Real resource identifiers - write these down, they're useless from memory:**
+  | What | Value |
+  |---|---|
+  | ECR repository | `418884736369.dkr.ecr.us-east-1.amazonaws.com/hrb-chatbot` |
+  | Access role (App Runner → ECR pull) | `arn:aws:iam::418884736369:role/hrb-chatbot-apprunner-access-role` |
+  | Instance role (the running app's own permissions) | `arn:aws:iam::418884736369:role/hrb-chatbot-apprunner-instance-role` - inline policies `bedrock-invoke-only` (`bedrock:InvokeModel`, `InvokeModelWithResponseStream`, `ListFoundationModels`) and `secrets-manager-read-own` (`secretsmanager:GetSecretValue` on `hrb-chatbot/*` only) - deliberately **not** the admin identity that deployed it |
+  | Secrets (Secrets Manager, `us-east-1`) | `hrb-chatbot/OPENAI_API_KEY`, `hrb-chatbot/ANTHROPIC_API_KEY`, `hrb-chatbot/OPENROUTER_API_KEY`, `hrb-chatbot/TAVILY_API_KEY`, `hrb-chatbot/PINECONE_API_KEY` - created by `create_secrets.py` (a scratchpad script, not in the repo) reading `.env` directly, values never echoed anywhere |
+  | App Runner service (final, running) | `arn:aws:apprunner:us-east-1:418884736369:service/hrb-chatbot/f957548202f343aa8ca91f341d71d85a` → `https://mrgysvt6ye.us-east-1.awsapprunner.com` |
+  | GitHub Actions deploy user (Phase 11) | IAM user `hrb-chatbot-github-actions-deploy` - static access key, stored only in this repo's GitHub Actions secrets (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`), scoped to push `hrb-chatbot` ECR images and call `apprunner:StartDeployment`/`DescribeService` on this one service only |
+
+  **A real code change landed as part of this phase** (not just config):
+  `documents_service.py`, `ai/doc_processing/indexing/vector_indexer.py` and
+  `api/rag/routes_documents.py` all called `db_gateway.sqlite()` directly,
+  with no config switch - unlike the vector store, the metadata store had
+  no equivalent of `RAG_VECTOR_DB`. This surfaced because App Runner has no
+  persistent local disk (same problem `docs/agent-reference/S3-ASYNC-UPLOAD-DESIGN.md`
+  already documented for Lambda) - SQLite silently wiped on every restart
+  would have been discovered by *deploying*, not by anyone reading the code.
+  Added `db_gateway.metadata_store(provider=None)` reading a new
+  `RAG_METADATA_STORE` setting (`sqlite` default, matches local dev
+  unchanged; `postgres` for anywhere without persistent disk), and switched
+  all three call sites to it. `documents_service.py`/`vector_indexer.py` are
+  Claude-Code-owned per the seam table above, so this was in-scope to fix
+  without asking - the hand-written `ai/rag_pipeline/` layer was untouched.
+
+  **Decided, with the user, before spending anything:**
+  - App Runner over ECS Fargate (see above).
+  - Deployed backends are **Pinecone (vector) + Postgres (metadata)**, not
+    the local defaults (chromadb+sqlite) - both already fully implemented
+    (Phases 2.5/2.6), both remote, both survive an App Runner restart.
+  - Postgres reachability: **hosted Postgres (Neon)**, not Amazon RDS - RDS
+    would need a DB subnet group, a security group, and an App Runner VPC
+    Connector just to reach a VPC; Neon is a plain reachable connection
+    string, same `postgres_client.py` code, zero networking to wire up.
+  - Secrets via **AWS Secrets Manager**, not plaintext App Runner
+    environment variables - the instance role can read only the
+    `hrb-chatbot/*` secrets, nothing else in the account.
+  - AWS CLI here was `aws-cli/2.0.30` (~2020), missing `apprunner` and other
+    modern subcommands entirely - user chose to upgrade it (see below)
+    rather than script around it forever; deployment itself was done via a
+    `boto3` script regardless, since `boto3` in the project's venv (1.43.89)
+    already supports App Runner independent of the CLI's own version.
+
+  **What's actually done, verified live against the real deployed URL:**
+  - [x] ECR repo created, image built locally and pushed as `:latest`.
+  - [x] Both IAM roles created with scoped (non-admin) policies.
+  - [x] Five secrets created in Secrets Manager from `.env`'s current keys.
+  - [x] `RAG_METADATA_STORE` switch added and wired through all three call sites.
+  - [x] App Runner service `RUNNING` - confirmed via `GET /health` (`200`,
+    `"status":"healthy"`), `GET /health?deep=true` (`200`, real OpenAI call,
+    127 models visible - proves `OPENAI_API_KEY` resolved correctly from
+    Secrets Manager), and `GET /health?deep=true&vector_provider=pinecone`
+    (`200`, real Pinecone call, `total_vector_count: 45` - the same 45
+    chunks indexed during local testing, since Pinecone is the one shared
+    persistent backend both environments point at).
+
+  **Three real bugs, not one, across four deploy attempts - each found by
+  deploying and reading logs, not by reasoning about the config beforehand:**
+  1. **Secret ARNs hand-typed without their random suffix.** Secrets Manager
+     appends one to every secret name; App Runner's `RuntimeEnvironmentSecrets`
+     requires the exact full ARN, and silently produces `CREATE_FAILED` (image
+     pulls fine, container never starts, zero application-level logs) rather
+     than a validation error naming the real problem. Fixed by resolving ARNs
+     via `secretsmanager.list_secrets` at deploy time instead of ever
+     constructing one by hand again.
+  2. **BuildKit's default provenance/SBOM attestation manifests.** `docker
+     build` (no flags) pushes an OCI image *index* wrapping the real image
+     plus an attestation manifest - a well-documented cause of exactly this
+     "pulls fine, silently fails to start" symptom across AWS services
+     (Lambda has the identical documented issue). Fixed with
+     `--provenance=false --sbom=false`.
+  3. **OCI-format manifest, not classic Docker v2 schema2, even with
+     attestations off.** `docker manifest inspect` on the pushed image still
+     showed `mediaType: application/vnd.oci.image.manifest.v1+json` after
+     fix #2 - App Runner needs `application/vnd.docker.distribution.manifest.v2+json`.
+     Fixed with `docker buildx build --output type=image,...,oci-mediatypes=false,push=true`,
+     verified by re-running `docker manifest inspect` and confirming the
+     media type changed *before* spending another ~9-minute AWS deploy cycle
+     finding out the hard way.
+
+  All three fixes are load-bearing in `.github/workflows/deploy.yml` now
+  (Phase 11) - the build step's three flags are commented there specifically
+  so a future edit doesn't drop one back out.
+
+  **Known, deliberate, temporary compromise in the deployed config:**
+  `RAG_METADATA_STORE=sqlite` in the App Runner service's own environment
+  variables right now - the *ephemeral* option - because Neon didn't exist
+  yet when the service was created and App Runner refuses to start a
+  service whose `RuntimeEnvironmentSecrets` reference a secret ARN that
+  doesn't exist. `RAG_VECTOR_DB=pinecone` is already live and persistent.
+  Once Neon exists, finishing this is: create 5 more secrets
+  (`hrb-chatbot/POSTGRES_DB_HOST/PORT/NAME/USER/PASSWORD` - the instance
+  role's `hrb-chatbot/*` policy already covers them, no IAM change needed),
+  then call `apprunner.update_service` flipping `RAG_METADATA_STORE` to
+  `postgres` and adding those 5 to `RuntimeEnvironmentSecrets`. No image
+  rebuild needed - this is config-only.
+
+  **Known, deliberate, temporary compromise in the deployed config:**
+  `RAG_METADATA_STORE=sqlite` in the App Runner service's own environment
+  variables right now - the *ephemeral* option - because Neon didn't exist
+  yet when the service was created and App Runner refuses to start a
+  service whose `RuntimeEnvironmentSecrets` reference a secret ARN that
+  doesn't exist. `RAG_VECTOR_DB=pinecone` is already live and persistent.
+  Once Neon exists, finishing this is: create 5 more secrets
+  (`hrb-chatbot/POSTGRES_DB_HOST/PORT/NAME/USER/PASSWORD` - the instance
+  role's `hrb-chatbot/*` policy already covers them, no IAM change needed),
+  then call `apprunner.update_service` flipping `RAG_METADATA_STORE` to
+  `postgres` and adding those 5 to `RuntimeEnvironmentSecrets`. No image
+  rebuild needed - this is config-only.
+
+  **Blocked on the user, not on Claude Code:** a free Neon Postgres
+  project/database - sign up at neon.tech, create one, and either paste the
+  connection details in chat (never echoed back, same handling as every
+  other key in this project) or note them somewhere I can read directly.
+
+  **AWS CLI upgrade** (`winget upgrade --id Amazon.AWSCLI`, 2.0.30 → 2.36.40):
+  appeared stuck at "Starting package install..." for several minutes with
+  no further output (assumed blocked on a UAC prompt this non-interactive
+  shell can't answer) - but it had actually completed in the background;
+  `aws --version` later confirmed `2.36.40`. Worth remembering: a
+  long-silent background command here isn't necessarily stuck, and is
+  worth checking again before working around it with something slower.
+
+  **Not yet done:** CloudWatch log group verification (App Runner creates
+  one automatically per service - not yet confirmed it's receiving this
+  app's `structlog`/`loguru` output correctly), a custom domain (not
+  requested), and any autoscaling configuration beyond App Runner's default.
+- [x] **Phase 11 (Claude Code) — CI/CD + GitHub.**
+  `.github/workflows/ci.yml` (every push/PR, any branch, no AWS credentials
+  at all - import smoke test + Docker build validation) and
+  `.github/workflows/deploy.yml` (push to `main` only - builds with the
+  same three flags Phase 10 found were load-bearing, pushes to ECR, calls
+  `apprunner start-deployment`). `.githooks/pre-commit` content-scans staged
+  diffs for real API key shapes before allowing a commit - opt in with
+  `git config core.hooksPath .githooks`.
+
+  **CI verified for real, not just committed:** pushed to `hrb_rag_pipelines`
+  (commit `00b7be8`) and polled the GitHub Actions API directly -
+  [run 34184448804](https://github.com/rvsree/hrb_chatbot_v2/actions/runs/34184448804)
+  completed `success` on both jobs (`App imports cleanly`, `Docker image
+  builds`).
+
+  **Deploy (`deploy.yml`) is written but not yet exercised** - it only
+  triggers on `main`, which is still empty on the remote (nothing merged
+  there yet, unchanged from before this phase). Two things need to happen
+  before it can run for real:
+  1. **Blocked on the user:** the two GitHub Actions secrets
+     (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` for the
+     `hrb-chatbot-github-actions-deploy` IAM user) still need to be added
+     via GitHub's own UI (Settings → Secrets and variables → Actions) -
+     the values are sitting in a local, un-committed scratch file
+     (`github_actions_credentials.txt`, never printed to any tool output
+     or chat message) specifically so they could be copied in without ever
+     appearing in this conversation. **Delete that file once copied in.**
+  2. A merge (or push) to `main`.
+
+  **Why a static IAM user instead of GitHub's OIDC (no long-lived keys)**:
+  the OIDC setup (an account-wide identity-provider trust relationship) was
+  blocked by Claude Code's own safety classifier and needed explicit
+  sign-off; offered as a choice, the user chose the static-key IAM user
+  instead, accepting a long-lived key in GitHub Secrets in exchange for a
+  simpler one-time setup - deliberate, not a fallback taken silently. The
+  user is still scoped tightly (ECR push to this one repo, App Runner
+  deploy-trigger on this one service only), same principle as every other
+  role in Phase 10, just not the zero-static-secret ideal.
+
+  **A bug in the hook itself, caught by testing it, not by writing it
+  carefully:** the first version's key-shape regex (`sk-[A-Za-z0-9]` with
+  no minimum length) matched *inside ordinary English words*
+  ("ta`sk-d`ef" in this very file) and blocked an unrelated commit. The fix
+  that added a length minimum then went too far the other way - it
+  forbade `-`/`_`, which real base64url key material actually contains, so
+  it stopped matching real keys at all. Both were only found by testing the
+  hook against realistically-shaped fake keys for all five providers before
+  trusting it - reasoning about the regex alone missed both.
+
+- [x] **Phase 12 (Claude Code) — REST API contract-first hardening.**
+  Requested directly: versioning, idempotency, rate limiting, request
+  validation bounds, graceful error handling, structural guardrails, a
+  centralized validation point, and pre-flight backend-readiness checks
+  before spending money - implemented for real, not just discussed, and
+  documented in depth in `docs/agent-reference/FAQ.md`'s section 6.
+
+  **Versioning**: every business endpoint now under `/v1`
+  (`main.py`'s `include_router(..., prefix="/v1")`); `GET /health`
+  deliberately stays unversioned, matching how a liveness/readiness probe
+  is conventionally exempted from an API's own version scheme.
+
+  **Idempotency**: `common/idempotency/idempotency_store.py`, an
+  `Idempotency-Key` header (Stripe's own convention) on upload/index/query.
+  Verified live, not just unit-tested: uploading the same PDF twice with
+  the same key returns the *same* `document_id` both times.
+
+  **Rate limiting**: `common/rate_limiting/rate_limiter.py`, fixed-window,
+  per-client-IP, applied via `Depends(enforce_rate_limit)` to every
+  endpoint that writes state or spends money. Finally gives
+  `APP_RATE_LIMITING`/`APP_RATE_LIMIT_REQUESTS`/`APP_RATE_LIMIT_DURATION` a
+  real job - orphan `.env` config since this project's first commit (see
+  `docs/agent-reference/BACKLOG.md`).
+
+  **Request validation**: an audit found `RagQueryRequest.query` had a
+  `min_length` but no `max_length` at all - fixed with a 2000-character
+  cap, plus matching bounds on `vector_db`/`model_name`/`embedding_model`.
+
+  **Error handling**: the same audit found two `json_error(...)` calls
+  interpolating a caught exception's raw `str(error)` directly into the
+  client-facing message - a real info-leak risk. Both now log full detail
+  server-side and return a generic message. `main.py` also gained a global
+  `@app.exception_handler(Exception)`, confirmed absent before this.
+
+  **Pre-flight check before spending money**: `index_document()` now
+  checks (shallow, free) that the LLM provider and vector store are
+  configured before attempting the real pipeline call, returning a clean
+  503 instead of a raw exception deep in the stack. **Deliberately not**
+  applied to the query endpoint - it's still a pure stub, and gating it
+  behind a real API key would break in CI, which runs with zero secrets
+  (see `docs/agent-reference/AWS-DEVOPS-RUNBOOK.md`) - add the same check there once
+  Phase 6 makes a real call.
+
+  Both single-process, in-memory limitations (idempotency, rate limiting)
+  are documented in their own modules' docstrings, not a surprise to
+  discover later - a real shared store (Redis) is the fix the moment this
+  app ever runs as more than one instance.
+
+Explicitly deferred to a later, separate wave - not part of the above:
+**ReAct multi-agents, MCP tools, caching.**
+
+- [x] **Phase 2.5 (Claude Code, added on request) — Postgres, fully implemented.**
+  `postgres_client.py` rewritten from a stub to a real implementation of the
+  same `BaseMetadataClient` contract as `sqlite_client.py` - not the active
+  store (SQLite still is, in `documents_service.py`), but genuinely working
+  and checkable on its own via `GET /health?deep=true&metadata_provider=postgres`.
+
+  Two real things found and fixed while building this, not glossed over:
+  - **`.env`'s Postgres credentials pointed at `hrb_emp_assist`'s own shared
+    database** (`hr_chatbot` - confirmed by listing its tables:
+    `employees`, `leave_requests`, `chat_history`, etc.). Asked the user
+    before touching it; created a dedicated `hrb_chatbot_v2` database on the
+    same local Postgres server instead, and updated `POSTGRES_DB_NAME` in
+    `.env` to point at it. This project's data can no longer collide with
+    or be confused for the other project's.
+  - **psycopg's native async driver (`AsyncConnection`) does not work on
+    Windows** under the default `ProactorEventLoop` - raises
+    `InterfaceError` on connect. Fixed by running ordinary synchronous
+    psycopg calls inside `asyncio.to_thread()`, the same strategy
+    `aiosqlite` itself uses internally (sqlite3 has no async driver
+    either). Portable to the Linux deployment target too, not a
+    Windows-only patch.
+
+  Verified live: `create_document`, `get_document`, `update_status`,
+  `list_documents` all tested directly against the real `hrb_chatbot_v2`
+  database (not mocked), including the unknown-id case; `GET
+  /health?deep=true` confirmed both `metadata_provider=sqlite` (6 real
+  documents) and `=postgres` (0, its own clean database) report healthy
+  independently.
+
+- [x] **Phase 2.6 (Claude Code, added on request) — Pinecone, fully
+  implemented**, once the user created a real account and added
+  `PINECONE_API_KEY` to `.env`. `pinecone_client.py` rewritten from stub to
+  real, implementing `BaseVectorDBClient` - not the active store (ChromaDB
+  still is), checkable on its own via
+  `GET /health?deep=true&vector_provider=pinecone`.
+
+  Design decisions worth knowing before writing retrieval code against
+  either backend:
+  - **`collection_name` maps to a Pinecone namespace**, not a separate
+    index - one `PINECONE_INDEX_NAME` is configured for this whole client,
+    since a Pinecone index has one fixed vector dimension for everything in
+    it.
+  - **Pinecone has no native "documents" field.** The raw chunk text is
+    stored under a `"document"` metadata key on upsert and extracted back
+    out on query, to keep the same shape `ChromaDBClient.query()` returns.
+  - **The score/distance inversion is real and not silently corrected.**
+    Chroma's `"distances"` are lower-is-better; Pinecone's are a cosine
+    *similarity* score, higher-is-better. Both are returned under the same
+    `"distances"` key for shape-compatibility, but the number means the
+    opposite thing depending on which backend answered - documented
+    prominently in `pinecone_client.py`'s module docstring, not papered
+    over with a guessed transform.
+  - **`.env`'s placeholder index name (`hrb_benefits_index_name`) would
+    have been rejected outright** - Pinecone index names allow only
+    lowercase letters, digits and hyphens, no underscores. Corrected to
+    `hrb-chatbot-kb` while filling in the rest of the Pinecone settings
+    (`PINECONE_CLOUD`, `PINECONE_ENVIRONMENT`, `PINECONE_METRIC`,
+    `PINECONE_DIMENSION`).
+
+  Verified live, against the real account: `GET /health?deep=true&vector_provider=pinecone`
+  created the `hrb-chatbot-kb` serverless index on first call (confirmed
+  `index_already_existed: false`, then `true` on the next call); a direct
+  upsert/query/delete test with two fake chunks confirmed the exact chunk
+  queried came back first with the highest score (~0.9999997), the other
+  chunk scored lower (~0.748), document text and metadata round-tripped
+  correctly, and `total_vector_count: 0` after delete confirmed cleanup.
+  Also confirmed the shallow check (`vector_provider=pinecone`, no
+  `deep=true`) makes no network call at all - unlike ChromaDB, Pinecone is
+  a real external service, so this matters.
+
+- [x] **Phase 13 (Claude Code, added on request) — Branch restructuring +
+  CI/CD gates.** Requested directly: create `develop`/`feature`/`master`-
+  style branches, commit current work to a new feature branch, and design
+  the ongoing testing/release process for future feature areas (a ReAct
+  multi-agent setup, MCP workflows, conversation memory, session/state
+  caching - the items explicitly deferred at the end of Phase 12 above).
+
+  **Branches created**, cut from `hrb_rag_pipelines` at commit `416f977`:
+  `main`, `developer`, `feature`, `feature-kb-indexing-rag-pipeline`. The
+  user then renamed three of them on GitHub's own UI - `main` → `master`,
+  `developer` → `develop`, `feature-kb-indexing-rag-pipeline` →
+  `feature-langchain-rag-pipeline` - and deleted the generic `feature`
+  parent branch. **A GitHub rename deletes the old ref outright, no
+  redirect** - confirmed via `git fetch --prune` showing all three old
+  names as `[deleted]` - which meant `deploy.yml`'s `on: push: branches:
+  ["main"]` and `ci.yml`'s `pull_request: branches: ["main"]` were now
+  triggers pointing at nothing. Both fixed to `master` in the same change;
+  missing this would have left `deploy.yml` silently dead (no error, it
+  simply never fires) the next time anyone pushed expecting it to deploy.
+
+  **CI/CD gates measured before being set, not guessed** - the same
+  lesson twice in one sitting:
+  - A first attempt at a coverage floor used `--cov-fail-under=70` before
+    ever running it for real. Actually running it: **46%** measured. Set
+    to `--cov-fail-under=45` instead - a ratchet with real headroom, not a
+    number that would have broken the very next CI run on code nobody
+    had touched.
+  - A first attempt at `pip-audit` let it fail the job on any CVE found.
+    Running it for real turned up dozens of pre-existing CVEs across
+    `langchain*`/`chromadb`/`starlette`/`pillow` - versions pinned for
+    compatibility long before this scan existed. Set to
+    `continue-on-error: true` (report-only) instead, with a documented
+    triage plan before flipping it to blocking - see `docs/agent-reference/BACKLOG.md`'s
+    new CI/CD section.
+  - `bandit -ll` (static security analysis) *is* enforced as blocking -
+    it ran clean (zero MEDIUM+ findings) against the real codebase, so
+    unlike the two above, this one didn't need a lowered bar.
+
+  **Deployment testing added to `deploy.yml`**: `aws apprunner
+  start-deployment` only starts a deployment and returns almost
+  immediately - two new steps after it actually confirm the deploy
+  worked: poll `describe-service` until `Service.Status` is `RUNNING`
+  (5-minute timeout, fails the job on anything else), then a real `curl
+  --fail` against the live URL's `/health`. Previously, a deployment that
+  "succeeded" by AWS's own accounting but produced a container that never
+  came up would have left GitHub Actions reporting green.
+
+  **New doc**: `docs/agent-reference/CICD-BRANCHING-STRATEGY.md` - the branch-role table,
+  every gate and its threshold with the reasoning behind each number, the
+  wheel-vs-JAR packaging question answered directly (a wheel isn't added;
+  the Docker image already is this project's versioned deployable
+  artifact - see that doc for the full reasoning and what *would* justify
+  adding one), and an honest two-option write-up on whether `develop`
+  should get its own staging App Runner deployment (real ongoing AWS
+  cost either way) - **left as an open decision, not built without being
+  asked**, same category of call as the Neon Postgres signup already
+  tracked in `docs/agent-reference/HANDOFF.md`.
+
+  **Not done, flagged rather than silently skipped**: the GitHub repo's
+  default branch is still `hrb_rag_pipelines`, not `master` (a Settings →
+  Branches action); no branch-protection rules exist yet requiring CI to
+  pass before a merge into `develop`/`master`; Docker images are still
+  tagged `:latest` only, with no per-SHA tag to roll back to if a deploy
+  passes its own health check but is broken some other way - deliberately
+  not touched in this same pass, since `deploy.yml`'s build command has
+  caused three real failures before (see "Three real bugs found the hard
+  way" in `docs/agent-reference/AWS-DEVOPS-RUNBOOK.md`) and earns its own isolated test
+  before being changed again.
+
+- [x] **Phase 14.1 (Claude Code, on request 2026-09-13) — Idempotency
+  removed.** User decision, made explicitly during a much longer
+  discussion about replacing the hand-rolled chunking/indexing/retrieval
+  code with direct LangChain (chunking, retrieval/generation) and
+  LlamaIndex (indexing) usage instead - see Phase 14.2 below for that
+  larger, separate effort. Idempotency was called out by name as one of
+  the "complex optional" pieces to drop for now, to be revisited later,
+  not a verdict on whether it's worth having.
+
+  All three mechanisms removed, not just the one literally named
+  "idempotency": the `Idempotency-Key` header cache
+  (`common/idempotency/idempotency_store.py`, on upload/index/query), the
+  SHA-256 content-hash duplicate-upload check
+  (`documents_service.save_upload()`'s `find_by_content_hash()` call), and
+  their dedicated tests
+  (`tests/hrb_chatbot/common/idempotency/test_idempotency_store.py`,
+  `tests/hrb_chatbot/api/rag/test_idempotency_and_rate_limiting.py`). The
+  third mechanism this project's own idempotency terminology never
+  actually named - `vector_indexer.py`'s deterministic chunk ids
+  (`{document_id}:{chunk_index}`, making a re-index an upsert rather than
+  a duplicate insert) - was deliberately left alone here; it will be
+  superseded naturally once Phase 14.2's LlamaIndex rewrite replaces
+  `vector_indexer.py` outright, not worth touching twice.
+
+  Behavior change: uploading identical content now always creates a new
+  document (`status: "uploaded"`, a fresh `document_id`) instead of being
+  detected as a `"duplicate"` of the existing one. `content_hash` is
+  still computed and stored on each document row (harmless, no schema
+  change needed), just no longer checked against on upload.
+
+  Verified: full test suite green (73/73) after the change, including two
+  rewritten tests in `test_routes_documents.py` that used to assert
+  duplicate-detection and now assert two independent documents are
+  created from identical content instead. `README.md`, `README_TEST.md`,
+  `docs/agent-reference/FAQ.md`, `docs/agent-reference/HANDOFF.md`, `docs/agent-reference/BACKLOG.md` updated to match -
+  `BACKLOG.md`'s idempotency line is deliberately un-struck-through
+  (back on the backlog as a real gap, not deleted from the project's
+  history of having built it once already).
+
+  **Planned re-implementation**: a real shared store (Redis), not the
+  same single-process in-memory cache - the fix already named as the
+  eventual next step even before removal, see the limitation noted in the
+  now-deleted module's own docstring and quoted throughout the docs
+  above. No timeline yet; picked up whenever the pipeline rewrite below
+  is stable.
+
+- [ ] **Phase 14.2 (Claude Code, in progress 2026-09-13) — Replace the
+  hand-written chunking/indexing/retrieval pipeline with direct
+  LangChain + LlamaIndex usage, mirroring
+  `support_desk_rag_workshop/SupportDesk-RAG-Workshop`'s modules
+  directly** (not reimplemented natively - the explicit point of this
+  phase is to stop hand-rolling what these libraries already do, per the
+  user's direct correction after an earlier, wrong assumption otherwise).
+  Framework split matches the workshop's own module split: **LangChain**
+  for chunking (module 2) and the retrieval/generation pipeline
+  (module 4); **LlamaIndex** for indexing (module 3) - a library this
+  project has not used before now.
+
+  **Chunking** (`ai/doc_processing/chunking/`) - six techniques as plain
+  functions (no classes/interfaces, mirroring `demo.py`'s own style, per
+  the user's explicit "coming from a Java background, keep the Python
+  simple" instruction): fixed-size (`CharacterTextSplitter`), recursive
+  (`RecursiveCharacterTextSplitter`, the default), semantic
+  (`SemanticChunker`), markdown-aware (`MarkdownHeaderTextSplitter`),
+  HTML-aware (`HTMLHeaderTextSplitter`), and whole-document/none. Each
+  technique gets its own dedicated endpoint
+  (`POST /v1/rag-ingestion/documents/{id}/index/<strategy>`) *and* the
+  existing endpoint gains an optional `chunking_strategy` field for
+  dynamic selection - both call the same underlying function. When not
+  specified explicitly, a small pre-processing function auto-selects
+  using rules sourced directly from the workshop's own
+  `modules/2_chunking/notes.md` decision matrix (markdown headers →
+  markdown; HTML tags → html; shorter than one chunk → none; otherwise →
+  recursive) - `semantic` is never auto-selected, since the workshop ties
+  it to "when accuracy is critical," not something detectable from the
+  text itself.
+
+  **Indexing** (`ai/doc_processing/indexing/`) - rebuilding
+  `vector_indexer.py` on LlamaIndex's `VectorStoreIndex` (user's explicit
+  choice over leaving the current raw-SDK version untouched), against
+  **both** ChromaDB and Pinecone (both already-configured backends kept,
+  per user request - not narrowing to one). MVP scope is Vector Index
+  only; Summary/Tree/Keyword-Table/Hybrid indexing (all demonstrated in
+  workshop module 3) are explicitly **deferred**, documented here rather
+  than built now, since Tree/Keyword/Hybrid need a second storage
+  structure beyond a flat vector index (an inverted keyword table, a
+  hierarchical summarized-node tree) that doesn't fit the current
+  `BaseVectorDBClient` contract - a bigger, separate design effort once
+  this MVP is stable.
+
+  **Search/retrieval** (`ai/rag_pipeline/query_retrieval/`) - rebuilding
+  the vector-store layer end-to-end on LangChain's `Chroma`/Pinecone
+  vectorstore wrappers (user's explicit choice over a smaller
+  search-path-only change), reading the same collection/index
+  LlamaIndex's indexing side writes to. MVP scope is Similarity (the
+  existing default behavior) and MMR only; score-threshold-gated
+  fallback and multi-turn query reformulation (both already implemented
+  today in the current hand-written `retriever.py`/`pipeline.py`, and
+  also present in workshop module 4) are carried forward as-is for now,
+  not rebuilt in this pass. Default when `search_strategy` isn't given
+  explicitly stays similarity, unchanged from today; MMR is opt-in via
+  the field or a dedicated `POST /v1/rag-retrieval/query/mmr` endpoint.
+
+  **Logging**: plain `logging.info(...)` lines at each selection point
+  (explicit vs. auto-selected strategy, which one, for which document/
+  query) - no structured/JSON logging, no tracing library, per the same
+  "keep it simple" instruction as the chunking style above.
+
+  **Chunking sub-phase done, 2026-09-13** - `text_chunker.py` rewritten on
+  the six LangChain functions described above; `pipeline.py`'s
+  `chunk_document()`/`index_document()` take an optional
+  `chunking_strategy`, resolve and log it whether explicit or
+  auto-selected, and report it back in `IndexResponse.chunking_strategy`
+  (`models/documents.py`). New deps installed and pinned in
+  `requirements.txt`: `langchain-text-splitters==0.3.11` (already a
+  transitive dep, now imported directly), `langchain-experimental==0.3.4`
+  (`SemanticChunker` only), `beautifulsoup4==4.12.3`
+  (`HTMLHeaderTextSplitter`'s own runtime dependency, not imported
+  directly - its absence surfaced as a live `ImportError` from inside
+  `langchain_text_splitters/html.py` while testing, not predicted in
+  advance). `routes_documents.py` gained
+  `POST /v1/rag-ingestion/documents/{id}/index/{chunking_strategy}` (one
+  dedicated URL per technique, an unknown strategy segment returns `404`)
+  alongside the existing endpoint's new optional field - both call one
+  shared `_index_document()` helper, no duplicated route logic.
+
+  Existing chunking tests rewritten, not just patched - two of the four
+  original tests asserted specific-to-the-old-hand-rolled-algorithm
+  invariants that don't hold for LangChain's splitter (a zero-overlap-vs-
+  real-overlap chunk-count ordering, and later a tail-substring overlap
+  check that passed by coincidence on repeated sentence text rather than
+  proving anything about overlap) - both replaced with more robust
+  checks against unique, non-repeating text. 16 tests total now, covering
+  all six strategies plus `decide_chunking_strategy()`'s four rules and
+  explicit-vs-auto dispatch in `chunk_text()`. `semantic` has no test -
+  it needs a real embedding call, same reasoning this project already
+  applies elsewhere for keeping real API cost out of `pytest`.
+
+  **Verified live, real cost incurred** (not just unit-tested): started
+  the app with uvicorn, uploaded a real PDF
+  (`JPMC Guild Tuition Assistance.pdf`), then in sequence -
+  `POST .../index/recursive` → `action: "insert"`, 45 chunks,
+  `chunking_strategy: "recursive"` in the response; `POST .../index` (no
+  strategy) → `action: "update"`, auto-selected `"recursive"` again (same
+  long plain-text PDF, so the same auto-selection rule applies both
+  times), 45 chunks unchanged; `POST .../index/none` → `action: "update"`,
+  1 chunk, `chunks_removed: 44` (stale-chunk cleanup still works
+  correctly against a real backend); `POST .../index/markdown` → 1 chunk
+  (no markdown headers in PDF-extracted text, so the whole document comes
+  back as one chunk - correct, not an error); `POST .../index/not-a-real-
+  strategy` → `404`. Confirmed the log lines read consistently at every
+  step (`chunking_strategy=recursive`/`auto` at the pipeline level,
+  `chunking: explicit/auto-selected strategy=...` at the chunker level) -
+  an earlier version of this logging showed `chunking_strategy=auto`
+  immediately followed by `chunking: explicit strategy=recursive`, which
+  was real but confusing: `pipeline.py` was resolving the strategy before
+  passing it down, so the chunker never saw that it had been auto-picked.
+  Fixed by passing the original (possibly `None`) value down unchanged,
+  and computing the resolved value again, separately, only for the
+  response - `decide_chunking_strategy()` is pure/deterministic, so this
+  costs one cheap extra call, not a second real decision that could
+  disagree with the first. Test document deleted afterward, full suite
+  green (84/84) throughout.
+
+  **Indexing sub-phase done, 2026-09-13** - `vector_indexer.py` rebuilt on
+  LlamaIndex's `VectorStoreIndex` (`llama_index-core==0.13.6`,
+  `llama-index-vector-stores-chroma==0.6.0`,
+  `llama-index-vector-stores-pinecone==0.9.0`,
+  `llama-index-embeddings-openai==0.7.0` - the last one installed but not
+  actually used: embeddings stay Module-1/`embedding_generator.py`'s own
+  explicit step, pre-computed and attached directly to each `TextNode` via
+  `embedding=`, not delegated to LlamaIndex's own embed model - narrower
+  scope than the workshop's `Settings.embed_model` pattern, deliberately,
+  since only indexing was asked for this sub-phase). Only the "write new
+  chunks in" step goes through LlamaIndex
+  (`VectorStoreIndex.insert_nodes()`); stale-chunk deletion and the
+  supersede-flip stay this project's own logic via the same
+  `BaseVectorDBClient.delete()`/`update_metadata()` calls as before - see
+  `vector_indexer.py`'s own module docstring for why splitting it that way
+  made sense. Against **both** ChromaDB and Pinecone, per user request -
+  not narrowing to one.
+
+  **Dependency conflicts, resolved and verified, not just accepted
+  blindly**: installing `llama-index-core` forced `pydantic` 2.9.2 → 2.13.5
+  and (via `llama-index-vector-stores-pinecone`) `pinecone` 10.0.0 → 9.1.0
+  - a real downgrade of an already-working client. Both verified live
+  before being accepted: full suite green (84/84) after the pydantic bump;
+  `GET /health?deep=true&vector_provider=pinecone` still reports healthy
+  with the correct `total_vector_count` after the pinecone downgrade -
+  `pinecone_client.py` only uses core `Pinecone`/`ServerlessSpec`/`Index`
+  APIs, stable across this version range.
+
+  **Three real integration bugs found live, none guessable from reading
+  LlamaIndex's docs alone - all found by writing a real chunk and
+  inspecting exactly what got stored, not by reasoning about the library
+  in the abstract:**
+
+  1. **`document_id` metadata collision.** Passing `document_id` as a
+     plain key in `TextNode.metadata` seemed like the obvious approach -
+     it silently came back as the literal string `"None"` on every stored
+     chunk instead. Root cause: LlamaIndex's `node_to_metadata_dict()`
+     (used by both the Chroma and Pinecone integrations) reserves the
+     metadata keys `document_id`/`doc_id`/`ref_doc_id` for its own use,
+     derived from the node's `SOURCE` relationship (`node.ref_doc_id`) -
+     and overwrites a same-named custom field with that derived value,
+     unset if the relationship was never set. Fixed by never putting
+     `document_id` in `node.metadata` at all; setting
+     `node.relationships[NodeRelationship.SOURCE] =
+     RelatedNodeInfo(node_id=document_id)` instead makes LlamaIndex
+     populate `document_id`/`doc_id`/`ref_doc_id` correctly, with the real
+     value - confirmed by direct `collection.get()` against a real
+     ephemeral Chroma collection before touching any real data.
+
+  2. **Pinecone-only id prefixing breaks every subsequent delete/update.**
+     Setting that same `SOURCE` relationship (needed for bug #1's fix) has
+     a Pinecone-specific side effect: `PineconeVectorStore.add()` (read
+     directly from its installed source,
+     `llama_index/vector_stores/pinecone/base.py`) prefixes every stored
+     id with `f"{ref_doc_id}#"` whenever a node has one - Chroma's
+     integration does not do this. Confirmed live against the real index:
+     a chunk written as `document_id:chunk_index` was actually stored as
+     `document_id#document_id:chunk_index`; fetching the plain id found
+     nothing, the prefixed id found it. Worse: LlamaIndex's own
+     `delete_nodes(node_ids=...)` does **not** reverse this prefix either
+     - it passes whatever ids it's given straight through to Pinecone's
+     `delete()`. Left unfixed, this would have made stale-chunk cleanup,
+     whole-document delete, and the supersede-flip all silently no-op
+     against Pinecone specifically (Pinecone doesn't error on deleting a
+     nonexistent id) - orphaned vectors accumulating forever with no
+     visible failure anywhere. Fixed with a new `storage_chunk_ids()`
+     function (backend-name-branched, same style as
+     `retriever.py`'s existing `_meets_relevance_bar()`) that computes the
+     *actually-stored* id for a delete/update call, used at all three
+     call sites: `vector_indexer.py`'s stale-chunk delete and
+     supersede-flip, and `documents_service.py`'s whole-document delete
+     (which needed the same fix, and the same new import).
+
+     **Verified live against the real Pinecone index, not just logically
+     reasoned through**: re-indexed a real 55-chunk document with a
+     larger `chunk_size` (forcing a shrink to 13 chunks) -
+     `total_vector_count` dropped by exactly 42 (matching the reported
+     `chunks_removed`), and the specific stale prefixed id was confirmed
+     gone via a direct `fetch()`; then deleted the whole document - count
+     returned to exactly the pre-test baseline (45), confirming the
+     delete path is fixed too. The supersede-flip fix uses the identical
+     `storage_chunk_ids()` call already proven correct at the other two
+     sites, but wasn't separately live-tested with its own two-document
+     supersede scenario in this pass - flagged here rather than silently
+     assumed.
+
+  3. **Pinecone chunk text goes missing for existing (old) retrieval
+     code.** LlamaIndex's `PineconeVectorStore` doesn't write chunk text
+     under this project's own `"document"` metadata key (`pinecone_client.py`'s
+     established convention, since Pinecone has no native text field) -
+     it lives inside a `"_node_content"` JSON blob LlamaIndex writes for
+     its own use instead. Confirmed live: a real query against
+     Pinecone-indexed content returned the *correct* `document_id`/
+     `filename`/`score` for its top matches (proving the embeddings/
+     similarity search side is fine) but `text: ""` for every one, so the
+     LLM correctly - if unhelpfully - answered "I don't know" to a
+     question its own retrieved chunks did cover. ChromaDB has no
+     equivalent gap (chunk text is stored natively, separate from
+     metadata, regardless of who wrote it). Rather than leave real
+     retrieval broken until the search/retrieval sub-phase below lands,
+     patched `pinecone_client.py`'s `query()` with a small, explicitly
+     temporary fallback (`_text_from_llama_index_node_content()`) that
+     parses `_node_content` for the text when `"document"` is empty -
+     removable once `retriever.py` itself is rewritten on LangChain,
+     since that rewrite won't go through this client's `"document"`
+     convention at all. Verified live: the exact same query that returned
+     `text: ""` before the fix returned the correct chunk text and a
+     correct, grounded answer after it.
+
+  **Tests**: the old `FakeVectorStore` (a plain in-memory dict, from
+  `tests/conftest.py`, shared across much of the test suite) can no
+  longer stand in for `write_chunks()`'s own tests - LlamaIndex's
+  `ChromaVectorStore`/`PineconeVectorStore` need a real
+  `chromadb.Collection`/`pinecone.Index` object, not something that only
+  duck-types `BaseVectorDBClient`. Added `EphemeralChromaVectorStore` in
+  `test_vector_indexer.py` itself (not `conftest.py`, kept scoped) - a
+  real, in-memory `chromadb.EphemeralClient()` (zero network, zero cost,
+  same reasoning this project already applies to keeping real API cost
+  out of `pytest`), with a random per-instance collection-name suffix
+  (needed because ephemeral clients turned out to still share collection
+  storage by name within one test process - confirmed live: two tests
+  using different embedding dimensions under the literal name
+  `"hrb_chatbot_kb"` collided with a real `chromadb.errors.InvalidArgumentError`
+  before this fix). All 7 existing tests adapted to read state from the
+  real collection instead of a fake's own dict; one assertion added
+  confirming `document_id` reads back correctly through the SOURCE-
+  relationship fix (bug #1 above), not just that the call didn't crash.
+  Full suite green (84/84) throughout.
+
+  **Search/retrieval sub-phase done, 2026-09-13** - `retriever.py`
+  rebuilt end-to-end on LangChain's own vector store wrappers
+  (`langchain_chroma.Chroma`, `langchain_pinecone.PineconeVectorStore`,
+  workshop Module 4), reading the exact same collection/namespace
+  `vector_indexer.py`'s LlamaIndex writes into. Two plain functions -
+  `search_similarity()` (the default) and `search_mmr()` - dispatched via
+  a `SEARCH_STRATEGIES` dict, same pattern as `text_chunker.py`'s
+  `CHUNKING_STRATEGIES`. Selection: an explicit `search_strategy` wins if
+  given (new field on `RagQueryRequest`, and a dedicated
+  `POST /v1/rag-retrieval/query/mmr` URL); otherwise defaults to
+  `'similarity'`, unchanged from before this field existed - no
+  auto-selection heuristic, since (as flagged when this was originally
+  planned) there's no sourced signal for picking between the two from
+  query text alone.
+
+  **Dependency crisis, caused and then fully resolved in the same pass -
+  documented in full because pip's resolver rejected three consecutive
+  attempts before landing on a working set, not because it should have
+  been hard:** installing `langchain-chroma`/`langchain-pinecone` with no
+  version pins pulled `langchain-core` 0.3.86 → 1.6.3 and `openai`
+  1.66.3 → 3.13.0 - both major-version jumps, and pip itself flagged the
+  langchain-core one as incompatible with the pinned `langchain==0.3.20`
+  (`requires langchain-core<1.0.0,>=0.3.41`). Reverted immediately, before
+  writing any retriever code on top of it. Re-pinning
+  `langchain-core<1.0.0` surfaced a second, three-way conflict:
+  `llama-index-vector-stores-pinecone==0.9.0` needs `pinecone>=7,<10`;
+  `langchain-pinecone` needs `pinecone>=6,<8` - `pinecone==7.3.0` is the
+  only version satisfying both. Pinning that then surfaced a third:
+  `langchain-pinecone==0.2.13` needs `langchain-openai>=0.3.11`, one
+  patch above this project's pinned `0.3.9`. Letting pip resolve
+  `langchain-openai` freely from there landed on `0.3.35`, which itself
+  needs `openai>=2.x` - accepted only after live-verifying it doesn't
+  break anything actually used: a real deep health check
+  (`openai_client.py`'s `.models.list()`) and a real end-to-end RAG query
+  (`embeddings.create()` + `chat.completions.create()`, the two calls
+  actually used in production) both still worked correctly against
+  `openai==2.54.0` before it was pinned. Final state: `langchain-core`
+  stayed at `0.3.86` (unchanged), `pinecone` at `7.3.0` (was `9.1.0` after
+  Phase 3, `10.0.0` originally), `openai` at `2.54.0` (was `1.66.3`),
+  `langchain-openai` at `0.3.35` (was `0.3.9`) - see `requirements.txt`'s
+  own comments for the exact forcing chain on each.
+
+  **Two more real integration bugs found live, same category as Phase
+  3's - a cross-library data-format mismatch, not guessable from docs:**
+
+  1. **LangChain's Pinecone integration expects chunk text under a plain
+     `"text"` metadata key, and silently *skips* (not just returns empty
+     for) any result missing it** - worse than Phase 3's finding, where
+     the old raw client at least returned empty text. LlamaIndex writes
+     text inside a `"_node_content"` JSON blob instead (same root cause
+     as Phase 3's finding, hit again here because LangChain's own
+     similarity/MMR code paths do their own metadata handling, not
+     `pinecone_client.py`'s query()). Fixed with
+     `_TextBackfillPineconeIndex`, a thin wrapper around the real
+     `pinecone.Index` that backfills a `"text"` key before LangChain ever
+     sees a result - confirmed live: every LlamaIndex-written match was
+     silently dropped without it, present and correct with it.
+
+  2. **LangChain's MMR code path for Pinecone does an unguarded
+     `metadata.pop("text")` (no fallback, unlike its similarity-search
+     path) - a real live `KeyError: 500` on a mixed-format namespace.**
+     Root cause, found by reading `langchain_pinecone`'s installed source
+     directly, not guessed: `max_marginal_relevance_search_by_vector()`
+     fetches `fetch_k` candidates (top_k × 3 by default - a wider net
+     than plain similarity's top_k), and this project's real Pinecone
+     namespace has vectors written *three* different ways across this
+     rewrite's own history - the original hand-written indexer
+     (`"document"` key), LlamaIndex (`"_node_content"`), and now this
+     phase's own testing - so MMR's wider net was likelier to include an
+     old-format vector with neither key. Fixed by extending the same
+     wrapper to also check the legacy `"document"` key, and to guarantee
+     `"text"` is always present afterward (empty string as the last
+     resort) so LangChain's unguarded `pop()` never raises. Verified
+     live: the exact request that 500'd before the fix returned a
+     correct, diverse, grounded MMR answer after it.
+
+  **Tests**: the old retriever tests used `FakeVectorStore` (a plain dict)
+  against the raw-client version's `vector_store.query()` call directly -
+  gone now, since `retriever.py` builds a real LangChain vector store
+  requiring a real collection object, same reasoning Phase 3's indexer
+  tests needed a real ephemeral Chroma collection. Rebuilt on the same
+  pattern, plus a new `FakeEmbeddings` (registers exact text → vector
+  pairs, no network call) so real cosine-similarity math runs against
+  real, hand-placed vectors without ever calling OpenAI. Each test gets
+  its own uuid-suffixed collection name (same fix Phase 3's tests needed
+  for the same reason - ephemeral clients share collection storage by
+  name within one process). All 10 original test cases adapted plus 2
+  new ones (MMR returns `score: null`, an unknown `search_strategy`
+  raises). 2 new route-level tests for the `/query/mmr` endpoint and the
+  dynamic `search_strategy` field. Full suite green (88/88).
+
+  **Verified live, real cost incurred, against both real backends**:
+  plain similarity and MMR against real ChromaDB (MMR's sources visibly
+  more diverse - one similarity source pulled 2 near-duplicate chunks
+  from the same document, MMR's 3 sources spanned 3 different documents,
+  for the identical query); plain similarity and MMR against real
+  Pinecone (confirming both integration-bug fixes above); the dedicated
+  `/query/mmr` endpoint and the dynamic `search_strategy` field, both
+  ways of reaching the same code; an unknown `search_strategy` → `422`.
+  Test documents deleted afterward.
+
+  `README_TEST.md` (new cases 5.5-5.7), `requirements.txt` (every version
+  change explained inline), and the Postman collection (4 new requests)
+  updated to match.
+
+  **Not done in this phase, carried forward as originally scoped**:
+  score-threshold-gated fallback and multi-turn query reformulation -
+  neither exists in this project today (the latter was incorrectly
+  described as "already implemented, carrying forward" in an earlier
+  status update to the user mid-phase; corrected once found not to be
+  true - `pipeline.py`'s `decompose_query()` is a trivial `return [query]`
+  stub, and `RagQueryRequest` has no `chat_history` field at all). Also
+  not done: Tree/Keyword-Table/Hybrid indexing (documented as deferred in
+  Phase 14.2's indexing entry above).
+
+- [ ] **Phase 15 (planned, added 2026-09-13 on request) — Evaluation
+  (workshop Module 5): retrieval metrics (Precision@K/Recall@K/F1) and
+  generation metrics (groundedness/completeness via LLM-as-judge)
+  against the now-rebuilt LangChain/LlamaIndex pipeline.** Distinct from
+  the older Phase 8 evaluation item below (golden dataset done, harness
+  planned, hand-written) - this is a new phase specifically for
+  evaluating Phase 14's rebuilt pipeline, added directly on request after
+  the user asked whether Module 5 had been included and was told it
+  hadn't been (Phases 14.1/14.2 map to modules 2-4 plus the idempotency
+  cleanup only). Not started.
+
+- [x] **Phase 16 (Claude Code, 2026-09-14 on request) — Content-hash
+  duplicate-upload detection, reinstated.** The first phase taken through
+  the new SDD process end to end (`CLAUDE.md`'s SDD section): spec written
+  via `/spec-new` below and reviewed before any code changed, exactly as
+  planned.
+
+  - **Spec:**
+    - **Context:** Surfaced live - uploading the same PDF twice produced
+      two separate documents (`b681dbdf...` and `b05ca4a7...`) instead of
+      the second being flagged as a duplicate. Root cause: Phase 14.1
+      (2026-09-13) removed the check, explicitly as a "complex optional"
+      piece to drop for now, **"not a verdict on whether it's worth
+      having."** `content_hash` is still computed and stored on every
+      upload (`services/documents_service.py` line ~90); only the lookup
+      against it was removed. `find_by_content_hash()` still exists,
+      fully implemented, on `BaseMetadataClient`/`SqliteClient`/
+      `PostgresClient`, DB-indexed. `DocumentUploadResult.status` and
+      `DocumentUploadResponse.duplicate_count` still document `"duplicate"`
+      as a real value. Nothing here is new design - it's restoring one
+      deleted function call plus its tests. **Not the same mechanism as
+      the still-deferred `Idempotency-Key` header cache** (Redis-backed
+      re-implementation, no timeline) - that's HTTP-request replay
+      protection; this is a persistent, DB-backed check against actual
+      file content, unaffected by that limitation.
+    - **Data/API contracts:** No model or client changes. `services/
+      documents_service.py::save_upload()` gets exactly one new step,
+      inserted between computing `content_hash` and the
+      `supersedes_document_id` lookup (matching the original, pre-removal
+      order precisely - see Open questions): call
+      `get_db_gateway().metadata_store().find_by_content_hash(content_hash)`;
+      if it returns a row, return `DocumentUploadResult(status="duplicate",
+      document_id=<existing id>, message=<existing id/filename/version>,
+      file_size_bytes=<existing>, document_version=<existing>)` instead of
+      creating a new document.
+    - **User-visible behavior:** Uploading byte-identical content -
+      regardless of filename - returns `status: "duplicate"` pointing at
+      the *existing* document's `document_id`/`document_version`, and
+      `duplicate_count` on the response reflects it. No new row, file, or
+      directory is created. Content that merely shares a filename but
+      differs in bytes is unaffected - still `"uploaded"` as a new
+      document, same as today.
+    - **Failure modes:** None new - a duplicate is a per-file `200`
+      result (`status: "duplicate"`), not an error, matching the existing
+      partial-success batch-upload pattern.
+    - **Retrieval quality criteria:** N/A - upload-time only, doesn't
+      touch chunking/indexing/retrieval.
+    - **Out of scope:**
+      - The `Idempotency-Key` header cache / Redis re-implementation -
+        separate mechanism, stays deferred.
+      - Retroactively merging or cleaning up documents already
+        duplicated during the window this check was off (including the
+        `b681dbdf...`/`b05ca4a7...` pair from the report that prompted
+        this) - this fix only prevents *new* duplicates; existing ones
+        are a separate, explicit cleanup task if wanted.
+      - Fuzzy/near-duplicate detection (embedding-similarity based, not
+        exact hash) - a materially different feature, not this fix.
+    - **Open questions:** The original implementation ran the duplicate
+      check *before* validating `supersedes_document_id` - so if a
+      caller uploads content that happens to match an existing document's
+      hash while also passing `supersedes_document_id`, the result is
+      `"duplicate"` and the supersede is silently skipped, not an error.
+      Restoring that exact ordering as part of "same as before," not
+      changing it - flagged here since it's a real interaction a caller
+      could hit, not because it needs a decision before implementing.
+
+  **Verified:** the exact reported scenario reproduced live against a real
+  `TestClient` call (upload `JPMC Healthcare Benefits.pdf` twice, identical
+  bytes) - first upload `status: "uploaded"`; second `status: "duplicate"`,
+  `duplicate_count: 1`, pointing at the first upload's `document_id`, no
+  second document created. Full test suite green (89/89 - was 88, minus the
+  now-inverted `test_uploading_identical_content_twice_creates_two_separate_
+  documents`, plus the two restored duplicate tests). Note: this fix only
+  prevents *new* duplicates - the `b681dbdf...`/`b05ca4a7...` pair from the
+  original bug report predates it and still exists as two documents; no
+  retroactive cleanup was done (see Out of scope above).
+
+- [x] **Phase 17 (Claude Code, 2026-09-14 on request) — Indexing write
+  path standardized on LangChain's `index()`/`SQLRecordManager`, replacing
+  LlamaIndex.** Chosen as "Option A" of three presented (full swap vs. a
+  surgical hash-tracking-only adoption vs. concept-only) - the one that's
+  actually "as per LangChain's documentation," not just LangChain-flavored.
+
+  - **Spec:**
+    - **Context:** User asked to standardize the document-update path on
+      LangChain's own indexing API. Checked feasibility first:
+      `langchain.indexes.index()` + `SQLRecordManager` are installed and
+      real (`langchain==0.3.20`), and `retriever.py` already builds the
+      exact `Chroma`/`PineconeVectorStore` LangChain objects `index()`
+      needs - they're just not used for writing yet. **This reverses a
+      deliberate Phase 14.2 decision** ("one library per pipeline stage" -
+      LlamaIndex specifically for indexing, recorded in `CLAUDE.md`).
+      Overturning a recorded decision needs its own recorded reason, not a
+      silent swap - see the `docs/agent-reference/FAQ.md` entry this phase must add.
+    - **Data/API contracts:** No external contract changes - confirmed.
+      `IndexResponse` keeps the same shape; callers of `POST .../index` see
+      no difference except the new real capability: **skip-if-unchanged**.
+      Internally, `ai/doc_processing/indexing/vector_indexer.py::write_chunks()`
+      was rewritten onto `langchain.indexes.index()` (`cleanup="incremental"`,
+      `source_id_key="document_id"`), against a shared LangChain vector
+      store builder moved to `common/clients/db_client/langchain_vector_store.py`
+      (not left in `retriever.py` - importing it from there would have
+      created a circular import once `vector_indexer.py` needed it too;
+      `common/` is the right home since neither pipeline should depend on
+      the other's module). `sqlalchemy` pinned explicitly in
+      `requirements.txt`; the now-unused `llama-index-*` packages removed
+      from it entirely (nothing in `src/` imports `llama_index` anymore -
+      confirmed by grep before removing). **Two real gaps found only while
+      implementing, not anticipated by the spec as written - both resolved,
+      not glossed over:**
+      1. **Chunk ids.** `index()` computes each chunk's id itself (a hash),
+         it doesn't accept an arbitrary caller-supplied one - confirmed by
+         reading the actual installed source
+         (`langchain_core/indexing/api.py`), not assumed from docs. This
+         project's delete/supersede logic depends on ids it can compute
+         itself. Resolved with a custom `key_encoder` callable
+         (`build_chunk_id()`: `document_id:chunk_index:content_hash`) -
+         close enough to the old `document_id:chunk_index` scheme that
+         delete/supersede logic barely changed, while still giving
+         `index()` a real, content-derived signal to detect a change by.
+         One consequence caught in testing: `update_metadata()` replaces a
+         chunk's full metadata dict, so the supersede-flip step must keep
+         passing `chunk_index` explicitly (parsed back out of the id) -
+         an early version of this dropped it, silently wiping the field;
+         caught by asserting on it directly, not just on the report shape.
+      2. **Embeddings.** `index()` embeds internally via the vector store's
+         own embedding function - it can't accept pre-computed embeddings.
+         The old pipeline computed embeddings separately first
+         (`embedding_generator.py`), which would have meant embedding
+         every chunk *twice*, and silently breaking the documented
+         `embedding_model` per-call override (the vector store's embedding
+         function didn't know about it). Resolved: `get_vector_store()`
+         now takes an `embedding_model` override directly;
+         `pipeline.py`'s separate pre-embedding step was removed
+         (`embedding_generator.py` itself is untouched, just no longer
+         called from the main pipeline); `embedding_dimension` is measured
+         with one cheap `embed_query()` call, not by re-embedding
+         everything a second time.
+      - `documents_service.py`'s delete path also had to change:
+        `storage_chunk_ids()` (a workaround for a LlamaIndex-specific
+        Pinecone id-prefixing quirk) no longer applies now that indexing
+        doesn't go through LlamaIndex at all - deleting a document would
+        have silently targeted the wrong ids on Pinecone otherwise.
+        `storage_chunk_ids()` itself is now dead code, left in place, not
+        deleted, since it's still referenced from `vector_indexer.py`'s
+        module docstring history - worth a follow-up cleanup, not urgent.
+      - **The cross-document `supersedes_document_id`/`is_current` flip
+        stays this project's own logic**, confirmed unaffected in
+        substance - `SQLRecordManager` has no concept of "a different
+        document replaces this one," only "this source_id's own content
+        changed." Live-tested (see Verified below): `chunk_index` and
+        `is_current` both survive the flip correctly.
+    - **User-visible behavior:** Confirmed live - re-indexing unchanged
+      content reports `chunks_indexed: 0` (was previously always > 0 on
+      any re-index). Changed content is re-indexed and the old chunk
+      cleaned up. Stale chunks from a shrunk/changed document are deleted
+      for real via `index()`'s own cleanup.
+    - **Failure modes:** No new ones, confirmed - `write_chunks()` still
+      returns the same `dict` shape `IndexResponse` expects.
+    - **Retrieval quality criteria:** N/A - `retriever.py`'s search logic
+      itself is unchanged; it now imports its vector-store builder from
+      the new shared module instead of defining it locally, same behavior.
+      Existing vectors written by the old LlamaIndex path remain fully
+      queryable - confirmed no migration was needed.
+    - **Out of scope, confirmed:** chunking (`text_chunker.py`) untouched;
+      no migration/backfill of already-indexed documents; no change to the
+      Phase 16 duplicate-upload check.
+    - **Open questions:** the flagged count-reporting change
+      (`chunks_indexed: 0` on a genuinely unchanged re-index) is real and
+      confirmed live - no existing test asserted the old, wrong-by-design
+      behavior, so nothing needed correcting there.
+  **Verified:** full test suite green (90/90 - two tests rewritten for the
+  new skip/cleanup counts, `test_retriever.py` updated for the moved
+  vector-store builder, `FakeEmbeddings` moved to `conftest.py` as a
+  shared fake so no test needs a real OpenAI call). Live, end-to-end
+  through the real API: upload → first index (48 chunks) → second index of
+  *identical* content (`chunks_indexed: 0`, confirmed real skip-if-unchanged) →
+  a real grounded query with 5 sources → delete (48 chunks removed, confirming
+  the new ids delete correctly) → 404 after. Supersede-flip tested directly
+  against a real ChromaDB collection, confirming `chunk_index`/`is_current`
+  both survive. **Pinecone path implemented identically but not verified
+  live against a real Pinecone account in this session** - same category of
+  caveat this project already uses elsewhere (e.g. Postgres, "healthy
+  locally, not the active store yet"). One unrelated bug found and fixed
+  live during this work: `.claude/scripts/spec_gate.py`'s phase-detection
+  regex silently stopped scanning after Phase 4.5 (this file's phase
+  content spans two separate `##` headings, not one) - caught because the
+  gate itself blocked this phase's first real edit; fixed, verified both
+  branches (allow/deny) still correct, not just the one that was broken.
+
+- [x] **Phase 18 (done, 2026-09-14) — Chunking-strategy
+  auto-selection: log the rationale, not just the result.** "Option 1" of
+  two presented (deterministic + richer logging vs. an LLM-based content
+  reviewer) - chosen after checking LangChain's and LlamaIndex's own
+  documentation, neither of which recommends or documents an automatic,
+  content-inspecting strategy-picker; both frame splitter choice as a
+  stable, structural, upfront decision. That's what `decide_chunking_
+  strategy()` already does - this phase makes it explain itself, it
+  doesn't redesign it.
+
+  - **Spec:**
+    - **Context:** User asked for the chunking-strategy auto-selection to
+      review document content and log its reasoning. `decide_chunking_
+      strategy()` (`ai/doc_processing/chunking/text_chunker.py`) already
+      makes this decision on every upload where `chunking_strategy` isn't
+      given explicitly - it just doesn't say *why* beyond `logger.info(
+      "chunking: auto-selected strategy=%s", strategy)`.
+    - **Data/API contracts:** None. `decide_chunking_strategy()` keeps its
+      exact signature and return type (`str`) - no caller (`chunk_text()`,
+      `pipeline.py`, `IndexResponse`) changes. This is a logging-only
+      change, not a new field surfaced to API callers - the user asked to
+      *log* the rationale, not return it.
+    - **User-visible behavior:** None from the API's point of view.
+      Server-side log output for an auto-selected strategy changes from
+      "auto-selected strategy=markdown" to something that names the actual
+      evidence, e.g. "3 markdown heading line(s) found -> 'markdown'" /
+      "1847 characters, at or under the 2000-character whole-document
+      threshold -> 'none'".
+    - **Failure modes:** None new - this function has never raised; it
+      isn't gaining a code path that could.
+    - **Retrieval quality criteria:** N/A - decision logic itself is
+      unchanged, only its logging.
+    - **Out of scope:**
+      - No new detection signals (e.g., table density, code-block
+        detection) and no new thresholds - this file's existing
+        thresholds are already "measured, not guessed" (see
+        `WHOLE_DOCUMENT_MAX_LENGTH`'s own history); inventing new ones
+        without the same grounding would repeat exactly the mistake this
+        codebase has avoided elsewhere. Logging the *existing* rules'
+        evidence, not adding rules, is the whole scope.
+      - No separate "pre-processing" module/file - the enhanced function
+        stays in `text_chunker.py`. A new file for ~15 extra lines of
+        logging would be the premature abstraction this project's own
+        conventions argue against; revisit only if the logic actually
+        grows past this.
+      - `"semantic"` stays excluded from auto-selection, unchanged - its
+        existing rationale (accuracy-criticality isn't detectable from
+        text alone) still holds and this phase doesn't relitigate it.
+    - **Open questions:** none.
+  **Verified:** full test suite green (93/93, unchanged - confirms the
+  decision *rules* genuinely didn't change, only their logging). Live-ran
+  all four branches directly: markdown (`2 markdown heading line(s) found`),
+  html (`HTML heading tag(s) ['<h2'] found`), none
+  (`30 character(s), at or under the 1000-character... threshold`), and
+  recursive (`3199 character(s), ... over the 1000-character threshold`) -
+  each logs the real evidence, not just the chosen name.
+
+- [x] **Phase 19 (done, 2026-09-14) — Chunk-level
+  metadata expansion for filtering: `doc_type`, `department`, and a new
+  `doc_classification` field.** Foundation for Phase 20 (Self-Query needs
+  real filterable metadata to parse queries into) - not useful on its own
+  beyond enabling manual `filter=` queries by these fields.
+  **Depends on Phase 17 landing first** - this touches the exact write
+  path Phase 17 rewrites; building it against today's LlamaIndex-based
+  `write_chunks()` first would mean redoing it once Phase 17 replaces
+  that function. `timestamp` deliberately excluded from this phase, per
+  explicit request.
+
+  - **Spec:**
+    - **Context:** Today, `owner`/`department`/`doc_type`/`purpose` are
+      extracted by `document_metadata_extractor.py` (LLM, best-effort,
+      first-3000-characters-only) but only ever written to the **SQL**
+      `documents` row - never to vector-store chunk metadata, which today
+      only carries `chunk_index`/`is_current`/`indexed_at`. That means
+      none of them can be used in `retriever.py`'s `filter=` kwarg, the
+      same mechanism `is_current` already uses. `owner` and `purpose` are
+      deliberately excluded from this expansion (see Out of scope) - not
+      an oversight.
+    - **Data/API contracts:**
+      - New SQL column `doc_classification TEXT`, same `ALTER TABLE`
+        pattern as the existing `owner`/`department`/`doc_type`/`purpose`
+        columns, in both `sqlite_client.py` and `postgres_client.py`.
+      - `document_metadata_extractor.py`'s `EXTRACTION_QUESTION` prompt
+        and `EMPTY_RESULT` gain a fifth field, `doc_classification` - free
+        text, best-effort, same shape as `doc_type` (not a fixed enum;
+        real documents vary too much to hardcode a closed list - e.g.
+        "401k", "health benefits", "leave policy", whatever the document
+        itself indicates).
+      - `DocumentRecord` (`models/documents.py`) gains a `doc_classification: str | None` field, matching `doc_type`'s existing shape exactly.
+      - Chunk metadata gains `doc_type`, `department`, `doc_classification`
+        alongside today's `chunk_index`/`is_current`/`indexed_at`.
+    - **User-visible behavior:** `GET /documents/{id}` now reports
+      `doc_classification` like it already reports `doc_type`. No new
+      endpoint or query-facing behavior yet - Phase 20 is what actually
+      lets a query use these filters.
+    - **Failure modes:** None new - extraction is already best-effort and
+      already never blocks indexing; a failed extraction just leaves
+      `doc_type`/`department`/`doc_classification` null on that document's
+      chunks, same as `owner`/`purpose` already can be today.
+    - **Retrieval quality criteria:** N/A directly (Phase 20 covers actual
+      filtered retrieval) - but worth stating the mechanism precisely
+      since it's easy to get backwards: on a **re-index** of a document
+      that's already been through first-index extraction,
+      `doc_type`/`department`/`doc_classification` are already known (sitting
+      in the SQL row `write_chunks()` already fetches as `existing_document`)
+      and go straight into the chunk metadata built at write time - no
+      follow-up write needed. Only a document's **first-ever** index needs
+      a second, follow-up `vector_store.update_metadata()` call once
+      extraction finishes after indexing (same shape as the existing
+      supersede-flip pattern, not a new one) - because extraction runs
+      *after* chunks are written for a first index, so those three fields
+      genuinely aren't known yet at write time.
+    - **Out of scope:**
+      - `timestamp` - explicitly excluded per request.
+      - `owner`, `purpose` - not filter candidates (`owner` is
+        audit/display, not something a query implies; `purpose` is a free
+        sentence, not a categorical value a filter can match on). Not
+        propagated to chunk metadata.
+      - Backfilling chunk metadata for already-indexed documents - only
+        applies going forward; an old document gets these fields on its
+        next re-index, not retroactively.
+      - Any actual use of these fields in retrieval - that's Phase 20.
+    - **Open questions:** none - the exact code this touches (which
+      function builds chunk metadata, in what shape) depends on whether
+      Phase 17 has landed by the time this is implemented; the fields and
+      behavior above hold either way.
+  **Verified:** full test suite green (97/97 - one existing extraction test
+  updated for the new field, five new tests added covering both mechanisms:
+  a first index leaves `doc_type`/`department`/`doc_classification` out of
+  the initial chunk metadata entirely rather than null; the follow-up
+  `apply_extracted_chunk_metadata()` patch preserves `chunk_index`/
+  `is_current`/`indexed_at` while adding the three new fields, same
+  REPLACE-semantics lesson as the Phase 17 supersede-flip; a re-index pulls
+  the fields straight from `existing_document`; and either path omits a
+  field entirely when extraction couldn't determine it, since Pinecone's
+  `update()` rejects a literal `None` value outright while Chroma silently
+  drops it - confirmed by direct test against a real ephemeral Chroma
+  client). Live-verified end to end against the real OpenAI extraction
+  call, a real Chroma collection, and the real SQLite metadata store
+  (`resources/kb_docs/JPMC Guild Tuition Assistance.pdf`): first index -
+  chunk metadata came back
+  `{'doc_type': 'benefits', 'department': None, 'doc_classification':
+  'Guild Education benefit program', 'is_current': True, 'chunk_index': 0}`
+  (an absent `department` key confirmed - the extractor genuinely found
+  none for this document, and that's a missing key, not a stored null);
+  re-index (after manually setting the SQL row's `doc_classification` to a
+  sentinel value, to prove the value is read fresh from SQL at write time
+  rather than reused from the first index) - the new chunk immediately
+  carried the sentinel value, no follow-up call involved.
+
+- [x] **Phase 20 (done, 2026-09-14) — MultiQueryRetriever
+  and Self-Query Retriever.** **Depends on Phase 19** - Self-Query has
+  nothing to parse a filter into without Phase 19's chunk metadata.
+  Chosen after checking real-world LangChain guidance for RAG retrieval
+  optimization (see the chat discussion this spec follows from).
+
+  - **Spec:**
+    - **Context:** User wants two of LangChain's documented retrieval
+      techniques: `MultiQueryRetriever` (rewrites one question into several
+      variations, searches with each, merges results - catches phrasing a
+      single query misses) and Self-Query Retriever (an LLM parses the
+      question itself into a structured metadata filter, e.g. "what's my
+      401k vesting schedule" -> `doc_classification="401k"`).
+    - **Data/API contracts:**
+      - Both are **layers on top of** the existing similarity/MMR choice,
+        not a third alternative to it - `RagQueryRequest` gains two new
+        optional, explicit, default-`False` fields: `use_multi_query: bool`
+        and `use_self_query: bool`. Neither changes the meaning of
+        `search_strategy` - they wrap whichever base retriever
+        (similarity or MMR) `search_strategy` already selects. Explicit
+        opt-in on both, not inferred from the query text - matches this
+        project's existing "no magic, override is always explicit" pattern
+        (`vector_db`, `chunking_strategy`, etc. all work the same way).
+      - `RagQueryResponse` gains an optional field surfacing what
+        Self-Query actually parsed out (e.g. `applied_filter: dict | None`)
+        - without this, a wrong or surprising filter would be undebuggable
+        from the API response alone.
+      - Self-Query needs an `AttributeInfo` list (LangChain's own schema
+        for "what fields exist, what they mean") built from Phase 19's
+        three filterable fields (`doc_type`, `department`,
+        `doc_classification`) - `is_current` is deliberately NOT exposed
+        to self-query's schema; it's an internal/system field a user
+        question would never naturally reference, and it must stay under
+        this project's own control (see Phase 16's careful handling),
+        not something an LLM-parsed filter should be able to override.
+    - **User-visible behavior:** With both flags off (the default), query
+      behavior is byte-for-byte unchanged from today. With
+      `use_multi_query: true`, more candidate chunks get considered before
+      the same top_k is returned. With `use_self_query: true`, the query
+      is filtered by whatever `doc_type`/`department`/`doc_classification`
+      the model parses out of the question - `applied_filter` in the
+      response shows exactly what was applied.
+    - **Failure modes:** Self-Query's own LLM parse can fail or return no
+      filter - falls back to an unfiltered search rather than erroring,
+      same "best-effort, never block the user's answer" philosophy as
+      `document_metadata_extractor.py`.
+    - **Retrieval quality criteria:** Golden dataset
+      (`resources/golden_dataset/golden_dataset.json`) should be re-run
+      with both flags on and off to confirm neither regresses the
+      default-off path and that self-query's parsed filters are actually
+      correct on questions that name a specific plan/department.
+    - **Out of scope:** `ContextualCompressionRetriever`/reranking,
+      Parent-Document Retriever, `EnsembleRetriever`/hybrid BM25 search -
+      all discussed as options, none requested yet.
+    - **Open questions:** none.
+  **Addendum, found during implementation (2026-09-14) - same "flag real
+  gaps found mid-implementation" discipline as Phase 17's two gaps:**
+    - **Real dependency deadlock, confirmed by trying it live:** LangChain's
+      own per-provider chat packages can't be installed here at all.
+      `langchain-anthropic`'s newest 0.3.x release (the last one compatible
+      with this project's `langchain-core==0.3.86`, itself required by
+      `langchain`/`langchain-openai`/`langchain-pinecone`/`langchain-chroma`)
+      hard-requires `anthropic<1.0.0`, but this project's own
+      `anthropic_client.py` needs `anthropic==1.2.0`. Every newer
+      `langchain-anthropic` release needs `langchain-core>=1.6`, which
+      breaks the rest of the pinned stack instead. No version satisfies
+      both - confirmed by actually installing each combination, not just
+      reading changelogs. Resolution: `common/clients/llm_client/
+      langchain_chat_model.py` (new) - a small `BaseChatModel` subclass
+      (`GatewayChatModel`) wrapping this project's own multi-provider
+      `ask()` clients via `client_gateway.py`. Zero new dependencies, and
+      it's the same gateway/enum pattern CLAUDE.md already documents
+      instead of bypassing it for a per-provider LangChain package.
+    - **`RagQueryRequest` had no provider selector at all before this** -
+      `model_name` only ever overrides `OpenAIChatClient`'s model in
+      `response_generator.py::generate_answer()`, which stays OpenAI-only,
+      unchanged (out of scope for this phase - flagging it, not fixing
+      it). New field `llm_provider: LlmProvider | None` (defaults to
+      `openai`) picks which provider backs `GatewayChatModel` for
+      MultiQueryRetriever's rewriting / Self-Query's filter-parsing only -
+      independent of the final answer's model.
+    - **`retrieve_chunks()`'s return type changes** from `list[dict]` to
+      `tuple[list[dict], dict | None]` (chunks, applied_filter) to carry
+      `applied_filter` up to `answer_query()`/`RagQueryResponse` - ripples
+      through `ai/rag_pipeline/pipeline.py` and its own tests.
+    - **is_current must never be overridable by a parsed filter** (the
+      spec's own stated rule) - a plain dict merge of Self-Query's parsed
+      filter with `CURRENT_CHUNKS_ONLY` would let a same-shaped key
+      silently replace it, so they're explicitly AND-ed together
+      (`{"$and": [CURRENT_CHUNKS_ONLY, parsed_filter]}`) instead of merged.
+    - **Both flags together:** not mutually exclusive - if both are true,
+      Self-Query's filter is parsed once from the *original* question
+      (filtering intent shouldn't come from a MultiQuery paraphrase), then
+      MultiQueryRetriever wraps a base retriever already constructed with
+      that combined filter.
+  **Verified:** full test suite green (106/106 - 5 new retriever-level
+  tests using a fake `BaseChatModel` double, so none of them spend real API
+  cost: `_combine_with_current_only()`'s bare-vs-AND-combined cases,
+  `search_multi_query()` merging/deduping across LLM-rewritten sub-queries,
+  `_parse_self_query_filter()` both parsing a real filter and returning
+  `None` when the model finds nothing to filter on, and the core
+  correctness case the spec calls out explicitly - a superseded chunk that
+  *also* matches the parsed filter is still excluded, `is_current` proven
+  un-overridable; plus 3 new route-level tests for `use_multi_query`/
+  `use_self_query`/`llm_provider`/`applied_filter`). Live-verified against
+  real OpenAI + a real indexed document
+  (`resources/kb_docs/JPMC Empower 401(k) Savings Plan.pdf`) through the
+  real `/v1/rag-retrieval/query` endpoint: `use_multi_query=true` alone
+  retrieved 7 real chunks and generated a grounded answer; `use_self_query`
+  alone correctly parsed `{"doc_type": {"$eq": "benefits"}}` and matched 5
+  real chunks when queried in isolation; both flags together ran without
+  error, self-query's filter parsed once from the original question, then
+  fed into the multi-query-wrapped base retriever, exactly as spec'd.
+  **One real, honest limitation found during this live verification, not
+  glossed over:** `doc_classification` is deliberately free text (Phase
+  19's own design - "not a fixed enum, real documents vary too much"), so
+  Self-Query's `$eq` filter only matches when its LLM's guessed value
+  happens to exactly match what extraction actually stored - e.g. the LLM
+  reliably parses `doc_classification="401k"` from a "what's my 401k
+  vesting schedule" question (matching `METADATA_FIELD_INFO`'s own written
+  example), but this document's real extracted value is `"401(k) Savings
+  Plan"`, an exact-string mismatch that correctly-but-uselessly returns zero
+  chunks. `doc_type` (semi-controlled - extraction picks from a short fixed
+  list) does not have this problem, confirmed by isolating it: filtering on
+  `doc_type=benefits` alone matched real chunks every time. This is a real
+  design tension between Phase 19's free-text field and Self-Query's
+  exact-match semantics, not a Phase 20 bug - flagging it as a follow-up
+  item (e.g. a `contain`/fuzzy comparator, or re-scoping
+  `doc_classification` toward a smaller controlled set) rather than fixing
+  it now, since it wasn't part of this phase's spec.
+
+- [x] **Phase 21 (Claude Code, 2026-09-14 on request) — Remove the
+  duplicate per-strategy endpoints; one endpoint each for ingestion and
+  retrieval.** Implemented before Phases 18-20, as recommended - not a
+  hard technical dependency, but Phase 20 adds new fields to
+  `RagQueryRequest`, and doing that against a single query endpoint
+  instead of two is simpler and avoids touching the soon-to-be-removed
+  `/query/mmr` at all.
+
+  - **Spec:**
+    - **Context:** This API currently has two endpoints for the same
+      operation, twice: `POST /documents/{id}/index` (dynamic,
+      `chunking_strategy` as an optional body field) and `POST
+      /documents/{id}/index/{chunking_strategy}` (one URL per strategy,
+      fixed from the path); `POST /query` (dynamic, `search_strategy` as
+      an optional body field) and `POST /query/mmr` (fixed to MMR). Each
+      pair does the identical thing two different ways. Consolidate to one
+      endpoint per resource, strategy selection always via the request
+      body - matches how every other override on these endpoints already
+      works (`vector_db`, `embedding_model`, `chunk_size`, `top_k`, ...).
+    - **Data/API contracts:**
+      - **Removed:** `POST /documents/{id}/index/{chunking_strategy}`
+        (`routes_documents.py::index_document_with_strategy()`) and `POST
+        /query/mmr` (`retrieve_document.py::query_mmr()`). Both routers'
+        shared helpers (`_index_document()`, `_answer_query()`) stay -
+        still used by the one remaining route each.
+      - `IndexRequest.chunking_strategy` and `RagQueryRequest.search_strategy`
+        become real `StrEnum`s (`ChunkingStrategy`, `SearchStrategy` in
+        `common/enums.py`), matching the `VectorDB`/`MetadataStore`/
+        `LlmProvider` pattern already established. Reason this matters now
+        and didn't before: removing the URL-based endpoints removes the
+        404-at-the-path-level validation they gave "for free" - without
+        converting to an enum, an unknown strategy would only be caught
+        deeper in the pipeline (a `ValueError` a few calls in), not at the
+        API boundary. `CHUNKING_STRATEGIES`/`SEARCH_STRATEGIES` (the
+        dispatch dicts in `text_chunker.py`/`retriever.py`) stay exactly
+        as they are - dict keys and enum values must simply agree, not be
+        merged into one structure.
+      - `README.md`'s `.../index/recursive` example and the Postman
+        collection's three `/index/{strategy}` requests + one `/query/mmr`
+        request are removed; the surviving dynamic-endpoint examples
+        already demonstrate `chunking_strategy`/`search_strategy` as body
+        fields.
+    - **User-visible behavior:** `POST /documents/{id}/index/recursive`
+      and `POST /query/mmr` return `404` (unmatched route) after this
+      phase - a real, intentional breaking change, not an oversight.
+      `POST /documents/{id}/index` with `{"chunking_strategy":
+      "recursive"}` and `POST /query` with `{"search_strategy": "mmr"}`
+      are the replacements - already supported today, unchanged.
+    - **Failure modes:** An unknown `chunking_strategy`/`search_strategy`
+      value now returns `422` (Pydantic enum validation) instead of the
+      old dynamic endpoint's `ValueError`-derived `422` or the removed
+      URL endpoint's `404` - one consistent shape across both, at the API
+      boundary instead of a few calls into the pipeline.
+    - **Retrieval quality criteria:** N/A - no chunking/retrieval logic
+      changes, only which URLs reach it and how the value is validated.
+    - **Out of scope:**
+      - No change to `POST /documents` (upload), `GET`/`DELETE`
+        `/documents[/{id}]`, or any query field other than
+        `search_strategy`.
+      - Not bundling Phase 19/20's new fields into this phase - this is
+        endpoint surface cleanup only.
+    - **Open questions:** none.
+  **Verified:** full test suite green (93/93 - one obsolete test removed,
+  three added covering the new 404s and the enum-driven 422s). Live-checked
+  directly: `.../index/recursive` and `POST /query/mmr` both now `404`;
+  `{"chunking_strategy": "not-a-real-strategy"}` and an unknown
+  `search_strategy` both `422`, naming the valid options.
+
+  Doing this surfaced staleness well beyond this phase's own scope, fixed
+  alongside it rather than left for later:
+  - `CLAUDE.md`'s architecture section still said LlamaIndex writes vectors
+    (Phase 17 changed that) - fixed.
+  - `README_TEST.md` - a *living* reference ("every endpoint this project
+    **currently has**"), not a historical one - had drifted across this
+    entire session, not just this phase: the removed `deep=true` health
+    toggle, the *reinstated* (Phase 16) duplicate-upload detection still
+    described as removed, and `IndexRequest.vector_db`'s enum conversion
+    (turn 1 of this session) never reflected in its "expect 500" edge
+    case. All corrected and re-verified live against the real server, not
+    just reworded.
+  - `postman/hrb_chatbot.postman_collection.json` - the two removed
+    endpoints' requests deleted; their edge cases repurposed (not
+    dropped) to test the same intent through the surviving path.
+
+- [x] **Phase 22 (done, 2026-09-15) — Comment-length
+  cleanup across `src/hrb_chatbot/`, plus a codified 2-line rule.** Comment
+  length drifted longer phase over phase this session (module docstrings up
+  to 18 lines, inline blocks up to 9) - this phase both fixes the existing
+  drift and writes the limit down so it doesn't recur.
+
+  - **Spec:**
+    - **Context:** `docs/agent-reference/CODING-STANDARDS.md` already said "a line or two,
+      not a paragraph" but without a hard number or a stated exception -
+      an AST/regex scan of `src/hrb_chatbot/` found 94 violations (a
+      comment/docstring over 2 content lines) across 36 files.
+    - **Data/API contracts:** None - comments and docstrings only, zero
+      behavior change. `docs/agent-reference/CODING-STANDARDS.md` and
+      `.claude/skills/coding-standards/SKILL.md` gain an explicit two-line
+      hard limit, third line allowed only at a genuinely critical spot.
+    - **User-visible behavior:** None - same reason.
+    - **Failure modes:** None new.
+    - **Out of scope:** `tests/` (a different, already-consistent short-
+      "why" style; not what drifted) and non-Python docs (`docs/*.md`,
+      `CLAUDE.md`) - those are reference material, not the "comment" this
+      request means.
+    - **Open questions:** none.
+  **Verified:** all 36 flagged files edited by hand (not scripted) across
+  every layer (`common/clients/`, `ai/doc_processing/`, `ai/rag_pipeline/`,
+  `api/`, `services/`, `main.py`) - 94 violations (over 2 content lines) down
+  to 0 over the 3-line hard ceiling, ~48 legitimate 3-line exceptions kept
+  for genuinely critical spots (REPLACE-semantics gotchas, the is_current
+  override-safety boundary, the Pinecone/langchain-core dependency
+  deadlock), confirmed by an AST/regex re-scan after every batch. One
+  long-standing dead docstring reference fixed along the way
+  (`routes_documents.py` pointed at a module docstring that didn't exist)
+  and one stale claim fixed (`rag_service.py::answer_query()` still said
+  "Raises NotImplementedError until Phase 6 exists", untrue since Phase 6
+  shipped long ago). One long docstring's real content relocated rather
+  than deleted - `langchain_vector_store.py`'s `_TextBackfillPineconeIndex`
+  moved to `docs/agent-reference/FAQ.md`'s new entry 8, source trimmed to a 3-line pointer.
+  Full test suite green (106/106) after every batch, plus a live `/ping`
+  smoke test at the end. `docs/agent-reference/CODING-STANDARDS.md` and
+  `.claude/skills/coding-standards/SKILL.md` both codify the 2-line rule
+  (3 sparingly) going forward, so this doesn't drift again unnoticed.
+  **Flagged, not fixed (outside this phase's scope):** `PineconeClient.
+  query()`/`.upsert()` and `ChromaClient`'s equivalents appear to be dead
+  code in the current pipeline - indexing/retrieval both go through
+  LangChain's own vector store objects now (`langchain_vector_store.py`),
+  not these raw methods directly; confirmed by grepping for other callers
+  and finding none. Worth a real look in a future phase, not this one.
+
+- [x] **Phase 23 (done, 2026-09-15) — FastAPI gateway
+  layer: role-based access in front of RAG ingestion + retrieval, OAuth
+  placeholder.** Follows a conversation weighing a real API Gateway
+  (AWS API Gateway/Kong) against in-app FastAPI dependencies - the user
+  confirmed in-app. Sequenced ahead of Phase 15 (Evaluation) and today's
+  planned ReAct agent work, kept intentionally tight so it doesn't block either.
+
+  - **Spec:**
+    - **Context:** Today there is zero authentication or authorization -
+      every endpoint is reachable by anyone who can reach the URL. The user
+      wants: only an `HR_SUPPORT` role can reach the ingestion API (upload/
+      list/get/delete/index a document); `EMPLOYEE`, `MANAGER`, and
+      `HR_SUPPORT` can all reach retrieval (query), uniformly - no
+      per-document visibility differences yet, deliberately deferred. Real
+      OAuth is explicitly deferred too - this phase builds the seam
+      (dependency-injection point + role enum + 401/403 semantics) a real
+      OAuth integration will slot into later, not real authentication now.
+    - **Data/API contracts:**
+      - New `Role` `StrEnum` in `common/enums.py`: `EMPLOYEE`, `MANAGER`,
+        `HR_SUPPORT` - matching the existing `VectorDB`/`LlmProvider` pattern.
+      - New `api/gateway/` package: `userMetadata.py` (a `UserMetadata`
+        dataclass - `employee_id`, `full_name`, `role` - and a
+        `get_current_user(request)` FastAPI dependency reading three
+        request headers) and `rbac.py` (`require_role(*allowed_roles)`, a
+        dependency factory raising 403 when the resolved role isn't in the
+        allowed set).
+      - **Identity source, explicitly not real security:**
+        `X-Employee-Id`/`X-Full-Name`/`X-Role` request headers, read as-is,
+        no signature/verification. This is a deliberate, honestly-labeled
+        placeholder - trivially spoofable by design, not a security
+        control. All three are required (401 if any is missing, or if
+        `X-Role` doesn't match a real `Role` value) - fail closed, and
+        modeling what a real verified token's claims would guarantee,
+        rather than defaulting silently.
+      - `main.py` wires `Depends(require_role(...))` at
+        `app.include_router(...)` level for both routers - a router-level
+        gate, not injected into individual route handlers. Nothing in
+        `routes_documents.py`/`retrieve_document.py` changes.
+      - `common/error_codes.py` gains `UNAUTHENTICATED` (401) and
+        `FORBIDDEN` (403); `main.py`'s existing `HTTPException` handler
+        (already maps 429 -> `RATE_LIMITED`) gains these two mappings -
+        explicit codes, not a defaulted `INTERNAL_ERROR`, matching
+        `CODING-STANDARDS.md`'s existing error-code rule.
+      - New empty placeholder: `common/clients/auth_client/oauth_client.py`
+        (0 bytes, matching the existing `llm_client`/`db_client`/
+        `web_client` sibling pattern) - real OAuth lands here later; only
+        `get_current_user()`'s internals will need to change when it does,
+        nothing calling it.
+    - **User-visible behavior:** Every ingestion request now needs all
+      three headers with `X-Role: hr_support`, or it's a 401/403. Every
+      retrieval request needs all three headers with `X-Role` one of
+      `employee`/`manager`/`hr_support`. `GET /ping` and `GET /health`
+      stay open (operational endpoints, not business data).
+    - **Failure modes:** Missing any identity header -> 401 naming which
+      header(s). Unknown `X-Role` value -> 401 naming the valid options.
+      Valid identity, wrong role for this router -> 403 naming the
+      required role(s). Existing rate limiting (`enforce_rate_limit`)
+      is unchanged and stacks with this - both dependencies apply.
+    - **Retrieval quality criteria:** N/A - no retrieval-logic change.
+    - **Out of scope:** Real OAuth/JWT/API-key verification (placeholder
+      only, see above). Persisting `employee_id` onto `DocumentRecord` for
+      upload audit trail (a natural follow-up, not required to gate
+      access - flagged in `docs/agent-reference/BACKLOG.md`, not built here). Per-document
+      visibility by role (deferred per the user's own instruction).
+      Rate-limiting by identity instead of IP (still IP-keyed; noted as a
+      future enhancement now that identity exists).
+    - **Open questions:** none - reviewed conversationally over several
+      turns before this spec was written, not a first draft.
+  **Verified:** full test suite green (113/113 - 4 new gateway tests: no
+  headers -> 401 naming the missing ones, unknown `X-Role` value -> 401,
+  `employee`/`manager` attempting ingestion -> 403 naming the required
+  role, all three roles accepted for retrieval; plus 2 existing
+  `main.py::http_exception_handler` unit tests updated for the new
+  explicit 401/403 code mappings). Live-verified end to end: `GET /ping`
+  needs no headers (`200`); `GET /v1/rag-ingestion/documents` with no
+  headers is `401` `UNAUTHENTICATED` naming all three missing headers;
+  same call as `employee` is `403` `FORBIDDEN` naming `hr_support` as the
+  required role; as `hr_support` it's `200` and actually lists real
+  documents from the real SQLite store; `POST /v1/rag-retrieval/query` as
+  `manager` reaches the real pipeline (ran retrieval + generation for
+  real, not mocked). Existing test suite's two `TestClient` instances
+  (`test_routes_documents.py`, `test_routes_query.py`) updated with
+  default headers at the client level (one line each), not per call - no
+  existing test's own behavior changed. `README_TEST.md` gained an
+  upfront gateway-headers note plus a new, live-verified 1.7 case; the
+  Postman collection's `RAG Ingestion`/`RAG Retrieval` folders gained a
+  pre-request script injecting the placeholder headers automatically, so
+  every existing request in both folders keeps working without editing
+  each one by hand. `CLAUDE.md`'s request-flow section and
+  `docs/agent-reference/BACKLOG.md` (real-OAuth, uploader-identity-persistence,
+  identity-keyed rate limiting, per-document visibility - all explicitly
+  out of scope here) updated to match.
+
+- [x] **Phase 24 (done, 2026-09-15) — Fix:
+  `validation_exception_handler` crashes on a malformed (non-JSON) body
+  instead of returning a clean 422.** Found live while answering a user
+  question about re-indexing (a multipart/form-data body sent to
+  `POST /documents/{id}/index`, which expects JSON) - reproduced directly,
+  root-caused, not guessed at.
+
+  - **Spec:**
+    - **Context:** When a request body fails to parse as JSON at all (not
+      a field-level validation failure - the whole body is unparseable,
+      e.g. a file sent where JSON was expected), Pydantic's
+      `RequestValidationError.errors()` includes the raw request body
+      bytes in its `"input"` field. `main.py`'s
+      `validation_exception_handler` passes that straight to
+      `jsonable_encoder()`, whose default `bytes` handling calls
+      `.decode()` with no error handling - raising `UnicodeDecodeError`
+      whenever those raw bytes aren't valid UTF-8 (any real binary file,
+      e.g. a PDF). That crash happens *inside the exception handler
+      itself* - Starlette has no fallback for an exception raised while
+      already handling another exception, so it becomes a genuinely
+      unhandled crash (a raw traceback in the console, no JSON response
+      reaches the client) instead of the clean 422 every other malformed
+      request gets.
+    - **Data/API contracts:** `validation_exception_handler` gains
+      `custom_encoder={bytes: lambda value: value.decode("utf-8",
+      errors="replace")}` on its `jsonable_encoder()` call - malformed
+      UTF-8 in the echoed-back `"input"` is replaced (`�`), never
+      raised on. No response-shape change for every existing (already
+      passing) validation-error case - `details` still carries the same
+      Pydantic error list, just safe for binary edge cases too now.
+    - **User-visible behavior:** A non-JSON body to any JSON endpoint now
+      reliably gets a `422` with `code: "VALIDATION_ERROR"`, same as any
+      other malformed request - never a raw crash.
+    - **Failure modes:** None new - this closes a failure mode, doesn't add one.
+    - **Out of scope:** Making the gateway or any route accept
+      multipart/form-data on JSON-only endpoints - the fix is that a
+      *rejection* of the wrong body shape is now clean, not that the
+      wrong shape becomes accepted.
+    - **Open questions:** none - root-caused via direct reproduction
+      before this spec was written, not a guess.
+  **Verified:** root-caused by direct reproduction (not guessed at) - a
+  real multipart/form-data PDF body posted to `POST /documents/{id}/index`
+  reproduced the exact `UnicodeDecodeError` class the user hit
+  (`'utf-8' codec can't decode byte 0xd3'`). Confirmed the crash happens
+  *inside* `validation_exception_handler` itself via
+  `fastapi.encoders.ENCODERS_BY_TYPE[bytes]`'s default `lambda o:
+  o.decode()`. Fixed with a `custom_encoder` on the `jsonable_encoder()`
+  call; re-ran the exact failing request afterward - clean `422`,
+  `code: "VALIDATION_ERROR"`, no crash. New regression test
+  (`test_a_multipart_body_on_a_json_endpoint_is_a_clean_422_not_a_crash`)
+  added and confirmed it actually catches the regression - failed with
+  the exact same traceback when run against the pre-fix code (`git
+  stash`), passed after. Full suite green (114/114).
+
+- [x] **Phase 25 (done, 2026-09-15) — Reindex by
+  filename, not just `document_id`.** Follows from a conversation about
+  LangChain's own indexing model (`source_id_key` - one stable id per
+  document, not resolved from a category/name-that-may-collide) - the
+  conclusion was to keep `document_id` as that stable id, but let the
+  caller reindex by filename too, since that's what they typically
+  already know without a separate lookup.
+
+  - **Spec:**
+    - **Context:** `POST /documents/{document_id}/index` currently only
+      accepts a real `document_id` in the URL - a caller who knows a
+      document by name (not its system-generated id) has to `GET
+      /documents` and search first. Filenames aren't unique in this
+      system by design (Phase 16 - same name, different content, is a
+      new document), so a name-based lookup can be ambiguous; a
+      classification/type is a category shared by many documents, not a
+      usable identifier at all (not proposed here for that reason).
+    - **Data/API contracts:**
+      - `POST /documents/{identifier}/index` - the path param is renamed
+        `document_id` -> `identifier` in code (URL shape unchanged).
+        Resolution: try `identifier` as a real `document_id` first
+        (existing behavior, unchanged, ignores `is_current` - explicit id
+        always wins regardless of supersede status). If no such id
+        exists, treat it as a filename and match against **current**
+        (`is_current=true`) documents only.
+      - Zero matches (neither an id nor a current filename) -> `404`
+        `DOCUMENT_NOT_FOUND`, same as today.
+      - Exactly one filename match -> reindex it, identical to passing
+        its `document_id` directly.
+      - More than one filename match -> new `409`,
+        `AMBIGUOUS_DOCUMENT_IDENTIFIER` (new `error_codes.py` entry),
+        naming the matching `document_id`s so the caller can disambiguate.
+      - `IndexResponse.document_id` already reports the real, resolved id
+        - no contract change needed there; a caller using a filename
+          finds out the real id from the response.
+    - **User-visible behavior:** `POST /documents/JPMC Healthcare
+      Benefits.pdf/index` (URL-encoded) behaves identically to using that
+      document's real id, as long as exactly one current document has
+      that name.
+    - **Failure modes:** Ambiguous filename -> `409` naming the
+      candidates, not a silent pick of "most recent" (explicit over
+      implicit, matching this project's own established convention -
+      `vector_db`, `chunking_strategy`, etc. are never silently guessed).
+    - **Out of scope:** Filename lookup on `GET`/`DELETE
+      /documents/{id}}` - only requested for reindex. `doc_classification`/
+      `doc_type` as a lookup key (bulk-reindex-by-category is a different,
+      unrequested operation).
+    - **Open questions:** none.
+  **Verified:** full suite green (118/118 - 5 new tests: filename resolves
+  to the correct document_id and reindexes; two current documents sharing
+  a filename is 409 naming both ids; unknown filename is still 404;
+  filename resolution ignores a superseded document's old name while id
+  lookup still reaches it regardless). Live-verified on the real dev DB:
+  `JPMC Healthcare Benefits.pdf` genuinely resolves to 8 different current
+  documents there (accumulated across this whole session's testing) and
+  correctly 409s naming all 8 - confirming the ambiguity path against
+  real, not synthetic, data. A fresh, unambiguous upload reindexed
+  successfully by filename alone (real embedding call, 39 chunks, the
+  response's `document_id` matching the actual uploaded id) - test
+  document and its vectors cleaned up afterward. `README_TEST.md` (new
+  4.12-4.14, plus a stale "now LlamaIndex's VectorStoreIndex" line fixed
+  in the section intro while there) and the Postman `Index` folder (two
+  new items) updated to match.
+
+- [x] **Phase 26 (done, 2026-09-15) — Simplify: one ingestion endpoint,
+  separate index/reindex endpoint removed.** Explicit user request:
+  Phases 16/25's two-step upload-then-index design (built for dedup/re-
+  index/cost-control reasons) was overengineered for a learning project
+  with no production traffic - beginner-unfriendly complexity solving a
+  problem this project doesn't have.
+
+  - **Spec:** `POST /v1/rag-ingestion/documents` now does the whole
+    pipeline per file in one call - save, extract, chunk (auto-selected
+    strategy), embed, write to vector store - and returns one combined
+    result per file (upload outcome + indexing outcome together).
+    `POST /documents/{id}/index` (and filename-based reindex, Phase 25)
+    removed - `routes_documents.py`'s `_index_document`/`index_document`/
+    `_resolve_document_by_id_or_filename`/`_preflight_backends_ready`,
+    `models/documents.py`'s `IndexRequest`/`IndexResponse`. Per-call
+    chunking/embedding/vector_db overrides removed too - defaults only,
+    no options surface to keep simple. Content-hash dedup (Phase 16) kept
+    unchanged - a real, already-working check, not part of what was
+    flagged as overengineered. `GET`/`DELETE /documents[/{id}]` unchanged.
+  **Verified:** full suite green (113/113) - test_routes_documents.py
+  rewritten with an autouse fake for `pipeline.index_document()` (no real
+  embedding cost per test), every /index-specific test removed, upload
+  tests updated to assert the now-combined result shape
+  (`action`/`chunks_indexed`). Phase 24's regression test repointed at
+  `/query` (still JSON-only) since its original target endpoint no longer
+  exists - same bug class, still covered. Live-verified end to end with a
+  real PDF: one `POST /documents` call did upload + real chunking (45
+  chunks) + real embedding + real vector store write, response reported
+  `action: "insert"`, `chunks_indexed: 45`; `GET` immediately after showed
+  `status: "indexed"`; cleaned up via `DELETE`. `README_TEST.md` (section
+  4 replaced with a short redirect, sections 2/3's stale "not indexed
+  yet" language fixed) and Postman (`Index` sub-folder removed from `RAG
+  Ingestion`; `Upload` item descriptions updated) updated to match.
+
+- [x] **Phase 27 (done, 2026-09-15) — Delete-all-documents endpoint.**
+
+  - **Spec:** `DELETE /v1/rag-ingestion/documents` (no id - the existing
+    single-document delete is still `DELETE /documents/{id}`). Deletes
+    every document's vectors, metadata row, and uploaded file - same
+    full-delete semantics as the single version, just for all of them.
+    `documents_service.delete_all_documents()` loops
+    `list_documents()` + the existing `delete_document()` per row (no new
+    deletion logic). Response: `documents_deleted`, `chunks_removed`
+    (summed). Gated to `HR_SUPPORT` same as the rest of `RAG Ingestion`
+    (router-level dependency, unchanged). No confirmation flag - matches
+    this project's existing single-delete endpoint, which also has none.
+  **Verified:** full suite green (114/114) - new test uploads 2 documents,
+  calls delete-all, confirms `documents_deleted >= 2` and the list is
+  empty afterward. Live/real run against the actual dev DB (not mocked)
+  found and fixed a real bug: `delete_document()` returning `None` for a
+  row already gone by the time the loop reached it crashed the whole
+  batch (`TypeError` on `None["chunks_removed"]`) - now skipped instead,
+  doesn't fail the rest. Postman gained a `Delete ALL documents` item.
+
+- [x] **Phase 28 (done, 2026-09-15) — Fix: document_version reports 2 on
+  a document's first-ever index.** Found live by the user testing upload.
+
+  - **Spec:** `create_document()` inserts `document_version = 1`;
+    `record_successful_index()` then does `document_version = document_version
+    + 1` on *every* successful index, including the first. Since Phase 26
+    fused upload+index into one call, a fresh document's first-ever index
+    now always reports version 2, never 1 - confusing (`action: "insert"`
+    alongside `document_version: 2` reads like something was indexed
+    twice). Fix: `create_document()` inserts `document_version = 0`
+    instead - "no successfully indexed version yet" - so the first
+    successful index correctly lands on 1, and each subsequent re-index
+    still increments normally (2, 3, ...). `sqlite_client.py` and
+    `postgres_client.py` both change (same pattern, two backends).
+    `documents_service.py`'s failure-path fallback (`index_outcome.get(
+    "document_version", 1)`, used when indexing itself fails) changes to
+    `0` too, matching what the row actually holds in that case.
+    `DocumentRecord`/`DocumentUploadResult`'s field docs updated to match.
+  **Verified:** new direct-SQLite regression test
+  (`test_sqlite_client_document_version.py`, no HTTP/no embedding cost) -
+  `create_document()` leaves `document_version=0`, first
+  `record_successful_index()` returns 1, a second returns 2. Live-verified
+  through the real API too: a fresh upload now returns
+  `document_version: 1` (was 2). Full suite green (115/115).
+
+- [x] **Phase 29 (done, 2026-09-15) — Suppress misleading pdfminer
+  FontBBox console warning.** Root-caused live, not guessed at - traced
+  to `pdfminer.pdffont` (a `pdfplumber` dependency, used by
+  `table_extractor.py`), not this project's own code and not pypdf.
+
+  - **Spec:** `table_extractor.py` sets `logging.getLogger("pdfminer")`'s
+    level to `ERROR` at module import - this is the only file that uses
+    `pdfplumber`. Harmless, known pdfminer quirk (a font missing a
+    `FontBBox`, falls back to a default) - the warning itself is noise,
+    not a real problem, so silencing it (not "fixing" pdfminer) is correct.
+  **Verified:** live-ran `extract_tables_from_pdf()` against the exact PDF
+  that showed the warning - no `FontBBox` message printed. Full suite
+  green (115/115).
+
+- [x] **Phase 30 (done, 2026-09-15) — Fix: running the test suite silently
+  wiped the shared dev DB.** Found live - the user's own manually-uploaded
+  test document 404'd, traced to `pytest` having deleted it.
+
+  - **Spec:** `test_delete_all_removes_every_document` (Phase 27's test)
+    called the *real* `DELETE /documents` endpoint against the real,
+    shared dev SQLite DB - every `pytest` run wiped every document,
+    including anything uploaded manually via Postman in between tool
+    calls, with no warning. Rewritten to fake
+    `documents_service.delete_all_documents()` (matching the existing
+    query-route test pattern) and assert only that the route calls it and
+    returns its result - real bulk-delete behavior is already covered by
+    `delete_document()`'s own tests plus `delete_all_documents()`'s thin,
+    obviously-correct loop over it.
+  **Verified:** uploaded a real document, ran the full suite, confirmed
+  the document still existed afterward (previously it would not have).
+  Full suite still green (115/115).
+
+- [x] **Phase 31 (2026-09-15) — ACTIVE_VECTOR_DB/ACTIVE_LLM_PROVIDER
+  .env vars, one resolver helper each.**
+
+  - **Spec:** `RAG_VECTOR_DB` renamed to `ACTIVE_VECTOR_DB` in `.env`; new
+    `ACTIVE_LLM_PROVIDER` (default `openai`) for the LLM used in
+    embedding/retrieval-time reasoning (not the final answer's model,
+    which stays a separate, per-call override - unchanged). Two new
+    helpers in `common/config/settings.py` -
+    `get_active_vector_db(override)`/`get_active_llm_provider(override)` -
+    replace the repeated `x or read_setting(None, "RAG_VECTOR_DB", ...)`/
+    `llm_provider or "openai"` scattered across `ai/doc_processing/
+    pipeline.py`, `ai/rag_pipeline/pipeline.py`,
+    `ai/rag_pipeline/query_retrieval/retriever.py`, `common/clients/
+    db_client/db_gateway.py`.
+  **Verified:** all 5 call sites switched to the two new helpers; stale
+  `RAG_VECTOR_DB` references in `models/rag.py`'s docstring and
+  `vector_indexer.py`'s comment updated too. Full suite green (115/115).
+
+- [x] **Phase 32 (2026-09-16) — Pilot: `RagQueryParams` dataclass
+  replaces the repeated 10-field parameter list on the `/query` path.**
+
+  - **Spec:** User-reported code smell - `retrieve_document.py`,
+    `services/rag_service.py`, and `ai/rag_pipeline/pipeline.py`'s
+    `answer_query()` each redeclare the same 10 parameters
+    (query/top_k/vector_db/search_strategy/model_name/temperature/
+    max_tokens/use_multi_query/use_self_query/llm_provider) - adding one
+    field means editing 3 signatures. Deliberately scoped to this one
+    payload only, as a pilot to review before considering it for
+    `routes_documents.py`/`documents_service.py` - not applied there in
+    this phase.
+    - New `common/rag_query_params.py`: a plain `@dataclass` (not
+      Pydantic) `RagQueryParams` with those 10 fields, same names/types/
+      defaults as `RagQueryRequest`. Lives in `common/`, not `ai/`, so
+      `retrieve_document.py` importing it does not become "routes importing
+      ai/ directly" (CLAUDE.md's architecture rule) - it is a plain,
+      framework-free data container, not pipeline logic.
+    - `retrieve_document.py` builds one `RagQueryParams` from `payload` and
+      calls `rag_service.answer_query(params)` - one argument, not 10.
+    - `rag_service.answer_query(params: RagQueryParams)` passes `params`
+      straight through to `pipeline.answer_query(params)` unchanged.
+    - `ai/rag_pipeline/pipeline.py`'s `answer_query(params: RagQueryParams)`
+      unwraps `params.*` at the top (where `resolved_vector_db`/
+      `resolved_search_strategy`/`resolved_llm_provider` are already
+      computed today) and calls the *unchanged* `retrieve_chunks()`/
+      `generate_answer()` with the same individual arguments as today -
+      those two functions are out of scope for this phase.
+    - `retriever.py`, `routes_documents.py`, `documents_service.py`,
+      `ai/doc_processing/pipeline.py` are explicitly **not** touched.
+    - Tests: `tests/hrb_chatbot/api/rag/test_routes_query.py`'s
+      `_fake_answer_query`/`_capturing_fake` helpers and
+      `tests/hrb_chatbot/api/test_error_handling.py`'s
+      `_fake_answer_query` updated to the new single-`params` signature -
+      same assertions, same coverage, no behavior change.
+  **Verified:** `code-reviewer` subagent run against the diff - bandit
+  clean, no scope creep beyond the 6 listed files, no overengineering. Two
+  findings addressed: docstring trimmed to CODING-STANDARDS' 2-line limit;
+  the "same types as `RagQueryRequest`" spec wording was imprecise -
+  `vector_db`/`search_strategy`/`llm_provider` stay `str | None` in the
+  dataclass, matching the pre-existing convention already in
+  `rag_service.py`/`pipeline.py` (enums live at the Pydantic/route
+  boundary only, per `CLAUDE.md`'s architecture section - not a new
+  deviation this phase introduced). Flagged, not fixed: no dedicated test
+  file for the dataclass itself - it has no logic, and its field defaults
+  are already exercised indirectly via
+  `test_use_multi_query_and_use_self_query_default_to_false`. Full suite
+  green (115/115).
+
+- [x] **Phase 33 (2026-09-16) — Remove dead pass-through wrapper
+  functions, both pipeline.py files.**
+
+  - **Spec:** User-reported: `ai/rag_pipeline/pipeline.py`'s
+    `retrieve_chunks()`/`generate_answer()` and `ai/doc_processing/
+    pipeline.py`'s `index_chunks()` add nothing over the function they
+    call - same signature, no resolved defaults, no transformation.
+    Confirmed via grep: none of the three is imported or called from
+    anywhere except the same file's own orchestrator function
+    (`answer_query()`/`index_document()`), and no test references any of
+    them directly. This is different from the service-layer thinness
+    kept in Phase 32 (`rag_service.answer_query()` forwarding to
+    `pipeline.answer_query()`) - that one is a real, documented layer
+    boundary (routes never import `ai/` directly, per `CLAUDE.md`); these
+    three are same-package indirection with no boundary to justify them.
+    - `ai/rag_pipeline/pipeline.py`: delete `retrieve_chunks()` and
+      `generate_answer()`; drop the `as _retrieve_chunks`/
+      `as _generate_answer` import aliases (import the real names
+      directly); `answer_query()` calls `retrieve_chunks()`/
+      `generate_answer()` (the real functions) directly.
+    - `ai/doc_processing/pipeline.py`: delete `index_chunks()`;
+      `index_document()` calls `write_chunks()` (already imported)
+      directly instead. `chunk_document()` is kept - it resolves
+      `chunk_overlap`'s falsy-but-valid-zero default correctly (`if
+      chunk_overlap is None` vs `or`), so it is not a pure pass-through.
+    - No test changes expected - nothing references the removed names.
+  **Verified:** grepped for any reference to the 3 removed names across
+  `src/` and `tests/` before deleting - none found beyond the file that
+  defined them. Full suite green (115/115) after removal.
+
+  **Also checked, no change needed:** the ingestion path
+  (`routes_documents.py` -> `documents_service.py` ->
+  `pipeline.index_document()`) does not have Phase 32's
+  repeated-10-parameter problem - the route only exposes `files`/
+  `supersedes_document_id`; every other `index_document()` parameter
+  (`vector_db`, `chunking_strategy`, etc.) is never set by a caller and
+  always resolves from `.env`. Applying `RagQueryParams`-style there
+  would add a class with no duplication to remove - flagged as
+  considered, not a gap.
+
+- [x] **Phase 34 (2026-09-16) — Simplify `retrieve_chunks()` to a
+  single query; remove `decompose_query()`.**
+
+  - **Spec:** User-reported: `retriever.py`'s `retrieve_chunks(queries:
+    list[str], ...)` loops over multiple queries and dedupes results by
+    `(document_id, chunk_index)` - scaffolding for Phase 5.1's real query
+    decomposition. `pipeline.py`'s `decompose_query()` is the only
+    caller's source of that list, and it is a documented MVP placeholder
+    that always returns `[query]` (one item). Today the loop always runs
+    once and the dedup set never removes anything - real complexity for
+    a feature that does not exist yet, same category of issue as Phase
+    33. Confirmed via grep: `decompose_query` and `retrieve_chunks` have
+    no other callers.
+    - `retriever.py`: `retrieve_chunks(query: str, ...)` - drop the outer
+      loop and `seen_chunk_keys` dedup set; call the search
+      function/`search_multi_query` once with `query` directly; Self-
+      Query's `queries[0]` becomes plain `query`. `search_multi_query()`
+      itself is untouched - its own dedup handles LangChain's internal
+      rewritten-query fan-out (`use_multi_query=True`), a separate,
+      still-active mechanism from `decompose_query()`.
+    - `pipeline.py`: delete `decompose_query()` (removing the outer loop
+      makes it a pure identity call - the same dead-wrapper pattern
+      Phase 33 already removed elsewhere); `answer_query()` passes
+      `params.query` to `retrieve_chunks()` directly. Module docstring's
+      reference to `decompose_query()` updated.
+    - Tests: `test_retriever.py`'s ~13 `retrieve_chunks([...])` calls
+      become `retrieve_chunks(...)` (plain string, not a list).
+      `test_the_same_chunk_found_by_two_subqueries_is_not_duplicated`
+      tests exactly the multi-query dedup path being removed - deleted,
+      not adapted (the scenario it names, "two subqueries," can no
+      longer occur once the outer loop is gone). Real dedup coverage for
+      the still-active `use_multi_query` path stays via
+      `test_search_multi_query_merges_and_dedupes_across_rewritten_queries`,
+      untouched.
+    - When Phase 5.1's real decomposition ships, `retrieve_chunks()`
+      regains a list parameter and a real caller then - not built ahead
+      of that need now.
+  **Verified:** `code-reviewer` subagent run against the diff - bandit
+  clean, scope matched the spec, `decompose_query()` fully gone (grepped),
+  no overengineering. One finding fixed: `answer_query()`'s own docstring
+  still said "decompose, retrieve, generate" after the module-level
+  docstring was already updated - reworded to "retrieve, generate." Full
+  suite green (114/114).
+
+- [x] **Phase 35 (2026-09-18) — Add a real system prompt (role
+  definition) for answer generation.**
+
+  - **Spec:** User-reported: this project's `ask()` never sent a `system`
+    message - the grounding/anti-hallucination instruction was folded
+    into the user message instead (documented, deliberate, but not what
+    a production RAG system typically does). `BaseLLMClient.ask()` is an
+    ABC method every provider client implements identically (per
+    `docs/agent-reference/CODING-STANDARDS.md`'s "every client follows the same shape"),
+    so this touches all four, not just OpenAI (the only one actually
+    called for final-answer generation today, per `docs/agent-reference/FAQ.md` - the
+    other three stay dormant until Phase 5.1/agent work uses them, but
+    must keep the same shape regardless).
+    - `base_llm_client.py`: `ask()` gains `system_prompt: str | None = None`.
+    - `openai_client.py`/`open_router_client.py`: prepend
+      `{"role": "system", "content": system_prompt}` to `messages` when set.
+    - `anthropic_client.py`: pass `system=system_prompt` as
+      `messages.create()`'s own top-level argument (Claude's API takes it
+      separately, not as a message - same as `ask_with_tools()` already does).
+    - `bedrock_client.py`: pass `system=[{"text": system_prompt}]` on the
+      Converse API request when set (same shape `ask_with_tools()` already uses).
+    - `ai/rag_pipeline/response_generation/response_generator.py`: new
+      `SYSTEM_PROMPT` constant - the role + the grounding/anti-hallucination
+      policy that used to live in `GROUNDED_QUESTION_TEMPLATE`.
+      `generate_answer()` passes it via `system_prompt=SYSTEM_PROMPT` and
+      the per-call question becomes the raw `query` (the template is
+      deleted - the instruction now lives once, in the system prompt, not
+      duplicated in both places). Module docstring updated.
+    - Out of scope: `document_metadata_extractor.py`'s `ask()` call stays
+      unchanged (no system prompt) - a different call, not what was asked.
+    - Tests: `tests/conftest.py`'s `FakeChatClient.ask()` gains
+      `system_prompt` and records it in `calls`; `test_generator.py`'s
+      `test_question_carries_the_grounding_instruction` rewritten to
+      check `system_prompt`, not `question`, for the grounding language.
+  **Verified:** `code-reviewer` subagent run against the diff - scope
+  matched the spec exactly (no creep), bandit clean, all four provider
+  clients' `system_prompt` wiring matched their existing per-provider
+  patterns (`ask_with_tools()`'s system-handling for Anthropic/Bedrock),
+  `document_metadata_extractor.py`/`langchain_chat_model.py` confirmed
+  unaffected (backward-compatible optional param). One finding fixed:
+  `ask()` ABC's docstring was 3 lines, over CODING-STANDARDS' 2-line
+  limit - trimmed. One flagged, not fixed: none of the four LLM client
+  files have dedicated unit tests (pre-existing gap, not introduced by
+  this phase - `system_prompt` is only exercised indirectly via
+  `FakeChatClient` in `test_generator.py`, not the real per-provider
+  request-building code). Full suite green (114/114).
+
+- [x] **Phase 36 (2026-09-18) — Three new document-metadata
+  attributes: effective_date, audience, confidentiality_level.**
+
+  - **Spec:** User-requested, following up on the earlier metadata-schema
+    discussion (Interview Kickstart ticket-schema comparison). Three
+    document-level attributes added, same best-effort LLM-extraction
+    contract as the existing 5 (`owner`/`department`/`doc_type`/`purpose`/
+    `doc_classification`) - free-text strings, null when the model can't
+    determine them, extraction failure never blocks indexing:
+    - `effective_date` - when the policy states it takes effect, in the
+      document's own words (not parsed/validated as a real date - same
+      best-effort-string contract as the other fields, to avoid a parse
+      failure blocking extraction).
+    - `audience` - which employee group the document applies to (e.g.
+      "Full-time employees", "All US employees").
+    - `confidentiality_level` - the document's own stated sensitivity
+      (e.g. "Internal", "Confidential"), if it states one.
+    **Deliberately deferred, not in this phase:** chunk-level `section`/
+    `page_number`. `ai/doc_processing/chunking/text_chunker.py`'s
+    `extract_text_from_pdf()` currently joins every page into one text
+    blob before chunking (`"\n\n".join(pages_text)`) - page boundaries
+    are discarded before chunking ever runs, so page/section tracking
+    needs real extraction-pipeline changes, not a metadata column add.
+    Flagged as a separate, bigger future phase if wanted.
+    - `ai/doc_processing/metadata_extraction/document_metadata_extractor.py`:
+      `EMPTY_RESULT` and `EXTRACTION_QUESTION` gain the 3 keys.
+    - `common/clients/db_client/base_metadata_client.py`:
+      `record_document_metadata()` ABC gains the 3 params.
+    - `common/clients/db_client/sqlite_client.py` /
+      `postgres_client.py`: 3 new nullable columns (`ADD_COLUMNS`/`ADD
+      COLUMN IF NOT EXISTS`, matching each file's existing pattern), 3
+      new params threaded through the UPDATE.
+    - `models/documents.py`: `DocumentRecord` gains the 3 fields
+      (optional, default None) so the API actually returns them.
+    - Tests: `tests/conftest.py`'s `FakeMetadataStore.record_document_metadata()`
+      gains the 3 params; `test_document_metadata_extractor.py`'s clean-
+      JSON test extended to cover the 3 new fields.
+  **Verified:** `code-reviewer` subagent run against the diff - the 7
+  declared files matched exactly, bandit clean, SQL fully parametrized
+  in both sqlite/postgres clients, generic-loop extraction pattern meant
+  `ai/doc_processing/pipeline.py`/`routes_documents.py` needed no changes
+  (both already dict-unpack). One finding fixed: both of
+  `document_metadata_extractor.py`'s docstrings still listed only the
+  old 4-5 fields - updated to point at `EMPTY_RESULT` instead of
+  hardcoding the list twice. One finding was a false positive (the
+  reviewer's diff included Phase 35's already-committed-pending files
+  too, since neither phase had been git-committed yet - not actual
+  scope creep in this phase's own edits). Full suite green (114/114).
+
+- [x] **Phase 37 (2026-09-18) — decide_chunk_size(): table-aware
+  and large-document-aware auto chunk sizing.**
+
+  - **Spec:** User-requested extension of the existing
+    `decide_chunking_strategy()` auto-selection (same "content decides,
+    not a hardcoded guess" pattern), scoped to exactly what was agreed:
+    table-awareness and document-length-awareness. No image/complexity
+    detection (no such extraction capability exists in this pipeline -
+    flagged, not built).
+    - `ai/doc_processing/chunking/text_chunker.py`: new
+      `decide_chunk_size(text) -> int`. Two signals, take the max (never
+      shrinks below `DEFAULT_CHUNK_SIZE`):
+      1. **Table-aware:** if the largest `[TABLE]...[/TABLE]` block (from
+         `table_extractor.py`'s output) is longer than the current
+         candidate chunk size, grow the chunk size to
+         `largest_table_length + DEFAULT_CHUNK_OVERLAP` - big enough that
+         `RecursiveCharacterTextSplitter` never needs to recurse into
+         finer separators inside that block, so a table row is never cut
+         across two chunks.
+      2. **Large-document-aware:** if the stripped text is longer than a
+         new `LARGE_DOCUMENT_MIN_LENGTH` (10,000 chars), use a new
+         `LARGE_DOCUMENT_CHUNK_SIZE` (1500) instead of the 1000-char
+         default - fewer, larger chunks so a long policy document
+         doesn't fragment into 50+ pieces each losing surrounding context.
+      Only applies when the resolved strategy is "fixed"/"recursive" -
+      other strategies (markdown/html/none/semantic) don't take a
+      chunk_size argument at all, unchanged.
+    - `chunk_text()`'s `chunk_size` param becomes `int | None = None`
+      (was always concretely defaulted) - auto-sizes via
+      `decide_chunk_size()` when not given, mirroring exactly how
+      `chunking_strategy` already works in the same function.
+    - `ai/doc_processing/pipeline.py`: `chunk_document()` stops
+      pre-resolving `chunk_size or DEFAULT_CHUNK_SIZE` before calling
+      `chunk_text()` - passes `chunk_size` through unchanged so `None`
+      reaches the new auto-sizing (single source of truth, not
+      duplicated resolution logic). `index_document()`'s
+      `resolved_chunk_size` computation moves to after
+      `extract_text_from_pdf()` (it needs the extracted text now,
+      the same ordering `resolved_chunking_strategy` already uses,
+      "computed here so the response can report what actually ran,
+      decide_chunk_size() is pure so this always agrees") - the
+      pre-extraction log line reports `chunk_size or "auto"` instead of
+      a not-yet-known resolved value, matching how `chunking_strategy`
+      is already logged there.
+    - Tests: new cases in `test_text_chunker.py` for `decide_chunk_size()`
+      (default case, table-block growth, large-document growth, max-of-
+      both) and that `chunk_text()` auto-sizes when `chunk_size` is
+      omitted. No existing test passes an explicit `chunk_size` to
+      `chunk_text()` expecting the old always-1000 default, and no
+      dedicated test file exists for `ai/doc_processing/pipeline.py`
+      itself (covered indirectly via `documents_service.py`'s tests,
+      which fake `pipeline.index_document` entirely - unaffected).
+  **Verified:** `code-reviewer` subagent run against the diff - scope
+  matched the spec's 3 declared files exactly, bandit clean, `max()`-of-
+  two-signals logic hand-verified for the both-signals-apply edge case,
+  `chunk_size` auto-sizing confirmed limited to fixed/recursive
+  strategies only. `test_ab_testing_demo.py` (an existing caller passing
+  an explicit `chunk_size` to `chunk_text()`) re-checked for regression
+  from the now-Optional signature - none. One finding fixed: a 3-line
+  comment exceeded CODING-STANDARDS' 2-line limit, restating what the
+  docstring already said - trimmed. Full suite green (120/120).
+
+- [x] **Phase 38 (2026-09-18) — .env audit: move hardcoded
+  tuning/limit constants to .env; re-expose chunk_size/chunking_strategy
+  on POST /documents.**
+
+  - **Spec:** User-requested full-codebase scan for hardcoded numeric/
+    limit constants with no `.env` path, following the existing
+    `read_setting(passed_in, ENV_VAR, default)` pattern everywhere
+    (Phase 31's `get_active_vector_db()`/`get_active_llm_provider()` is
+    the precedent). Two categories, confirmed with the user:
+    - **Internal tuning** (`.env`-configurable only, no payload field -
+      not something a caller should control per-request):
+      `retriever.py`'s `MAX_CHROMA_DISTANCE`/`MIN_PINECONE_SCORE`
+      (`RAG_MAX_CHROMA_DISTANCE`/`RAG_MIN_PINECONE_SCORE`);
+      `text_chunker.py`'s `DEFAULT_CHUNK_SIZE`/`DEFAULT_CHUNK_OVERLAP`/
+      `LARGE_DOCUMENT_MIN_LENGTH`/`LARGE_DOCUMENT_CHUNK_SIZE`
+      (`CHUNK_DEFAULT_SIZE`/`CHUNK_DEFAULT_OVERLAP`/
+      `CHUNK_LARGE_DOCUMENT_MIN_LENGTH`/`CHUNK_LARGE_DOCUMENT_CHUNK_SIZE`);
+      `document_metadata_extractor.py`'s `MAX_CHARACTERS_SENT`
+      (`METADATA_EXTRACTION_MAX_CHARACTERS`); `pinecone_client.py`'s
+      `INDEX_READY_TIMEOUT_SECONDS`/`INDEX_READY_POLL_SECONDS`
+      (`PINECONE_INDEX_READY_TIMEOUT_SECONDS`/
+      `PINECONE_INDEX_READY_POLL_SECONDS`); `tavily_client.py`'s
+      `HEALTH_CHECK_TIMEOUT_SECONDS`/`MAX_SECONDS_BETWEEN_RETRIES`
+      (`TAVILY_HEALTH_CHECK_TIMEOUT_SECONDS`/
+      `TAVILY_MAX_RETRY_BACKOFF_SECONDS`); `open_router_client.py`'s
+      `HEALTH_CHECK_TIMEOUT_SECONDS` (`OPENROUTER_HEALTH_CHECK_TIMEOUT_SECONDS`);
+      `models/documents.py`'s `MAX_FILE_SIZE_BYTES`
+      (`MAX_UPLOAD_FILE_SIZE_BYTES` - deliberately **not** payload-
+      overridable, a caller raising its own upload limit is a security
+      concern, not a feature); `anthropic_client.py`'s hardcoded
+      `max_tokens or 1024` fallback (new `DEFAULT_MAX_TOKENS` class attr,
+      `ANTHROPIC_DEFAULT_MAX_TOKENS`). Each becomes
+      `read_setting(None, "ENV_VAR", existing_literal)` at the same
+      module/class scope the constant already lived at - the literal
+      stays as the coded fallback, same role `DEFAULT_MODEL` already
+      plays elsewhere.
+    - **Request-tunable, baked into a payload's schema instead of
+      `None`+resolved-with-`.env`-override** (the same inconsistency
+      Phase 32 partly addressed, found going further this pass):
+      `RagQueryRequest.top_k`/`temperature` currently
+      `Field(5, ...)`/`Field(0.0, ...)` - become `Field(None, ...)`,
+      matching how `vector_db`/`search_strategy`/`llm_provider` already
+      work. `RagQueryParams` gets the matching `int | None`/`float | None`
+      fields. `pipeline.answer_query()` resolves
+      `params.top_k or int(read_setting(None, "RAG_DEFAULT_TOP_K", 5))`
+      and the equivalent for temperature - also caught
+      `resolved_search_strategy = params.search_strategy or "similarity"`
+      already having this exact bug (hardcoded fallback, no `.env` path)
+      while fixing the other two; adds `RAG_DEFAULT_SEARCH_STRATEGY`.
+    - **`chunk_size`/`chunking_strategy`/`chunk_overlap` re-exposed on
+      `POST /documents`** (as `Form(...)` fields, matching
+      `supersedes_document_id`'s existing shape) - user confirmed this
+      supersedes Phase 26's removal of per-call chunking overrides;
+      `chunking_strategy` typed as `ChunkingStrategy | None` (the
+      existing enum) for the same request-boundary-validation reason
+      every other provider-choice field uses one. Threaded through
+      `documents_service.save_uploads()`/`save_upload()`/`_index_now()`
+      (plain optional kwargs, not a new dataclass - only 3 fields, not
+      the 10-field case that justified `RagQueryParams`) down to
+      `pipeline.index_document()`, which already accepts all three and
+      needed no change.
+    - **Explicitly out of scope, flagged not fixed:** `vector_indexer.py`'s
+      `RECORD_MANAGER_DB_URL` and `documents_service.py`'s
+      `UPLOAD_DIRECTORY` - storage paths, not limit/size tuning values,
+      a different category than what was asked about.
+    - Tests: existing tests pass `.env`-unset, so every `read_setting()`
+      call resolves to its unchanged literal default - no test should
+      observe a behavior change from the internal-tuning half. New Form
+      fields are optional/default-None, so existing upload tests
+      (`test_routes_documents.py`, whose `_fake_index_document` already
+      accepts `**kwargs`) need no changes.
+  **Verified:** `code-reviewer` subagent run against the diff - confirmed
+  `temperature`'s `is None` handling is correct everywhere (the falsy-
+  zero bug was specifically avoided), no internal-only `.env` value
+  (`MAX_FILE_SIZE_BYTES` etc.) got an accidental payload field, every new
+  `read_setting()` call site has the import present, all `.env` values
+  match their coded fallback literals, chunking Form fields correctly
+  typed/threaded, bandit clean on all 13 in-scope files, 126/126 tests
+  green. Two findings were both the same false positive (files from
+  already-completed Phases 35-37 misread as unspec'd scope creep,
+  since nothing had been git-committed since Phase 34 - not an issue
+  with Phase 38's own edits); one finding was real and correctly
+  flagged as pre-existing/out of scope (a SHA1/bandit-B324 finding in
+  `vector_indexer.py`, not a file this phase touched). **Follow-up:**
+  `postman/hrb_chatbot.postman_collection.json` was missing the new
+  `POST /documents` payload fields - added an example request
+  ("Upload with chunking overrides"). Checked `docs/agent-reference/FAQ.md`/
+  `docs/agent-reference/BACKLOG.md`/`docs/agent-reference/HANDOFF.md` for related stale text - none
+  found (`BACKLOG.md`'s "orphan config" tracking is a different,
+  non-overlapping category: previously-declared-but-unread `.env`
+  lines, not the previously-hardcoded-with-no-`.env`-path constants
+  this phase fixed).
+
+- [x] **Phase 39 (2026-09-18) — Sync tests/docs/Postman after user's manual
+  endpoint rename.**
+
+  User manually renamed `api/rag/routes_documents.py` ->
+  `ingest_document.py` (router variable `router_ingest_document`) and
+  `routes_query.py` -> `retrieve_document.py` (`router_retrieve_document`),
+  and changed `main.py`'s prefixes from `/v1/rag-ingestion`/
+  `/v1/rag-retrieval` to `/v1/rag/ingest-document`/`/v1/rag/retrieve-document`.
+  No `**Spec:**` block - this phase touched no file under
+  `src/hrb_chatbot/**` (the actual rename was already done by the user
+  before this phase started), so `spec_gate.py` never applies.
+
+  **Found live:** the test suite was silently 41/126 red - the renamed
+  files' tests (`test_routes_documents.py`, `test_routes_query.py`,
+  `test_error_handling.py`) still called the old URL paths, which 404
+  against the new prefixes. Fixed as part of the same rename (same fact
+  propagating, not a new decision), not left broken.
+
+  **Also synced:**
+  - `postman/hrb_chatbot.postman_collection.json` - every `raw` URL and
+    `path` array segment; added a new "Upload with chunking overrides"
+    example request (Phase 38's fields had never gotten one). Also fixed
+    two **pre-existing** staleness issues noticed while in this file,
+    unrelated to the rename itself: the collection's top-level
+    description listed a phantom `POST .../documents/{id}/index` item
+    (removed in Phase 26) instead of the real `DELETE /documents`
+    (delete-all) endpoint, and a "folders 3 and 4 need `document_id`"
+    line that no longer made sense once that phantom item was gone.
+  - `CLAUDE.md` - architecture section's file-naming claim
+    (`api/**/routes_*.py`) and the ingestion endpoint's URL, which still
+    named the same removed `/index` sub-route.
+  - `docs/agent-reference/FAQ.md` - the "how did you handle versioning" answer's
+    illustrative `app.include_router(...)` snippet.
+  - `.claude/skills/spec-verify/SKILL.md` - its worked example named
+    `routes_documents.py`/`test_routes_documents.py`, which no longer
+    mirror 1:1 by name (the src file was renamed, its test wasn't) -
+    swapped to `text_chunker.py`/`test_text_chunker.py`, an example that
+    still holds.
+  - README.md, README_TEST.md, docs/agent-reference/HANDOFF.md, docs/agent-reference/BACKLOG.md,
+    docs/agent-reference/TESTING-GUIDE.md - URL path segments only.
+
+  **Deliberately not touched:** `docs/agent-reference/RAG-ROADMAP.md` itself (this file)
+  and `docs/agent-reference/BACKLOG.md`'s dated/struck-through historical entries -
+  both describe what was true *at the time*, per this project's own
+  "historical, not updated retroactively" convention; renaming old
+  module names there would falsify history, not fix it.
+
+  **Flagged, not fixed:** `docs/agent-reference/FAQ.md`:521's claim that
+  `index_document()` (described as living in `routes_documents.py`)
+  checks LLM/vector-store reachability before indexing - couldn't
+  confirm this behavior still exists anywhere in the current ingestion
+  path without a deeper audit beyond this phase's scope, so left as-is
+  rather than guess-fix a module reference for a claim that may itself
+  be stale. `docs/agent-reference/TESTING-GUIDE.md`'s `POST /rag/query` shorthand
+  (already an approximation pre-rename, still one now) - low value,
+  left alone.
+
+  **Verified:** full suite green (126/126) after the URL-path fixes;
+  Postman collection JSON-validated after every edit; final repo-wide
+  grep for `rag-ingestion`/`rag-retrieval`/`routes_documents`/
+  `routes_query` confirms nothing remains outside `docs/agent-reference/RAG-ROADMAP.md`
+  and `docs/agent-reference/BACKLOG.md`'s intentionally-untouched historical entries.
+
+- [x] **Phase 40 (2026-09-18) — Trim supersedes_document_id's
+  Form description for concision.**
+
+  - **Spec:** User-reported: `ingest_document.py`'s `supersedes_document_id`
+    Form field description is verbose. Shorten to one sentence, same
+    meaning, no behavior change.
+  **Verified:** description now 2 sentences, same meaning. Full suite
+  green (126/126).
+
+- [x] **Phase 41 (2026-09-19) — User-directed: rebuild response
+  generation as a real LCEL chain, matching IK cohort Module 4.**
+
+  - **Spec:** User-reported deviation, standing rule going forward:
+    course-ware patterns are the standard for this project, not this
+    agent's own hand-rolled equivalents - "if you do not do it the way
+    the topics covered in the courseware then will consider that as a
+    deviation." `response_generator.py::generate_answer()` called this
+    project's own `chat_client.ask(question, context=..., system_prompt=...)`
+    directly - never a real LangChain `Runnable`/`|` chain. The Module 4
+    cohort notes' own canonical pattern is
+    `ChatPromptTemplate.from_messages([("system", "...{context}"),
+    ("human", "{question}")]) | llm | StrOutputParser()`.
+    - `ai/rag_pipeline/response_generation/response_generator.py`:
+      rebuilt as `RAG_PROMPT | GatewayChatModel(...) |
+      RunnableLambda(_to_result)` - a genuine LCEL chain, matching the
+      notes' own worked example exactly (grounding rules + `{context}`
+      in the system message, bare `{question}` in the human message).
+      `_to_result` replaces `StrOutputParser()` (not `StrOutputParser()`
+      itself) only because this app's response needs `model_used`
+      alongside the answer text, which `StrOutputParser()` alone
+      discards - `GatewayChatModel` now attaches that on
+      `AIMessage.response_metadata`, a standard LangChain pattern for
+      carrying metadata through a chain. Same external signature/return
+      shape as before - `pipeline.py` needed no changes.
+      Still OpenAI-only for the final answer (unchanged, documented in
+      `docs/agent-reference/FAQ.md` as a separate, deliberate decision - not something
+      this phase revisits).
+    - `common/clients/llm_client/langchain_chat_model.py`
+      (`GatewayChatModel`): needed two real fixes to support the above,
+      not just cosmetic - (1) message-splitting now recognizes a
+      `SystemMessage` and passes it as `system_prompt` (Phase 35's real
+      mechanism) instead of folding everything into `context` regardless
+      of role; (2) new `model_name_override`/`max_tokens` fields, and
+      `AIMessage.response_metadata["model"]` now reports which model
+      actually answered. Both additive - Phase 20's existing
+      `MultiQueryRetriever`/`SelfQueryRetriever` usage
+      (`GatewayChatModel(provider=llm_provider)`) is unaffected, new
+      fields all default to `None`/unchanged behavior.
+    - **Deliberately NOT converted to `.as_retriever()`/full LCEL:**
+      `retriever.py`'s `search_similarity()`/`search_mmr()`. Verified
+      why: `.as_retriever()`'s standard interface returns plain
+      `Document`s with no score, and this app's relevance-bar filter
+      (`_meets_relevance_bar()`, excludes a chunk below
+      `MAX_CHROMA_DISTANCE`/`MIN_PINECONE_SCORE`) needs that score -
+      only `similarity_search_with_score()` exposes it. Converting would
+      silently drop a real safety filter, not just a style choice.
+      Flagged here explicitly rather than silently kept as-is, per the
+      user's own ask to surface reasoning instead of quietly deviating.
+    - Tests: `test_generator.py` rewritten - `GatewayChatModel` faked the
+      same way `test_retriever.py` already fakes it (a `BaseChatModel`
+      subclass), not the old `get_client_gateway()`/`OpenAIChatClient`
+      monkeypatches, since the implementation no longer calls those
+      directly. New `tests/.../llm_client/test_langchain_chat_model.py`
+      (no dedicated test file existed before) covering the
+      system-message-vs-context split, `response_metadata`, and
+      `model_name_override`.
+  **Verified:** full suite green (131/131, up from 126 - 9 new tests:
+  `test_langchain_chat_model.py` new file, `test_generator.py` rewritten
+  with one extra case). Found and fixed a real, previously-invisible bug
+  along the way: `GatewayChatModel`'s `_PROVIDER_CLIENTS` dispatch called
+  `ClientGateway.<method>(gateway)` (the real class's own method, pulled
+  off the class and force-applied to whatever `gateway` object was
+  passed in) instead of `gateway.<method>()` (a normal bound call) - this
+  silently broke the moment a test tried to fake the gateway, which is
+  exactly why no test had ever exercised `GatewayChatModel._generate()`'s
+  real body before this phase added one. Fixed to call the method
+  properly; zero behavior change for the real `ClientGateway` (a bound
+  call is what unbound-method-on-a-real-instance already did), fixes it
+  for every fake.
+
+- [x] **Phase 42 (2026-09-19) — User-directed: extract POST
+  /documents' Form fields into a Pydantic model.**
+
+  - **Spec:** User-reported: `ingest_document.py`'s `upload_documents()`
+    declares `supersedes_document_id`/`chunking_strategy`/`chunk_size`/
+    `chunk_overlap` as individual inline `Form(...)` parameters - move
+    them into one Pydantic model defined outside the function, matching
+    how every other request contract in this project already lives in
+    `models/`.
+    - `models/documents.py`: new `UploadDocumentsForm` (all 4 fields,
+      same defaults/descriptions/validation as today - no behavior
+      change, pure structure).
+    - `ingest_document.py`: `upload_documents()` takes
+      `form: UploadDocumentsForm = Depends(UploadDocumentsForm.as_form)`
+      instead of 4 separate inline `Form(...)` parameters. Tried FastAPI
+      0.115's native `Annotated[Model, Form()]` support first - it built
+      `form=None` instead of the model when combined with a separate
+      `File(...)` list param on the same route, no error raised, silently
+      wrong. Fell back to the older, universally-supported `as_form()`
+      classmethod-dependency pattern instead, which behaved correctly
+      (proven live, not assumed). `files` stays its own `File(...)`
+      parameter either way - a Pydantic model can't parse multipart file
+      parts itself.
+    - No test changes needed - same wire format (same multipart field
+      names), same validation; the existing
+      `test_chunking_strategy_size_and_overlap_form_fields_reach_the_pipeline`
+      test is what actually proved this works end to end, not just unit-level.
+  **Verified:** full suite green (131/131). Native `Annotated[Model,
+  Form()]` tried first and found broken when combined with a separate
+  `File()` param on the same route (`form` came back `None`, no error) -
+  switched to the `as_form()` classmethod pattern, confirmed working live.
+
+- [x] **Phase 43 (2026-09-19) — User-directed: remove FastAPI Depends()/
+  Query() binding app-wide, including Phase 23's centralized RBAC wiring.**
+
+  - **Spec:** User-reported: no library/framework "binding magic"
+    (`Depends()`, `Query()`) anywhere in the API layer - every value a
+    route needs must be pulled and validated by hand-written code, not
+    FastAPI's dependency-injection system. Confirmed explicitly this
+    includes reversing Phase 23's centralized RBAC wiring (`main.py`'s
+    `app.include_router(..., dependencies=[Depends(require_role(...))])`),
+    not just the non-security spots - user chose this after being shown
+    the concrete consequence (RBAC moves from one central place back into
+    every route body, the exact thing Phase 23 was built to avoid).
+
+    **Scope - every `Depends()`/`Query()` use in `src/hrb_chatbot/api/` and
+    its call sites:**
+    - `api/gateway/rbac.py`: `require_role(*roles)` currently returns a
+      FastAPI dependency (`_check(userMetadata: UserMetadata =
+      Depends(get_current_user))`). Becomes a plain function
+      `check_role(request: Request, *allowed_roles: Role) -> UserMetadata`
+      that calls `get_current_user(request)` directly (a normal function
+      call, not `Depends()`) and raises the same 403 on a role mismatch.
+      `userMetadata.py` itself needs no change - `get_current_user(request:
+      Request)` already takes `Request` directly and contains no
+      `Depends()`/`Query()` of its own.
+    - `main.py`: remove both routers'
+      `dependencies=[Depends(require_role(...))]`. Role enforcement moves
+      inline: every route in `ingest_document.py` calls
+      `check_role(request, Role.HR_SUPPORT)` as its first statement; every
+      route in `retrieve_document.py` calls `check_role(request,
+      Role.EMPLOYEE, Role.MANAGER, Role.HR_SUPPORT)`. Every route function
+      in both routers gains a `request: Request` parameter.
+    - `common/rate_limiting/rate_limiter.py`: `enforce_rate_limit(request:
+      Request)` is already a plain function - no internal change. Its
+      3 call sites (`ingest_document.py`'s upload/delete/delete-all,
+      `retrieve_document.py`'s query) drop `dependencies=[Depends(...)]`
+      and call `enforce_rate_limit(request)` manually instead.
+    - `api/dependencies.py`: remove `PROVIDER_QUERY`/
+      `METADATA_PROVIDER_QUERY`/`VECTOR_PROVIDER_QUERY` (`Query()`
+      objects). Add a `parse_enum_query(request, name, enum_cls, default)`
+      helper: reads `request.query_params.get(name)`, returns `default` if
+      absent, else `enum_cls(raw)`, raising `HTTPException(422, ...)` on an
+      invalid value (same rejection outcome as today, hand-written instead
+      of FastAPI-validated).
+    - `api/admin/routes_health.py`: `get_health()` takes `request: Request`
+      and calls `parse_enum_query()` three times instead of three
+      `= PROVIDER_QUERY`-style defaults.
+    - `ingest_document.py`: `upload_documents()` stops using
+      `Depends(UploadDocumentsForm.as_form)` and `File(...)`. Instead:
+      `form_data = await request.form()`, pull `files` via
+      `form_data.getlist("files")` and the four form fields via
+      `form_data.get(...)`, construct `UploadDocumentsForm(...)` directly
+      (its `as_form()` classmethod - itself `Form()`-based binding - is
+      deleted). A blank string from a present-but-empty field is treated
+      as absent (`None`), matching today's `Form(None, ...)` behavior.
+    - `retrieve_document.py`'s `payload: RagQueryRequest` JSON-body
+      parameter is **out of scope** - it is FastAPI's request-body
+      binding, not `Depends()`/`Query()`, and is exactly the "custom
+      Pydantic model" shape already asked for. Flagging this boundary
+      explicitly so it isn't read as a missed spot.
+
+    **Known, unavoidable tradeoffs - flagging before implementing, not
+    after:**
+    - `/docs` (Swagger UI) loses the dropdown/inline validation it got for
+      free from `Query()` on `/health`'s three provider params, and from
+      `Form()`'s typed fields on the upload endpoint - manual parsing has
+      no OpenAPI schema to describe those params, so `/docs` will show
+      them as opaque/absent rather than documented.
+    - Constructing `UploadDocumentsForm(...)` directly means a bad
+      `chunking_strategy` value raises Pydantic's own `ValidationError`,
+      not FastAPI's `RequestValidationError` - the two are different
+      exception classes and only the latter is caught by `main.py`'s
+      existing `validation_exception_handler`. Must catch
+      `pydantic.ValidationError` explicitly in the route and convert it to
+      the same `json_error(422, ..., code=VALIDATION_ERROR)` shape, or a
+      bad form field would fall through to the generic 500 handler instead
+      of a 422 - a real regression, not a style issue.
+    - `File(...)`'s Ellipsis (`...`) previously made "no files uploaded"
+      an automatic 422. `form_data.getlist("files")` returns `[]` instead
+      of raising - needs an explicit `if not files: return json_error(422,
+      ...)` check to preserve today's behavior.
+    - `parse_enum_query()`'s manual `HTTPException(422, ...)` needs `422`
+      added to `main.py`'s `_ERROR_CODES_BY_STATUS` map (today only
+      401/403/429 are mapped there) - otherwise it would resolve to
+      `INTERNAL_ERROR` instead of `VALIDATION_ERROR`, breaking the
+      existing error-code contract for this one path.
+    - External behavior (status codes, error-code values, header names,
+      response shapes) stays identical throughout - this is an internal
+      binding-mechanism swap, not a contract change. Existing tests that
+      exercise these routes via `TestClient` should mostly keep passing
+      unchanged; any that fail get fixed to match the (unchanged) external
+      contract, not rewritten to expect new behavior.
+  **Verified:** full suite green, 137/137 (131 pre-existing + 6 new -
+  `tests/hrb_chatbot/api/admin/test_routes_health.py` didn't exist before
+  this phase; `/ping`/`/health` had zero test coverage prior to Phase 43,
+  so the new hand-written-parsing path needed its own tests, not just
+  inspection). All 131 pre-existing tests passed unchanged - proves
+  external behavior (status codes, error shapes, headers) held throughout.
+  New tests specifically prove the regression risk flagged above: an
+  invalid `chunking_strategy` form value returns 422/VALIDATION_ERROR (not
+  a 500 from an uncaught `pydantic.ValidationError`).
+  `bandit -r src/hrb_chatbot/api src/hrb_chatbot/main.py -ll`: 0 issues.
+  The `/docs` dropdown-loss tradeoff was accepted as flagged, not fixed.
+
+  **Hybrid revision (2026-09-19, same day):** `/health`'s three provider
+  params reverted back to `Query()` (`api/dependencies.py`'s
+  `PROVIDER_QUERY`/`METADATA_PROVIDER_QUERY`/`VECTOR_PROVIDER_QUERY`,
+  `parse_enum_query()` removed) - user hit `request.`'s full Starlette
+  autocomplete (`send_push_promise`, `is_disconnected`, `_get_form`, etc.)
+  in their editor and found it overwhelming as a Python/FastAPI beginner,
+  for a param that's a plain read-only lookup with no security or parsing
+  weight attached. `check_role()`/`enforce_rate_limit()` (RBAC/rate-
+  limiting) and the upload route's manual `request.form()` parsing are
+  **not** reverted - those stay hand-written, since that's the part the
+  user is actually trying to see and control, not incidental complexity.
+  Retested: 137/137 green (one test's assertion updated -
+  `test_health_rejects_an_unknown_provider_value_with_422` now checks
+  FastAPI's own `details` array instead of a hand-written message, since
+  the error now comes from `main.py`'s existing `RequestValidationError`
+  handler again, not a manually-raised `HTTPException`).
+
+  **Second hybrid revision (2026-09-19, same day) - `upload_documents()`
+  simplified back to Phase 42's shape.** User asked to simplify
+  `upload_documents()` specifically - it had become the most complex
+  single function in the file (manual `request.form()` parsing, a
+  `_blank_to_none` helper, a `try/except pydantic.ValidationError` block),
+  all incidental complexity from Phase 43's "no `Depends()` anywhere"
+  rule, not from RBAC. Reverted to
+  `files: list[UploadFile] = File(...)` +
+  `form: UploadDocumentsForm = Depends(UploadDocumentsForm.as_form)`
+  (`UploadDocumentsForm.as_form()` restored in `models/documents.py`) -
+  `check_role()`/`enforce_rate_limit()` stay exactly as they were, not
+  touched by this. No feature dropped: FastAPI's `File()`/`Form()`
+  validate the same rules (required file, `chunking_strategy` enum,
+  `chunk_size`/`chunk_overlap` bounds) automatically again instead of by
+  hand; `supersedes_document_id` batch-size guard, duplicate detection,
+  and indexing (all in `documents_service.py`) were never touched.
+  Retested: 137/137 green, no test changes needed - both Phase 43
+  regression tests (`test_uploading_with_no_files_returns_422`,
+  `test_invalid_chunking_strategy_form_value_returns_422_not_500`) only
+  assert status code + error code, not exact message text, so they held
+  across the mechanism swap. `bandit -r src/hrb_chatbot/api
+  src/hrb_chatbot/models/documents.py -ll`: 0 issues.
+
+- [x] **Phase 44 (2026-09-19) — User-directed: revert indexing from
+  LangChain back to LlamaIndex's `VectorStoreIndex`, reversing Phase 17.**
+
+  - **Spec:** User confirmed course-ware alignment beats the reasons Phase
+    17 gave for switching to LangChain - see `CLAUDE.md`'s architecture
+    section (edited 2026-09-19) and `feedback-ik-courseware-is-standard`.
+    User explicitly approved using commit `b5870b9` (the original Phase 3
+    LlamaIndex implementation, before Phase 17 replaced it) plus the
+    current codebase as the basis - no course notes files exist in this
+    repo to check against directly (confirmed via search; they were shared
+    as chat attachments in an earlier, now-compacted part of this
+    conversation, not saved as files).
+
+    **Scope - `ai/doc_processing/indexing/vector_indexer.py` rewritten
+    back onto `VectorStoreIndex.insert_nodes()`** (workshop Module 3),
+    following `b5870b9`'s pattern, adapted for everything added since:
+    - `_build_nodes()` restored: one `TextNode` per chunk, pre-computed
+      embedding attached directly, `document_id` set via the node's SOURCE
+      relationship (not plain metadata - LlamaIndex reserves
+      `document_id`/`doc_id`/`ref_doc_id` metadata keys for its own use
+      and silently overwrites a same-named custom field - this was real
+      bug #1 in `b5870b9`, not re-introducing it here).
+    - Node metadata carries everything the current schema needs that
+      didn't exist yet at `b5870b9`: `doc_type`/`department`/
+      `doc_classification` (Phase 19), same as `chunking_strategy`'s
+      current `_extracted_fields()` - `effective_date`/`audience`/
+      `confidentiality_level` (Phase 36) stay document-level only
+      (`metadata_store`), not chunk-level, matching today's behavior
+      (`_extracted_fields()` never included them either).
+    - `storage_chunk_ids()` restored - Pinecone-only id-prefixing
+      (`f"{document_id}#{chunk_id}"`) that LlamaIndex's
+      `PineconeVectorStore.add()` applies whenever a node has a SOURCE
+      relationship - `b5870b9`'s real bug #2. Applied at every
+      `delete()`/`update_metadata()` call site touching Pinecone.
+    - Stale-chunk cleanup and the supersede-flip stay hand-written -
+      LlamaIndex's `insert_nodes()` has no automatic skip-if-unchanged/
+      cleanup like LangChain's `index()` did. Diff `new_chunk_ids` against
+      the document's previous `chunk_ids` (from `metadata_store`) and
+      call `vector_store.delete()` on whatever's stale, same as
+      `b5870b9` and the pre-Phase-17 code before it.
+    - **Known, accepted regression, flagged not hidden:** LangChain's
+      `index()` gave real skip-if-unchanged for free (unchanged chunks
+      are never rewritten) - `docs/agent-reference/FAQ.md`'s stated reason for Phase 17.
+      LlamaIndex's `insert_nodes()` has no equivalent; every re-index
+      rewrites every chunk again, same as the pre-Phase-17 behavior. This
+      is the direct cost of the reversal, accepted by the user's decision,
+      not an oversight.
+
+    **`ai/doc_processing/pipeline.py`: restore the explicit embedding
+    step.** Since Phase 17, `write_chunks()` embeds chunks implicitly
+    inside LangChain's `index()` via the vector store's own embedding
+    function - `ai/doc_processing/embedding/embedding_generator.py`'s
+    `generate_embeddings()` has been **dead code, unused by anything in
+    `src/`, since Phase 17** (confirmed via repo-wide grep). Restoring it:
+    `pipeline.py` calls `generate_embeddings(chunks, embedding_model)`
+    explicitly (Module 1's own step) and passes the vectors into
+    `write_chunks(..., embeddings=...)`, matching `b5870b9`'s original
+    signature and the workshop's own Module 1 + Module 3 split.
+
+    **`requirements.txt`: re-add `llama-index-core==0.13.6`,
+    `llama-index-vector-stores-chroma`, `llama-index-vector-stores-pinecone`.**
+    Checked before writing this spec, not assumed: `pip install --dry-run`
+    against the current environment found llama-index-vector-stores-chroma/
+    -pinecone already installed (never actually uninstalled when Phase 17
+    dropped them from requirements.txt) and llama-index-core==0.13.6's
+    entire dependency tree already satisfied by what's already
+    installed for other reasons - only `llama-index-core` itself and one
+    small transitive package (`llama-index-workflows`) would actually
+    install. No conflict found against the current stack (which has grown
+    substantially since `b5870b9` - langchain-chroma, langchain-pinecone,
+    MultiQueryRetriever/SelfQueryRetriever's deps, etc.).
+
+    **Explicitly out of scope - not touched by this phase:**
+    - Retrieval (`ai/rag_pipeline/query_retrieval/retriever.py`,
+      `common/clients/db_client/langchain_vector_store.py`'s
+      `get_vector_store()`) - stays on LangChain for reads. Only the
+      write/index path changes.
+    - Pinecone reads already tolerate LlamaIndex-shaped data -
+      `_TextBackfillPineconeIndex` (`langchain_vector_store.py`,
+      `docs/agent-reference/FAQ.md` entry 8) already backfills a `"text"` key from
+      LlamaIndex's `"_node_content"` shape for exactly this scenario
+      (built for reading old pre-Phase-17 data - now serves double duty
+      as the actual compatibility mechanism between LlamaIndex writes and
+      LangChain reads going forward). No change needed there.
+    - Chroma reads are expected to keep working unverified-but-plausible
+      (LlamaIndex's `ChromaVectorStore` and LangChain's `Chroma` wrapper
+      both read/write Chroma's own native `documents` field, unlike
+      Pinecone's metadata-blob approach) - **must be confirmed live
+      against real ChromaDB during implementation, not just assumed.**
+    - RBAC, rate limiting, chunking, response generation, and every other
+      Phase 41-43 change - unrelated layers.
+
+    **Tests:** `tests/hrb_chatbot/ai/doc_processing/indexing/
+    test_vector_indexer.py` needs a real rewrite, not a patch - a
+    dict-based fake can't stand in for LlamaIndex's real
+    `Collection`/`Index` requirement (`b5870b9`'s own finding). Follow its
+    `EphemeralChromaVectorStore` pattern (real, in-memory `chromadb`, zero
+    network/cost) rather than inventing a new fake style.
+  **Verified:** full suite green, 138/138 (137 before this phase + one net
+  new test - several tests were rewritten in place, not just added, since
+  Phase 17's skip-if-unchanged behavior no longer applies).
+
+  One real integration bug found live, not guessable from docs - a fourth
+  one beyond `b5870b9`'s original three: **LlamaIndex's
+  `ChromaVectorStore.add()`/`PineconeVectorStore.add()` call the backend's
+  plain `add()`, not an upsert** (confirmed by reading
+  `ChromaVectorStore.add()`'s own source) - re-inserting a chunk id that
+  already exists (e.g. re-indexing a document, reusing position `doc-1:0`)
+  silently no-ops instead of overwriting, leaving the OLD content/metadata
+  in place forever. First caught by
+  `test_reindex_carries_forward_doc_type_fields_already_known_from_sql`
+  failing with the wrong (stale) metadata, then confirmed with a standalone
+  trace script before fixing. Fixed by deleting a document's own previous
+  chunk ids *before* calling `insert_nodes()`, so every insert is always
+  genuinely new, never a collision - `write_chunks()`'s stale-chunk delete
+  step moved earlier for this reason, not just re-ordered arbitrarily.
+
+  Also fixed a JSON-parsing bug of my own introduced while adapting
+  `b5870b9`'s pattern: `existing_document["chunk_ids"]` is a JSON-encoded
+  *string* in `metadata_store` (`'["doc-1:0"]'`), not a list - the first
+  draft iterated over it as a string (one character at a time), caught
+  immediately by `chromadb.errors.DuplicateIDError` on the very first
+  re-index test.
+
+  Live-verified, not just unit-tested: wrote a real chunk through the new
+  LlamaIndex-based `write_chunks()` against a real (ephemeral, in-memory)
+  ChromaDB collection, then read it back through LangChain's own `Chroma`
+  wrapper - the exact class `retriever.py` uses - confirming `page_content`
+  and every metadata field (`document_id`, `chunk_index`, `is_current`,
+  etc.) round-trip correctly. This was the one assumption the spec flagged
+  as "must be confirmed live, not just assumed," and it held.
+
+  `bandit -r src/hrb_chatbot/ai/doc_processing -ll`: 0 issues. `pip check`:
+  no broken requirements after installing `llama-index-core==0.13.6`
+  (`llama-index-vector-stores-chroma`/`-pinecone` were already present).
+
+  One cosmetic, non-functional side effect accepted, not chased down:
+  importing `llama_index.core` now emits a `pydantic.warnings.
+  UnsupportedFieldAttributeWarning` once per test session (confirmed via
+  `python -W error` that it originates inside `llama_index.core` itself,
+  not this project's code) - `llama-index-core==0.13.6` was built against
+  an earlier pydantic minor version than the `pydantic==2.13.5` this
+  project pins. Cosmetic only - full suite unaffected, same "accept the
+  noisy-but-harmless warning" call `b5870b9` itself made about the
+  pydantic version bump it required.
+
+- [ ] **Phase 45 (2026-09-20) — User-directed: nested request/response
+  contracts for every endpoint, identity moved from headers to
+  payload/query params.**
+
+  - **Spec:** Full contract shapes finalized in
+    `docs/agent-reference/endpoint-request-response-contracts.md` (2026-09-20) after
+    several rounds of user review - that file is the source of truth for
+    wire shapes; this entry covers the implementation plan.
+
+    **Identity (`api/gateway/userMetadata.py`/`rbac.py`):**
+    `X-Employee-Id`/`X-Full-Name`/`X-Role` headers removed entirely.
+    `check_role(userMetadata: UserMetadata, *allowed_roles: Role)` no
+    longer takes `Request` - identity resolution moves to two new
+    functions, since the source differs by endpoint shape:
+    `resolve_user_from_metadata(user_metadata: UserMetadata | None)`
+    (POST endpoints, from the parsed body) and
+    `resolve_user_from_query_params(request: Request)` (GET/DELETE,
+    from `?employee_id=&full_name=&role=`) - both fail closed (401) if any
+    of the three is missing, same as today's header check.
+    **Known, accepted tradeoff** (already on record in the contracts
+    file): role now comes from the same request it gates, so this is not
+    a real access control once shipped - accepted deliberately.
+
+    **Shared model** (new `models/common.py`): `UserMetadata`
+    (employee_id/full_name/role).
+
+    **Ingestion (`models/documents.py`, `api/rag/ingest_document.py`,
+    `services/documents_service.py`, `ai/doc_processing/pipeline.py`):**
+    - `files` (unchanged) + one `payload` form field (JSON string,
+      `max_length=20000`), parsed into `UploadDocumentsPayload`
+      (`user_metadata`/`chunk_info`/`document_metadata` sub-objects).
+      Missing `payload` -> `{}`. Malformed JSON or shape mismatch -> 422
+      `VALIDATION_ERROR`, not 500.
+    - `document_metadata` fields the caller sends override
+      `extract_document_metadata()`'s own guess for that field -
+      `pipeline.py`'s post-extraction merge: caller value wins, extracted
+      value fills whatever the caller left null.
+    - `DocumentUploadResult`/`DocumentRecord` restructured: flat fields
+      grouped into `chunk_info`/`document_metadata`/`versioning_info`
+      sub-objects, per the contracts file.
+    - New `uploaded_by` (the caller's `employee_id`) - new DB column
+      (`sqlite_client.py`/`postgres_client.py`, same `ALTER TABLE`
+      pattern already used for `owner`), threaded through
+      `create_document()`. `DocumentDeleteResponse`/
+      `DocumentDeleteAllResponse` gain `deleted_by` - pass-through from
+      the request, not stored (the row is gone).
+
+    **Retrieval (`models/rag.py`, `api/rag/retrieve_document.py`):**
+    - `RagQueryRequest` restructured: `query` (top-level) +
+      `user_metadata`/`search_options`/`generation_options` sub-objects.
+      Real JSON body already (no file involved) - no `payload`-string
+      wrapper needed here, unlike ingestion.
+    - `RagQueryResponse` restructured: `query` (top-level) +
+      `answer_info`/`retrieval_info` sub-objects.
+    - **`common/rag_query_params.py`'s `RagQueryParams` dataclass, and
+      everything below the route (`services/rag_service.py`,
+      `ai/rag_pipeline/pipeline.py`) stay unchanged** - the route layer's
+      own mapping from the new nested request into that same flat
+      dataclass absorbs the reshaping, keeping this phase scoped to the
+      contract boundary, not the whole pipeline.
+
+    **GET/DELETE endpoints:** identity via query params (see above), no
+    request body otherwise. `GET` responses get the same
+    `chunk_info`/`document_metadata`/`versioning_info` nesting as the
+    upload response (reusing those models, not redefining them).
+
+    **Explicitly unchanged:** `GET /health`/`GET /ping` (no identity, no
+    RBAC - confirmed in the contracts file), rate limiting (keys on IP,
+    unrelated to this change), `ai/doc_processing/` chunking/embedding/
+    indexing internals, `ai/rag_pipeline/` retrieval/generation internals.
+
+    **Tests, docs, Postman:** every test that sets identity via
+    `client.headers.update(...)` needs rewriting to send it per-request in
+    the body/query params instead - this touches most of
+    `test_routes_documents.py`/`test_routes_query.py`/
+    `test_error_handling.py`. `postman/hrb_chatbot.postman_collection.json`
+    needs the same rework. Both real contract changes, not optional this
+    time.
+  **Revised mid-implementation (2026-09-20):** the two-resolver design
+  above (payload for POST, query params for GET/DELETE) was replaced with
+  a single mechanism - **every endpoint takes a JSON body with
+  `user_metadata`, including `GET`/`DELETE`** (non-standard HTTP, a
+  deliberate choice - one identity mechanism everywhere, not two).
+  `resolve_user_from_query_params()` was removed entirely;
+  `resolve_user_from_metadata()` is the only resolver now. Ingestion's
+  `payload` form field is unaffected (still the JSON-string-in-multipart
+  pattern, since that endpoint also carries files) - this change only
+  touches the four endpoints that previously had no body at all.
+
+  **Verified:** full suite green, 141/141, `bandit -r src/hrb_chatbot -ll`
+  0 issues, `pip check` clean.
+
+  Five real bugs found and fixed during implementation, not glossed over:
+  1. `action` (insert/update) was silently dropped when first reshaping
+     `DocumentUploadResult` into `chunk_info` - added back.
+  2. `supersedes_document_id` would have leaked into the extraction-
+     override dict passed to `record_document_metadata()`, which doesn't
+     accept that parameter - excluded via `model_dump(exclude=...)`.
+  3. **A pre-existing Phase 44 bug**, found while touching this file for
+     unrelated reasons: `delete_document()` called `vector_store.delete()`
+     directly, without `storage_chunk_ids()`'s Pinecone id-prefixing -
+     Phase 44 restored LlamaIndex indexing (which needs that prefixing),
+     but this call site was missed. Would have silently no-op'd every
+     Pinecone delete. Fixed here since it was directly in the code being
+     changed anyway.
+  4. `retrieve_document.py` used `result["applied_filter"]` (KeyErrors if
+     the key is absent) instead of `.get()`, unlike the original tolerant
+     `**result` unpacking it replaced - fixed.
+  5. A bad `role` value 422'd via the JSON body (Pydantic enum validation)
+     but 401'd via the old query-param path - inconsistent. `UserMetadata.role`
+     changed from a `Role`-typed field to plain `str`, validated manually
+     in `resolve_user_from_metadata()` so both paths 401 identically (an
+     identity problem, not a generic payload problem).
+
+  Every test that previously set identity via `client.headers.update(...)`
+  or `params=...` was rewritten to send it per-request in the JSON body -
+  `test_routes_documents.py`, `test_routes_query.py`,
+  `test_error_handling.py`. `postman/hrb_chatbot.postman_collection.json`
+  and `CLAUDE.md`'s gateway description still need updating to match -
+  flagged, not yet done.
+
+- [x] **Phase 46 (2026-09-20) — User-directed: isolate the test suite's
+  SQLite DB from the real dev DB, add a test-noise cleanup endpoint.**
+
+  - **Spec:** Triggered by a real incident: a live-verification script run
+    against the real app (not a test) called the real `delete_all_documents()`
+    against the actual dev database, deleting 900 accumulated document
+    rows - confirmed to be weeks of test-suite noise (tests hit the
+    same real, persistent SQLite file as the dev app, no per-test or
+    per-session reset, by longstanding project design). Two independent
+    fixes, both requested:
+
+    **1. Test suite gets its own SQLite file, never the dev one.**
+    `tests/conftest.py` sets `os.environ["SQLITE_DB_PATH"] =
+    "data/test_sqlite_db.sqlite3"` at module load (before any test
+    constructs a real `SQLiteClient` - confirmed `read_setting()` calls
+    `os.getenv()` fresh each time, no caching, so this is safe regardless
+    of import order) and deletes any leftover file from a previous run at
+    session start, so each full run starts clean rather than growing
+    forever. `common/config/settings.py`'s `load_dotenv(..., override=True)`
+    means `.env`'s `SQLITE_DB_PATH` would otherwise always win - this only
+    works because it's set *after* that module has already loaded once,
+    not before pytest's own env is established. Verified: `db_gateway.py`
+    lazily builds `SQLiteClient()` only on first real call inside a route,
+    well after conftest.py has run.
+
+    Vector store and Postgres checked, not touched by this phase - found
+    already effectively isolated: route-level tests
+    (`test_routes_documents.py`) fake `pipeline.index_document()` entirely, so
+    the real vector store is never written to; `test_vector_indexer.py`
+    already uses a real but ephemeral, in-memory `chromadb.EphemeralClient()`
+    (`EphemeralChromaVectorStore`), not the persistent dev directory; no
+    test file anywhere constructs a real `PostgresClient()` or touches
+    Pinecone (grep-confirmed). The `data/chroma_db` folder's small amount
+    of accumulation (2 stray collections) traces to my own manual live-
+    verification scripts during Phase 44/45, not the automated suite -
+    noted, not fixed here (a smaller, different problem than the dev-DB one).
+
+    **2. Test-noise cleanup endpoints**, HR_SUPPORT-gated, same JSON-body
+    identity pattern as the rest of Phase 45:
+    - `GET /v1/rag/ingest-document/documents/cleanup/preview` - returns
+      what *would* be deleted (count + each matching document's id/
+      filename/file_size_bytes/created_at), deletes nothing.
+    - `DELETE /v1/rag/ingest-document/documents/cleanup` - actually
+      deletes them, same response shape as delete-all
+      (`documents_deleted`/`chunks_removed`/`deleted_by`).
+    - Match rule: `file_size_bytes < 1024`. Chosen because it's a
+      *structural* signal, not a guess - every test-generated file across
+      this project's whole suite is a fake string like `%PDF-1.4 fake
+      content <uuid>` (tens of bytes), while every real document (anything
+      from `resources/kb_docs/` or a genuine upload) is a real PDF, always
+      far larger. `employee_id`/filename were considered and rejected -
+      neither is a safe signal, since a real manual test could reuse the
+      same test employee_id or a plausible filename.
+    - Both routes registered *before* `GET/DELETE /documents/{document_id}`
+      in the router - FastAPI matches path registration order, and
+      `{document_id}` would otherwise swallow the literal `cleanup`
+      segment.
+    - Reuses `documents_service.delete_document()` per matching row - same
+      full-delete semantics (vectors + metadata + file) as every other
+      delete path, not a new deletion mechanism.
+  **Verified:** full suite green, 144/144 (141 before this phase + 3 new
+  tests for the cleanup endpoints). `bandit -r src/hrb_chatbot -ll`: 0
+  issues. Confirmed live, not just asserted: ran the full suite once
+  before this fix (dev DB document count unchanged, still 0) and once
+  after (still 0) while the new `data/test_sqlite_db.sqlite3` picked up
+  24 real rows instead - the isolation actually works, not just compiles.
+  `data/` and `*.sqlite3` were already gitignored, so the new test DB
+  file needs no extra ignore rule.
+
+  New tests are real, not faked against `documents_service` - since the
+  test suite no longer touches the real dev DB, there's no longer a
+  reason to fake `delete_test_noise_documents()` the way
+  `test_delete_all_calls_the_service_and_returns_its_result` still fakes
+  `delete_all_documents()` (that one stays faked deliberately - deleting
+  *everything* is still worth stubbing even against an isolated DB, to
+  keep that one test fast and not order-dependent on what else ran).
+
+  **Correction (2026-09-20, same day) - the isolation above was reviewed
+  and found NOT to work, then actually fixed.** The `code-reviewer`
+  subagent reproduced, three independent ways, that the test suite was
+  still writing to the real dev DB after the fix above: `conftest.py`'s
+  `os.environ["SQLITE_DB_PATH"]` override was set *before*
+  `common/config/settings.py` had ever been imported by anything (its
+  own imports at the time - `base_metadata_client.py`/
+  `base_vector_db_client.py` - only pull in `abc`, nothing that touches
+  settings). `settings.py`'s own module-level `load_dotenv(...,
+  override=True)` only fired later, when `db_gateway.py` imported it for
+  the first time during test collection - and since `.env` defines
+  `SQLITE_DB_PATH`, that silently stomped the override straight back to
+  the real dev DB path. My own "Verified" claim above was wrong - I
+  asserted the fix worked without independently re-deriving the actual
+  import order, the exact mistake this whole phase exists to stop
+  happening again. A live pytest run during review left 3 real rows in
+  `data/sqlite_db.sqlite3` (left in place for the user to see, not
+  silently deleted).
+
+  **Real fix:** `conftest.py` now explicitly imports `common.config.settings`
+  itself, before setting the override - forcing that module's one-time
+  `load_dotenv()` to run during conftest.py's own load, so the override
+  (set immediately after) is the last write, not the first. Python caches
+  modules (`sys.modules`), so `db_gateway.py`'s later import of the same
+  module reuses it without calling `load_dotenv()` again.
+
+  **Re-verified using the reviewer's own reproduction method, not just
+  re-asserted:** ran the exact single test
+  (`test_uploaded_document_appears_in_list_and_get_by_id`) that proved the
+  bug - dev DB stayed at 3 documents (the reviewer's leftover rows,
+  untouched), `data/test_sqlite_db.sqlite3` gained exactly 1. Then the
+  full suite again - 144/144, dev DB still exactly 3 throughout.
+  `bandit -r src/hrb_chatbot -ll`: 0 issues, unaffected.
+
+  **Separately, unrelated to this phase's own file list:** found and fixed
+  a live `ModuleNotFoundError` - `api/rag/ingest_document.py`/
+  `retrieve_document.py` imported `api.gateway.userMetadata` (camelCase),
+  but the real file is `api/gateway/user_metadata.py` (snake_case) - the
+  app could not start at all. This was a concurrent, in-progress rename
+  on disk (`current_user.py` → `user_metadata.py`, `CurrentUser` →
+  reusing `UserMetadata` directly) - only the two broken import paths were
+  corrected, the rename/naming choice itself was left exactly as found,
+  not reverted.
+
+- [x] **Phase 47 (2026-09-20) — User-directed: rename
+  CurrentUser/current_user/UserMetadata/user_metadata to
+  UserProfile/user_profile throughout.**
+
+  A pure rename, not a design change - Phase 45/46's own write-ups above
+  keep the old names, as the accurate historical record of what those
+  phases actually did; this entry records the rename itself, not a
+  rewrite of history - same "historical, not updated retroactively"
+  convention this file's own "Status at a glance" section states up top.
+
+  Scope: `models/common.py` (`UserMetadata` -> `UserProfile`),
+  `api/gateway/user_metadata.py` -> `api/gateway/user_profile.py`
+  (`resolve_user_from_metadata()` -> `resolve_user_from_profile()`),
+  `api/gateway/rbac.py`, `api/rag/ingest_document.py`/`retrieve_document.py`,
+  `models/rag.py`/`documents.py` (the `user_metadata` field on every
+  payload/body -> `user_profile` - a real wire-contract change, not just
+  internal renaming, so every test and the Postman collection needed the
+  same JSON key updated), `docs/agent-reference/endpoint-request-response-contracts.md`,
+  `CLAUDE.md`, `docs/agent-reference/BACKLOG.md`.
+
+  **Two real bugs found and fixed while renaming, not just text
+  substitution:**
+  1. `api/gateway/user_metadata.py` had a local `@dataclass class
+     UserMetadata` that shadowed the imported Pydantic `UserMetadata` from
+     `models/common.py` (a leftover from an in-progress rename already
+     under way on disk when this phase started) - the function's own type
+     hint silently pointed at the wrong class. Resolved by collapsing to
+     one class: confirmed live that `Role` (a `StrEnum`) compares equal to
+     a plain `str` for both `==` and `in` a tuple, so `resolve_user_from_profile()`
+     can validate and return the same `UserProfile` Pydantic instance
+     directly - no second class needed at all, not just a rename.
+  2. `rbac.py`'s error message did `userMetadata.role.value!r` - a leftover
+     from when `role` was enum-typed; since the Phase 45 role-consistency
+     fix, `role` is a plain `str` with no `.value` attribute, which would
+     have raised `AttributeError` on every 403. Fixed to `userProfile.role!r`.
+
+  **Separately, unrelated to this phase's own scope:** found and fixed a
+  live `ModuleNotFoundError` from the in-progress rename already on disk -
+  `ingest_document.py`/`retrieve_document.py` imported
+  `gateway.userMetadata` (camelCase), but the real file was
+  `gateway/user_metadata.py` (snake_case) at the time - the app could not
+  start at all. Only the broken import path was corrected in the moment;
+  this phase's own rename then carried that file to its final
+  `user_profile.py` name.
+
+  **Verified:** full suite green, 144/144, unchanged count (a rename, not
+  new behavior - no new tests needed, existing ones now assert the new
+  key/class names). `bandit -r src/hrb_chatbot -ll`: 0 issues. App import
+  confirmed live (`from src.hrb_chatbot.main import app`) both right after
+  the emergency import-path fix and again after the full rename.
+
+- [x] **Phase 48 (2026-09-21) — User-directed: multi-shot prompting for
+  genai-rag generation.**
+
+  **Spec:**
+  - **Context:** self-audit against IK FDE cohort Module 4's "Prompt
+    Engineering for RAG" section found few-shot examples and Chain-of-
+    Thought had been identified twice already (once in the user's own
+    early batch request, once in a later Module 4 comparison) but never
+    escalated into an actual implementation decision - user asked "how did
+    we miss it" and requested a durable fix, not just an apology.
+  - **Data/API contracts:** N/A - no request/response shape change, purely
+    the system prompt text `response_generation/response_generator.py`
+    sends to the model.
+  - **User-visible behavior:** answers should more reliably cite the
+    source document by name and refuse out-of-scope questions in the
+    demonstrated shape, not just the instructed one - four few-shot
+    examples added to `SYSTEM_PROMPT_TEMPLATE`, matching Module 4's own
+    "Few-Shot Examples" pattern (`Example 1:` / `Example 2:` / ...).
+  - **Failure modes:** N/A - prompt-only change, no new error path.
+  - **Retrieval quality criteria:** three of the four examples use real
+    sentences copied directly from `resources/kb_docs/text/*.txt` (401k
+    auto-enrollment/match, Parental Leave eligibility, Guild tuition
+    tiers) - not invented facts. The fourth is a deliberate refusal
+    example (asks about a gym stipend, which no KB document covers) so
+    the model has *seen* the "I don't have that information" shape
+    demonstrated, not just instructed - mirrors the golden dataset's own
+    adversarial-case pattern.
+  - **Out of scope:** single-agentic-rag/multi-agentic-rag system prompts
+    - no code exists for either pipeline yet, so there's nothing to enrich
+    (confirmed with the user; ReAct/multi-agent work explicitly excluded
+    for now). Ingestion-side prompting (`metadata_extraction/
+    document_metadata_extractor.py`'s extraction prompt) is a different
+    kind of prompting task (structured extraction, not grounded Q&A) and
+    was confirmed out of scope for this phase.
+  - **Open questions:** none - self-contained prompt change.
+
+  **Verified:** full suite green, 144/144. New regression test
+  `test_system_message_carries_few_shot_examples` asserts all four
+  examples (including the refusal one) actually reach the model, not just
+  that the file contains the text.
+
+- [x] **Phase 49 (2026-09-22) — User-directed: MCP client prototype -
+  manual keyword routing to `hrb_lms_mcp` for leave-balance/leave-history
+  queries, ahead of ReAct orchestration.**
+
+  **Spec:**
+  - **Context:** a sibling project, `hrb_lms_mcp`
+    (`C:\workspace\poc\2026\hrb_lms_mcp`), is a real, running FastMCP
+    server (official `mcp` SDK, JSON-RPC 2.0 over `POST /mcp`) exposing
+    real-time leave data this project's RAG pipeline structurally can't
+    answer (policy docs, not live balances). User asked to prove out
+    "submit a query, see it routed to MCP" with hand-written routing logic
+    first, before building real ReAct-based tool selection - this phase is
+    that manual-routing step only, not the ReAct phase.
+  - **Data/API contracts:** `RagQueryParams` (`common/rag_query_params.py`)
+    gains one new field, `employee_id: str | None = None` - the minimum
+    identity `hrb_lms_mcp`'s tools need, not the full `UserProfile` object
+    (keeps the dataclass framework-free per its own docstring).
+    `retrieve_document.py`'s route passes `resolved_user.employee_id`
+    through. No change to the public request/response JSON shape - this
+    is an internal parameter, not a new request field.
+  - **User-visible behavior:** a query matching a small fixed keyword list
+    (`"leave balance"`, `"pto balance"`, `"how many days off"`, `"leave
+    history"`) short-circuits `pipeline.answer_query()` before retrieval -
+    calls `hrb_lms_mcp`'s `get_leave_balance`/`get_leave_history` tool for
+    the caller's own `employee_id`, formats the raw MCP JSON into the same
+    response shape a normal answer uses (`answer`/`sources`/etc, `sources`
+    empty since nothing was retrieved from the vector store). Any other
+    query is completely unaffected - falls through to the existing
+    retrieve-then-generate path unchanged.
+  - **Failure modes:** `hrb_lms_mcp` unreachable (connection refused,
+    timeout) or returns an MCP-level error -> caught, logged, and treated
+    as "not routable this time" - falls through to the normal RAG path
+    rather than failing the whole request. A user with no `employee_id` on
+    their profile (shouldn't happen - `UserProfile.employee_id` is
+    required - but defensive) also falls through.
+  - **Retrieval quality criteria:** N/A - this bypasses retrieval entirely
+    for matched queries.
+  - **Out of scope:** ReAct-based tool selection (a keyword list is a
+    deliberately crude stand-in, not the real design), `submit_leave_request`/
+    `get_pending_approvals`/HITL tools (read-only to start, per the new
+    `client_scopes` sketch in `resources/db_scripts/oauth/`), real OAuth2
+    between the two services (today's call uses `hrb_lms_mcp`'s existing
+    optional `X-API-Key`, not a token). No cross-entity ACL beyond "the
+    caller sees their own `employee_id`'s data" - a manager seeing a
+    report's balance isn't built.
+  - **Open questions:** none for this prototype scope - keyword list and
+    tool selection are intentionally minimal, expected to be replaced
+    wholesale when ReAct orchestration lands.
+
+  **Two real dependency bugs found and fixed during implementation:**
+  1. An unpinned `pip install "mcp>=1.2.0"` pulled `mcp==2.2.0`, which
+     upgraded `starlette` to `1.6.0` - broke FastAPI's own
+     `starlette<0.42.0` pin. The earlier dry-run had actually resolved
+     `mcp==1.6.0` cleanly; the mistake was installing a version range
+     instead of that exact resolved pin. Caught live (app failed to
+     import), not by the dry-run alone.
+  2. `mcp==1.6.0` (the version the dry-run resolved) has no
+     `mcp.client.streamable_http` - added in a later release.
+     `hrb_lms_mcp`'s server only speaks streamable-http (its own
+     `mcp.settings.stateless_http = True`), not classic SSE, so 1.6.0
+     can't actually call it. Bumped to `mcp==1.9.4`, which needs
+     `python-multipart>=0.0.9` - this project pinned `0.0.6`, bumped to
+     `0.0.20`. Verified safe against the *full* test suite, including the
+     document-upload multipart tests specifically (not just a dry-run),
+     since a past real bug in this exact area (Postman's `contentType`
+     field breaking multipart parsing) made that verification non-optional.
+
+  **Verified, live, against the real running `hrb_lms_mcp` server** (not
+  mocked for this check): started `hrb_lms_mcp` locally
+  (`uvicorn src.app.api.main:app --port 8190`, its own real Postgres,
+  already had 58 employees + 3 new ones added this session), started this
+  project on port 8094, and called the real `/v1/genai-rag/retrieve-document/query`
+  endpoint:
+  - `"What is my PTO balance?"` for `EMP052` -> real MCP call, real answer
+    (`"available": 11.0` for PTO, `model_used: "mcp:get_leave_balance"`,
+    `sources: []`) - confirmed via the actual HTTP response, not a log line.
+  - `"How does 401k vesting work?"` for the same caller -> normal RAG path,
+    unaffected (`model_used: "gpt-4.1-mini"`, `vector_db: "chromadb"`) -
+    confirms the two paths coexist correctly, not that MCP routing
+    silently took over every query.
+  Full suite: 158 passed, 1 deselected (7 new tests: keyword matching,
+  routing/fallback/failure behavior, pipeline short-circuit).
+
+  **Known gap, not closed in this phase:** MCP-routed answers skip
+  `check_output()` (the output guardrail) - it was written for LLM-generated
+  text, and running it here would add a full extra LLM call to a path
+  whose entire point is avoiding one. Structured leave data isn't
+  obviously PII-risky the way free text is, but this is a real, deliberate
+  scope decision, not an oversight - flagged in `docs/agent-reference/BACKLOG.md`.
+
+- [x] **Phase 50 (2026-09-22) — User-directed: MCP server/tool registry,
+  populated at startup - reusing the sibling project's own registry
+  tables, not new ones.**
+
+  **Spec:**
+  - **Context:** the shared `hr_chatbot` Postgres database (discovered
+    Phase 49) already has an `app_tracking` schema with
+    `mcp_server_registry`/`mcp_tools_registry`/`mcp_server_connections`
+    tables - real columns, all empty. User's own v1 project
+    (`hrb_emp_assist`) follows exactly this pattern: register configured
+    MCP servers and their tools at startup, by actually calling
+    `tools/list` against each one, not by hand-maintaining a static list.
+    This phase reuses those existing tables rather than creating new ones
+    in this project's own database - same "reuse, don't duplicate"
+    decision as Phase 50's sibling, the OAuth2 schema redesign.
+  - **Data/API contracts:** no request/response shape change - this is
+    pure startup bookkeeping, not exposed on any endpoint yet. New
+    `.env`: `HR_CHATBOT_SHARED_DB_NAME=hr_chatbot`, reusing
+    `POSTGRES_DB_HOST`/`PORT`/`USER`/`PASSWORD` already in `.env` for the
+    connection - a second Postgres *database* on the same server, not a
+    second set of credentials.
+  - **User-visible behavior:** on app startup, for each configured MCP
+    server (today: just `hrb_lms_mcp`), the app connects, calls
+    `tools/list` for real, and upserts one `mcp_server_registry` row plus
+    one `mcp_tools_registry` row per tool returned, then records the
+    attempt (success/failure, latency) in `mcp_server_connections`. A
+    server that's down at startup doesn't crash the app - the connection
+    row records the failure and the app starts anyway (matches this
+    project's own `GET /health` philosophy: report unhealthy, never
+    raise).
+  - **Failure modes:** `hr_chatbot` database unreachable (registry itself
+    can't be written) -> logged, startup continues (this is bookkeeping,
+    not a hard dependency). `hrb_lms_mcp` unreachable -> registry records
+    it as a failed connection attempt, startup continues, Phase 49's
+    keyword routing already falls back to normal RAG on a failed MCP call
+    regardless of what the registry says.
+  - **Retrieval quality criteria:** N/A - no retrieval involved.
+  - **Out of scope:** using the registry to *decide* which server/tool to
+    call at query time (Phase 49's routing stays keyword-based, unchanged) -
+    this phase only populates the registry, doesn't consume it yet.
+    Scheduled/periodic re-registration (only at startup, once).
+  - **Open questions:** none - column shapes are already fixed by the
+    existing table definitions, not designed fresh here.
+
+  **Three real CHECK-constraint violations found live, not guessed at in
+  advance** - the existing tables constrain several columns to a fixed
+  value list, discovered only by actually inserting:
+  1. `mcp_server_registry.connection_type` doesn't accept
+     `'streamable_http'` (only `http`/`https`/`websocket`/`stdin`/`stdio`) -
+     used `'http'`, the closest real fit.
+  2. `mcp_server_registry.status` doesn't accept `'configured'` (only
+     `active`/`inactive`/`deprecated`/`maintenance`) - used `'active'`.
+  3. `mcp_server_connections.connection_status` doesn't accept `'failed'`
+     (only `connected`/`disconnected`/`connecting`/`error`/`maintenance`) -
+     used `'error'`.
+  All three caught by the app's own startup log on a real, live run
+  against `hr_chatbot` (not by reading the schema first) - the app never
+  crashed either time, exactly per the "never blocks startup" requirement
+  above, which is itself what made it safe to iterate live instead of
+  reverse-engineering every CHECK constraint up front.
+
+  A fourth real bug, unrelated to the registry tables: `main.py`'s
+  `@app.on_event("startup")` is FastAPI's deprecated startup-event API -
+  switched to the `lifespan` context-manager form (not meaningfully more
+  complex - a function that runs code before `yield`), removing the
+  deprecation warning.
+
+  **Verified:** full suite green, 161 passed (4 new tests, all faked -
+  `McpRegistryClient`/the real MCP call, no real Postgres or network call
+  in the default run). Then verified live against the real running
+  `hrb_lms_mcp` and the real `hr_chatbot` database: started
+  `hrb_chatbot_v2` fresh, confirmed via direct query that
+  `app_tracking.mcp_server_registry` has the real `hrb_lms_mcp` row,
+  `mcp_tools_registry` has all 6 real tools (`get_leave_balance`,
+  `get_leave_history`, `submit_leave_request`, `get_pending_approvals`,
+  `create_hitl_request`, `get_hitl_status`), and
+  `mcp_server_connections` shows `connected`/`healthy`,
+  `consecutive_failures = 0`, real latency (796ms this run).
+
+- [x] **Phase 51 (2026-09-22) — User-directed: NFR-specific golden dataset
+  and harness, for exercising guardrails/the validation gateway
+  directly - separate from Phase 8's answer-quality golden dataset.**
+
+  **Spec:**
+  - **Context:** Phase 8's `golden_dataset.json`/`golden_dataset_harness.py`
+    score retrieval/generation quality (DeepEval metrics against expected
+    answers) - there was no dataset built specifically to exercise the
+    guardrails/six-gate framework itself (prompt injection, PII, jailbreak,
+    false-positive controls). User asked for one "to play around with
+    guardrails and validations-gateway."
+  - **Data/API contracts:** new file `resources/golden_dataset/
+    nfr_golden_dataset.json` - different shape from Phase 8's dataset
+    (`expected_outcome`: blocked/masked/pass, not `expected_answer`/
+    `expected_keywords`) since it's scoring gate behavior, not answer
+    content. 14 cases: prompt injection (4), PII-in-input (3), jailbreak
+    (2), toxic content (1), and - deliberately, not an afterthought -
+    4 false-positive controls (ordinary benefits questions that must NOT
+    be blocked, including one containing the word "ignore" in a
+    legitimate sentence, to catch an over-aggressive keyword-only
+    guardrail specifically).
+  - **User-visible behavior:** N/A directly - this is a test harness, not
+    an endpoint change. `nfr_golden_dataset_harness.py` calls
+    `check_input()` (Phase 7's real guardrail function) directly per
+    case and classifies the real outcome (`GuardrailBlockedError` raised
+    -> "blocked", returns unchanged -> "pass") against `expected_outcome`.
+  - **Failure modes:** N/A - a harness, not a runtime path.
+  - **Retrieval quality criteria:** N/A - no retrieval involved, this
+    tests Gate 1 (input) only. Gate 6 (output) isn't exercised since
+    `check_output()` needs a real generated answer as input, not just a
+    query - out of scope for this pass.
+  - **Out of scope:** Gate 2/Gate 4 cases (neither gate is built).
+    Automated PII-masking-vs-blocking assertions beyond a noted
+    `expected_pii_value` field - today's real behavior is block-not-mask
+    for PII (Phase 7's known gap), so cases assert "blocked", not
+    "masked", matching actual behavior rather than aspirational behavior.
+  - **Open questions:** none.
+
+  **A real, live-found bug the harness was built to catch, not
+  papered over:** `false_positive-04` ("My employee ID is EMP052...")
+  expects `pass` and gets `masked` for real - Presidio's PERSON
+  recognizer (spaCy NER, `en_core_web_lg`) misclassifies `EMP052` as a
+  person's name, rewriting it to `<PERSON>`. Left `expected_outcome:
+  "pass"` (the correct behavior) with a `known_issue` field documenting
+  the real gap, and the test reports it separately from real, unexpected
+  failures rather than hiding it or changing the expectation to match
+  the bug. A second real correction found the same way:
+  `pii-02`/`pii-03` (email, credit card) were originally written as
+  `expected_outcome: "blocked"`, assuming the same self-check-blocks-
+  first behavior as SSN (`pii-01`) - verified live that email/credit-card
+  actually get **masked**, not blocked. Not every PII entity type takes
+  the same path through the guardrail.
+
+  **Verified:** default suite unaffected, 161 passed, 2 deselected (the
+  2 new eval-marked harnesses). Live run (`pytest -m eval`, real
+  NeMo Guardrails LLM calls): 13/14 cases match expected_outcome for
+  real, 1 known issue reported and not hidden.
+
+- [ ] **Phase 52 (planned, not started) — Analytics MCP server: NL2SQL
+  over aggregate/historical HR data (leave utilization, attrition,
+  benefits-cost trends), distinct from Phase 49's per-employee lookups.**
+
+  **Spec:**
+  - **Context:** researched 2026-09-22 (WebSearch, not invented) -
+    Oracle/Microsoft/Google Cloud all shipped official NL2SQL MCP servers
+    in early 2026, with a consistent architecture: an intent classifier
+    routes a query to either a document path (this project's existing
+    RAG) or a SQL-generation path; the SQL agent uses a semantic layer
+    (business terms -> real tables/columns) to generate SQL; the MCP
+    server executes it **read-only**, under scoped permissions, never
+    with elevated access. Phase 49's `get_leave_balance`/`get_leave_history`
+    tools return one employee's own data - they structurally cannot
+    answer aggregate questions ("what % of PTO goes unused by
+    department"), which is what this phase is for.
+  - **Data source, deliberately not invented from scratch:** `hr_chatbot.
+    hrb_emp_lms.leave_balances`/`leave_requests` already exist and are
+    real, populated data (238/60 rows) - the first analytics use case
+    should query them directly, not synthetic data, before reaching for
+    a bigger "data product" story. Postgres first, Snowflake later (a
+    personal account) once query volume/complexity justifies the move -
+    a common, sound real-world graduation path, not something to
+    over-design for on day one.
+  - **User-visible behavior:** not decided yet - this is the parking-lot
+    spec, not the implementation spec. Needs at least: which questions
+    are in scope for v1 (leave-utilization trends first, likely), how
+    the query-intent classifier decides RAG vs. analytics vs. Phase 49's
+    per-employee MCP tools (three paths now, not two), and whether
+    generated SQL needs a human-reviewable step before executing (a real
+    security question for LLM-generated SQL, not a formality).
+  - **Failure modes:** not decided yet - flagged for the real spec:
+    generated SQL must be read-only-enforced at the DB role level, not
+    just by asking the model nicely (prompt-only enforcement is not a
+    real control, matching this project's own RBAC lesson from
+    `docs/agent-reference/endpoint-request-response-contracts.md`).
+  - **Retrieval quality criteria:** N/A - SQL correctness needs its own
+    evaluation approach (e.g. execution-accuracy against known answers),
+    not DeepEval's retrieval metrics.
+  - **Out of scope for now:** everything - this phase exists to hold the
+    idea and its research so it isn't lost, not to start implementation.
+    Real spec work (the sections above, properly decided) happens when
+    this phase is picked up, per this project's own SDD process
+    (`.claude/skills/spec-new/SKILL.md`) - after ReAct orchestration
+    exists to route to it, per the user's own stated sequencing.
+  - **Open questions:** which grant type secures Phase 52's own MCP
+    calls (ties to the app-to-app OAuth2 work under discussion the same
+    day - whatever pattern that lands on should extend here, not get
+    reinvented per MCP server).
+
+- [x] **Phase 53 (2026-09-22) — User-directed: real OAuth2 client-credentials
+  auth between hrb_chatbot_v2 (client) and hrb_lms_mcp (server) - both
+  sides, replacing the dead, unenforced X-API-Key found this session.**
+
+  **Spec:**
+  - **Context:** found live this session that `hrb_lms_mcp`'s `X-API-Key`
+    auth is configured (a real key sits in its `.env`) but enforced
+    nowhere in its actual source - every Phase 49/50 call this session
+    was, in fact, unauthenticated. User asked for real app-to-app OAuth2
+    to close this for real, on both sides - client-side changes alone
+    can't make a call "authenticated" if the server never checks anything.
+  - **Data/API contracts:** `hrb_lms_mcp` gains `POST /oauth/token`
+    (client_credentials grant: `client_id`/`client_secret` in, a signed
+    JWT with `sub`/`scopes`/`exp` claims out) and Bearer-token enforcement
+    on `POST /mcp` (401 if missing/invalid/expired). `hrb_chatbot_v2`
+    gains `common/clients/auth_client/oauth_client.py` (the existing
+    empty placeholder, filled in) - acquires and caches a token, attaches
+    `Authorization: Bearer <token>` to every real MCP call. No change to
+    this project's own public API contract - purely an outbound-call
+    concern.
+  - **User-visible behavior:** MCP calls without a valid token now
+    genuinely fail (401) instead of silently succeeding unauthenticated -
+    a real behavior change on `hrb_lms_mcp`'s side, live-verified both
+    ways (with token succeeds, without token is rejected).
+  - **Failure modes:** token endpoint unreachable or credentials
+    rejected -> `oauth_client.py` raises, `mcp_tools/__init__.py`'s
+    existing try/except in `try_route_to_mcp()` already falls back to
+    normal RAG on any MCP failure - this reuses that path, not a new one.
+    Expired token -> refreshed transparently on next call (cached with
+    expiry, not re-fetched every call).
+  - **Retrieval quality criteria:** N/A.
+  - **Out of scope:** scope-based authorization (checking the JWT's
+    `scopes` claim against which tool is being called) - Phase 53 is
+    authentication only (who's calling), not authorization (what
+    they're allowed to call) - `hrb_chatbot_v2_core.client_scopes`
+    already models the latter but isn't enforced anywhere yet. Refresh
+    tokens, token revocation, a real identity provider instead of
+    `hrb_lms_mcp` self-issuing - all bigger scope than a capstone needs.
+  - **Client secret hashing, a deliberate simplification:** SHA-256, not
+    bcrypt/passlib - a machine-generated high-entropy client secret
+    doesn't need password-grade slow hashing (no brute-force-by-guessing
+    risk the way a human password has); adding passlib to a second repo
+    for this would be a new dependency for marginal real benefit here.
+    Flagged as an explicit simplification, not an oversight.
+  - **Open questions:** none.
+
+  **Implementation spans both repos, verified live end to end, not
+  unit-tested in isolation:**
+  - `hrb_lms_mcp`: new `hrb_lms_mcp_auth.oauth_clients` table (own
+    bounded-context schema, no FK, same reasoning as
+    `hrb_chatbot_v2_core`), `POST /oauth/token` (client_credentials
+    grant), `BearerAuthMiddleware` enforcing a valid, unexpired JWT on
+    every `POST /mcp` - added *after* the existing request-logging
+    middleware so an unauthenticated call is rejected before its body is
+    even logged. `pyjwt[crypto]==2.10.1` added explicitly to
+    `requirements.txt` (was already an undocumented transitive dep of
+    `mcp` itself). A real client row registered for `hrb-chatbot-v2`
+    with a `secrets.token_urlsafe(32)`-generated secret - the plaintext
+    only ever touched `hrb_chatbot_v2`'s own `.env`, never committed.
+  - `hrb_chatbot_v2`: `common/clients/auth_client/oauth_client.py` (the
+    existing empty placeholder, filled in) - fetches and caches a
+    token, refreshing 30s before expiry rather than per-call.
+    `mcp_tools/__init__.py` and `mcp_registry_startup.py` (Phase 49/50,
+    both call the server directly) both switched from the dead
+    `X-API-Key` header to a real `Authorization: Bearer` token.
+
+  **Verified live, both directions:**
+  - No token -> `401 {"error": "Missing Bearer token"}` (the real proof
+    this wasn't authenticated before - it would have silently succeeded
+    pre-Phase-53).
+  - Wrong client secret -> `401 {"error": "invalid_client"}`.
+  - Real credentials -> real signed JWT issued, real `tools/list` call
+    succeeds with it.
+  - Full end-to-end through this project's own API: fresh
+    `hrb_chatbot_v2` startup acquires a real token
+    (`oauth_client` log line), registers all 6 tools via the now-secured
+    call (Phase 50), and a real `"What is my PTO balance?"` query for
+    `EMP052` returns real data (`"available": 11.0`) through the fully
+    OAuth2-secured path.
+
+  **Verified:** default suite unaffected, 164 passed (3 new tests for
+  `oauth_client.py`'s caching behavior, 2 existing registry tests updated
+  for `_list_tools_live()`'s changed signature).
+
+- [x] **Phase 54 (2026-09-23) — User-directed: extract-method refactor of
+  `vector_indexer.py`'s `write_chunks()` - no behavior change, code
+  organization only.**
+
+  **Spec:**
+  - **Context:** user noticed database-save operations intermixed with
+    other logic in the indexing code, asked for cleaner separation along
+    this project's own repo-layer convention (client objects behind
+    `db_gateway` already ARE the repo layer - the problem isn't a missing
+    layer, it's `write_chunks()` calling into that layer from 5+ places
+    inline in one 111-line function instead of through named steps).
+    Investigated `text_chunker.py` too (224 lines) - already well
+    organized, 6 separate `chunk_*` functions - no changes needed there.
+  - **Data/API contracts:** none - pure internal refactor,
+    `write_chunks()`'s own signature/return shape unchanged.
+  - **User-visible behavior:** none - byte-for-byte identical behavior,
+    verified by the existing test suite passing unchanged before and
+    after, not just by inspection.
+  - **Failure modes:** N/A - no new failure paths introduced.
+  - **Retrieval quality criteria:** N/A.
+  - **Out of scope:** `documents_service.py` (services layer) - checked,
+    already organized as one function per concern
+    (`validate_file`/`save_upload`/`list_documents`/etc.), not an
+    intermixing problem. Any actual logic change to indexing behavior -
+    this phase is reorganization only.
+  - **Open questions:** none.
+
+  **Verified:** full suite unchanged, 164 passed both before and after -
+  proof this was a pure reorganization, not a behavior change. `write_chunks()`
+  is now an orchestrator calling 4 named single-purpose steps
+  (`_lookup_existing_chunks`, `_write_new_vector_chunks`,
+  `_record_index_success`, `_apply_supersede`) instead of one 111-line
+  function mixing metadata-DB reads/writes, vector-DB deletes/writes, and
+  supersede business logic inline.
+
+- [x] **Phase 55 (2026-09-24) — User-directed: single-agentic-rag - a
+  tool-calling agent endpoint, following the IK FDE cohort's Module 6
+  ("agentic_rag") reference pattern from `SupportDesk-RAG-Workshop`.**
+
+  **Spec:**
+  - **Context:** reviewed Module 6 (agentic RAG) and Module 5
+    (evaluation) from the course's own workshop repo directly (not from
+    memory) - full findings in this session's own transcript. Module 6's
+    `notes.md` mentions `create_react_agent()`/`AgentExecutor`, but its
+    real `solutions.py` uses neither - a hand-written loop around OpenAI
+    function calling (`llm.bind(tools=...)`, check `response.tool_calls`,
+    execute, feed back as `ToolMessage`, repeat up to `max_iterations`).
+    This phase matches that real reference code, not the notes' mention
+    of heavier LangChain agent classes - course alignment means the
+    actual solution file, not the prose description of it.
+  - **Data/API contracts:** new `POST /v1/single-agentic-rag/query`.
+    Request: `user_profile` (Phase 45 pattern, unchanged), `query`,
+    optional `max_iterations` (default 5, matching the course). Response:
+    `query`, `answer`, `tools_used` (list of `{tool_name, tool_input}`,
+    for transparency/debugging - the course's own `run_agent()` tracks
+    this too), `iterations`. New models in `models/agentic_rag.py`.
+  - **Tools (3, not the course's 4)** - reusing existing building blocks,
+    not reinventing them:
+    1. `SearchKnowledgeBase` - wraps `retrieve_chunks()` (genai-rag's
+       existing retrieval) - the RAG tool, primary for "how do I" questions.
+    2. `GetLeaveBalance` - wraps Phase 49's existing MCP tool as-is.
+    3. `GetLeaveHistory` - wraps Phase 49's existing MCP tool as-is.
+    No 4th "category/stats" tool - Self-Query retrieval already covers
+    filtered search, a redundant tool would just confuse tool selection
+    (the course's own "3-7 tools, don't make them too generic" guidance).
+  - **A real architecture gap found while designing this, not glossed
+    over:** the existing `GatewayChatModel` (LangChain adapter over this
+    project's own multi-provider `ask()` clients) has no tool-calling
+    support - it always returns plain text, never `tool_calls`. Extending
+    it risks regressing the LCEL generation chain and MultiQuery/
+    SelfQuery, which already depend on it working exactly as it does
+    today. **Decision:** the agent's own reasoning step uses
+    `langchain_openai.ChatOpenAI` directly - not `GatewayChatModel` -
+    matching the actual course code exactly, zero risk to already-working
+    chains, and `langchain_openai` is already a dependency (used for
+    embeddings elsewhere already). **Real, accepted limitation:** this
+    makes single-agentic-rag OpenAI-only, unlike the rest of this
+    project's multi-provider design - documented here on purpose, not
+    discovered later.
+  - **User-visible behavior:** a query answerable from the knowledge base
+    routes to `SearchKnowledgeBase` (grounded, cited answer, same quality
+    bar as genai-rag). A leave-balance/history question routes to the
+    matching MCP tool (same live, OAuth2-secured call as Phase 49, just
+    reached via LLM tool selection instead of a keyword list this time).
+    Gateway/RBAC: same as genai-rag's query endpoint - open to
+    EMPLOYEE/MANAGER/HR_SUPPORT uniformly.
+  - **Failure modes:** `max_iterations` reached without a final answer ->
+    a clear "reached the iteration limit" response, not an error (matches
+    the course's own `run_agent()` behavior). A tool raising -> caught,
+    returned to the model as an error string (matches the course's "tools
+    should never crash, always return a string" rule) so the agent can
+    react to it, not crash the request.
+  - **Retrieval quality criteria:** N/A directly - `SearchKnowledgeBase`
+    reuses genai-rag's own retrieval, already covered by the existing
+    golden dataset.
+  - **Out of scope:** persistent conversation memory across requests (no
+    conversation feature exists anywhere in this project yet - out of
+    scope until one does, not assumed needed). The release-gate scoring
+    addition to `golden_dataset_harness.py` (Module 5's one real gap,
+    tracked as its own piece below, not folded into this endpoint's spec).
+    Multi-provider support for the agent's reasoning step (see the
+    `ChatOpenAI` decision above).
+  - **Open questions:** none.
+
+  **Also this phase: Module 5's one real gap - release-gate scoring.**
+  Adds `get_release_decision()` to `golden_dataset_harness.py` - PASS/
+  REVIEW/BLOCK against the course's own named thresholds (Precision@3
+  ≥0.80 pass / <0.70 block, Recall@3 ≥0.70/<0.60, F1@3 ≥0.75/<0.65,
+  Groundedness ≥0.85/<0.75, Completeness ≥0.75/<0.65), mapped onto
+  DeepEval's existing metric names (`contextual_precision` ->
+  Precision@3, etc.) - confirmed with the user: DeepEval stays, the
+  course's own suggested tool (RAGAS) is not added - DeepEval already
+  covers the same metrics conceptually, adding RAGAS too would be a
+  second, redundant eval library for the same job. This was
+  `docs/agent-reference/BACKLOG.md`'s own "DeepEval CI gate not wired up" gap.
+
+  **Verified, live, both tool paths - not mocked for this check:**
+  started `hrb_lms_mcp` and `hrb_chatbot_v2` for real, called
+  `POST /v1/single-agentic-rag/query` for real:
+  - `"What is my PTO balance?"` for `EMP052` -> agent chose `GetLeaveBalance`
+    on its own (real LLM tool selection, not a keyword match this time) ->
+    real answer, "11 days available" - matches the real data.
+  - `"How many weeks of paid parental leave..."` -> agent chose
+    `SearchKnowledgeBase` -> real, grounded, accurate answer from the
+    actually-indexed `JPMC Paid TimeOff.pdf`.
+  - `"How does the 401k employer match work?"` -> agent correctly chose
+    `SearchKnowledgeBase`, searched twice with different phrasing, then
+    honestly reported no information found - not a bug, confirmed the
+    401k document is one of the 3 still not indexed (`docs/agent-reference/BACKLOG.md`'s
+    already-known gap) - the agent did the right thing given the missing
+    data, didn't hallucinate a policy.
+
+  **Verified, default suite:** 182 passed (18 new tests: 6 for the 3
+  tools, 3 for the agent loop, 4 for the route, 5 for the release-gate
+  logic).
+
+- [x] **Phase 56 (2026-09-24) — User-directed: MMR support for
+  single-agentic-rag's SearchKnowledgeBase tool, per Module 4's own
+  coverage - not deferred by scope judgment, user-confirmed to build now
+  regardless of whether a current use case exercises it.**
+
+  **Spec:**
+  - **Context:** reviewing Module 4's "Key Takeaways" against
+    single-agentic-rag, MMR was flagged as a real gap; user confirmed
+    this should be built now, not deferred on a "does it fit our current
+    queries" judgment call - course coverage is the reason to build it,
+    independent of today's query patterns. `retrieve_chunks()` already
+    supports `search_strategy="mmr"` (genai-rag's own `search_options`
+    already exposes this) - this phase extends the same, already-working
+    capability to the agent's tool, not a new retrieval mechanism.
+  - **Data/API contracts:** `SearchKnowledgeBase`'s tool schema gains an
+    optional `search_strategy` property (`"similarity"` default,
+    `"mmr"` alternative) - the agent's own LLM can choose it per call,
+    same choice a human caller makes via genai-rag's `search_options`.
+    No change to `AgenticRagRequest`/`AgenticRagResponse` - this is a
+    tool-internal parameter, not a caller-facing one (matches Module 6's
+    own tools, none of which take caller-supplied retrieval-strategy
+    parameters either).
+  - **User-visible behavior:** a query where diverse/broad coverage would
+    help (e.g. "what are all the benefits programs available") can now
+    get MMR results if the agent's own reasoning picks that strategy in
+    the tool call. Most queries will still use the similarity default -
+    no forced behavior change for narrow factual questions.
+  - **Failure modes:** an invalid `search_strategy` value from the model
+    falls back to a fixed default; the tool never raises (same "always
+    return a string" rule as the other tools).
+  - **Retrieval quality criteria:** N/A - no new eval case for this
+    specifically; MMR's own quality tradeoffs are already documented in
+    Module 4/5's notes and don't need re-deriving here.
+  - **Out of scope:** exposing `search_strategy` on the caller-facing
+    `AgenticRagRequest` - the agent's own tool-call decision is the
+    scope confirmed here, not a second, duplicate way to set it from
+    outside.
+  - **Open questions:** none.
+
+  **Verified live - both strategies, real LLM decisions, not asserted
+  in a unit test alone:**
+  - Broad query ("give me a broad overview of all the different benefits
+    programs") -> agent chose `search_strategy: "mmr"` on its own -
+    confirmed from the real server log, not just the response body
+    (`tools_used` doesn't surface this arg, checked the log directly).
+  - Narrow query ("how many weeks of paid parental leave") -> agent chose
+    `search_strategy: "similarity"` - the default, correctly not
+    overused.
+
+  **Verified, default suite:** 186 passed (4 new tests: 3 for
+  `search_knowledge_base`'s strategy handling, 1 confirming the agent
+  loop actually forwards the tool call's `search_strategy` arg through
+  to the real function, not just to a mock).
+
+- [x] **Phase 57 (2026-09-25) — User-directed: rename document_metadata's
+  `doc_type` -> `doc_category` and `doc_classification` -> `doc_description`,
+  plus fill in real sample data for both fields across the Postman
+  collection.**
+
+  **Spec:**
+  - **Context:** user found the existing names ambiguous when reviewing
+    what payload attributes the upload endpoint accepts - `doc_category`
+    reads more clearly as "the kind of document" and `doc_description`
+    as "free-text description of what it covers" than the original
+    `doc_type`/`doc_classification` pair. A pure rename, same meaning,
+    same optional/nullable behavior - not a new field, not a semantic
+    change. Confirmed in `docs/agent-reference/endpoint-request-response-contracts.md`
+    before this spec.
+  - **Data/API contracts:** every occurrence of `doc_type` -> `doc_category`
+    and `doc_classification` -> `doc_description`, end to end: the wire
+    contract (`document_metadata` on the upload request and every response
+    shape that echoes it), the Pydantic models (`models/documents.py`'s
+    `DocumentMetadataInput`/`DocumentMetadataResult`), the metadata
+    extractor's LLM prompt and its parsed-output shape
+    (`document_metadata_extractor.py`), the ingestion pipeline
+    (`doc_processing/pipeline.py`), both DB clients' columns
+    (`sqlite_client.py`/`postgres_client.py` - `ALTER TABLE ... RENAME
+    COLUMN`, not a drop/re-add, so existing rows' values survive),
+    `base_metadata_client.py`'s ABC signature, the vector indexer's
+    chunk-metadata patching (`vector_indexer.py`), and the Self-Query
+    filter field the retriever exposes to the LLM (`retriever.py`'s
+    `METADATA_FIELD_INFO`) - this last one means chunks indexed under the
+    old field names before this phase will not match a Self-Query filter
+    on the new names until re-indexed (see Failure modes).
+  - **User-visible behavior:** callers send `doc_category`/`doc_description`
+    instead of `doc_type`/`doc_classification` in the upload payload's
+    `document_metadata`; every response shape that includes
+    `document_metadata` echoes the new names. No other behavior changes -
+    still optional, still overridden-by-caller-else-LLM-guessed.
+  - **Failure modes:** a caller still sending the old `doc_type`/
+    `doc_classification` keys gets them silently ignored (Pydantic drops
+    unknown fields by default) rather than a validation error - same
+    "extra fields are silently dropped" behavior this project's models
+    already have everywhere else, not a new failure mode introduced here.
+    Documents indexed before this phase keep their old chunk-metadata key
+    names until re-indexed; a Self-Query filter parsed against the new
+    `METADATA_FIELD_INFO` names won't match those older chunks. Flagged,
+    not fixed - no bulk re-index is in scope for this phase.
+  - **Retrieval quality criteria:** N/A - a rename, not a retrieval-quality
+    change.
+  - **Out of scope:** migrating/backfilling already-indexed chunks' vector
+    metadata to the new key names; renaming any other document-metadata
+    field (`department`, `owner`, `purpose`, etc. are unaffected).
+  - **Open questions:** none - exact old->new names were given directly.
+
+  **Verified live against the real dev SQLite DB, not just tests:**
+  uploaded a new PDF with `document_category`/`doc_description` in the
+  payload -> content-hash dedup still worked correctly (flagged
+  `duplicate`, unaffected by the rename). Then fetched an existing
+  document (`6b7d437e846743ddaee311ade1c24798`, uploaded 2026-09-21 under
+  the OLD `doc_type`/`doc_classification` columns, before this phase) via
+  `GET .../documents/{id}` on a fresh server start - `_ensure_table()`'s
+  `RENAME COLUMN` ran automatically on startup, and the response correctly
+  showed `"doc_category": "benefits"`, `"doc_description": "Guild
+  Education benefit program"` - the old values, preserved, under the new
+  keys, with no re-index or manual migration step needed. Separately
+  confirmed with a throwaway SQLite file seeded with the old schema plus
+  real data: same rename ran, data intact, and calling `_ensure_table()`
+  a second time was a safe no-op (idempotent).
+
+  **Verified, default suite:** 186 passed, unchanged count (a rename, not
+  new behavior - existing tests and `tests/conftest.py`'s fake metadata
+  client now assert/accept the new field names).
+
+- [x] **Phase 58 (2026-09-25) — User-directed: server-side multi-turn
+  conversation memory, shared across genai-rag and single-agentic-rag,
+  toggled via a payload flag.**
+
+  **Spec:**
+  - **Context:** the course's Module 6 "Bonus: Conversation with Memory"
+    (`chat_with_memory()` in `solutions.py`) was already flagged as a real,
+    not-yet-built gap during this session's review of single-agentic-rag
+    (see Phase 55's own "Out of scope" note, now recorded as a call that
+    was made without the user's sign-off - see memory). User decided:
+    build it now, server-side (not client-resent), in-memory for now with
+    a documented plan to move to a cache DB later, timestamped, on by a
+    payload toggle, shared across every RAG-retrieval endpoint rather than
+    built per-endpoint.
+  - **Data/API contracts:** both `RagQueryRequest`
+    (`models/rag.py`) and `AgenticRagRequest` (`models/agentic_rag.py`)
+    gain `enable_conversation_memory: bool = False` and
+    `conversation_id: str | None = None`. Both `RagQueryResponse` and
+    `AgenticRagResponse` gain `conversation_id: str | None` - `null` when
+    memory is disabled; when enabled, echoes the caller's id or a newly
+    generated one (`uuid.uuid4().hex`, matching `document_id`'s existing
+    convention) if the caller didn't send one. See
+    `docs/agent-reference/endpoint-request-response-contracts.md` for the
+    finalized shape, confirmed there first.
+  - **Shared module, one implementation, two callers:** new
+    `ai/pre_processing/conversation_memory.py` - `new_conversation_id()`,
+    `load_history(conversation_id) -> list[BaseMessage]`,
+    `save_turn(conversation_id, human_content, ai_content)`. A
+    module-level dict, same single-process in-memory pattern
+    `common/rate_limiting/rate_limiter.py` already uses in this project -
+    not a new pattern. Each turn stored with a UTC timestamp
+    (`datetime.now(UTC).isoformat()`), per the user's explicit ask, even
+    though nothing reads the timestamp back yet (future cache-DB migration
+    and/or a "show conversation history" endpoint would).
+  - **How each endpoint wires it in - genuinely different, not
+    copy-pasted, because the two agents' underlying chat mechanisms
+    differ:**
+    - `single-agentic-rag` (`orchestration_agent.py`): clean case - it
+      already calls `langchain_openai.ChatOpenAI` directly with a real
+      `messages` list (Phase 55's own architecture). `run_agent()` gains a
+      `conversation_id` param; when given, `load_history()`'s messages are
+      inserted between the system message and the new human question.
+      Only the turn's final answer is saved (not intermediate
+      `ToolMessage` exchanges) - matches the course's own
+      `chat_with_memory()`, which also only appends the human question and
+      final AI content.
+    - `genai-rag` (`pipeline.py`/`response_generator.py`): harder case,
+      flagged explicitly, not glossed over. This chain runs through
+      `GatewayChatModel` (Phase 20's adapter over this project's own
+      `ask(question, context, system_prompt)` clients), which has no
+      native multi-turn message primitive - `ask()` takes one flat
+      `context` string, not a message list. `RAG_PROMPT` gains a
+      `MessagesPlaceholder("chat_history", optional=True)` between the
+      system and human messages; `GatewayChatModel._split_messages()` is
+      fixed to label each earlier non-system message by role
+      (`"User: ..."`/`"Assistant: ..."`) when flattening them into the
+      `context` string, instead of concatenating bare content with no
+      role marker (a real bug for multi-turn - the model couldn't tell
+      who said what). This is a shared, already-tested function - its
+      existing test (`test_last_message_is_the_question_earlier_message_
+      becomes_context`) asserted the old unlabeled format and is updated
+      to match, not left broken. **Accepted, documented asymmetry:**
+      genai-rag's history rides inside a flattened text blob (works, but
+      cruder); single-agentic-rag's is a real LangChain message list -
+      same category of provider/architecture gap already accepted for
+      Phase 55's OpenAI-only tool-calling, not new to this phase.
+  - **User-visible behavior:** with `enable_conversation_memory: false`
+    (the default), nothing changes for either endpoint. With `true`, a
+    follow-up question like "what was the ticket ID for that?" resolves
+    against the prior turn's context on both endpoints.
+  - **Failure modes:** an unknown/expired `conversation_id` (e.g. after a
+    server restart, since storage is in-memory) returns an empty history,
+    not an error - the conversation silently starts fresh rather than
+    failing the request. A query routed to MCP (leave balance/history,
+    `try_route_to_mcp()`'s early return in `pipeline.py`) does NOT get
+    added to conversation history in this phase - flagged, not fixed: MCP
+    routing bypasses `generate_answer()` entirely, so a follow-up
+    referencing an MCP-answered turn won't have it in context.
+  - **Retrieval quality criteria:** N/A - a conversation-continuity
+    feature, not a retrieval-quality change.
+  - **Out of scope:** persisting history to a real datastore (explicitly
+    planned as a later step, not this phase); a way to list/inspect/clear
+    a conversation's history via the API; conversation memory for MCP-
+    routed turns (see Failure modes); multi-agentic-rag (doesn't exist
+    yet - this phase's shared module is written so that endpoint can reuse
+    it the same way single-agentic-rag does, once it exists).
+  - **Open questions:** none - storage location (in-memory now, cache DB
+    later), toggle mechanism (payload flag), and timestamping were all
+    confirmed directly by the user.
+
+  **Verified live, both endpoints, real multi-turn resolution - not just
+  unit tests:**
+  - `single-agentic-rag`: turn 1 asked "What is the JPMC 401k match?"
+    (2 tool calls, got a real conversation_id back). Turn 2, same
+    conversation_id, asked "What was the phone number you just gave me?"
+    - agent answered correctly with **0 tool calls, 1 iteration** - the
+    only way it could know that phone number was from conversation
+    history, not a fresh lookup.
+  - `genai-rag`: turn 1 asked about undergraduate tuition assistance
+    (real conversation_id returned). Turn 2, same conversation_id, asked
+    "And how much is that for master degree programs instead?" - "that"
+    correctly resolved to tuition assistance and retrieved the master's-
+    program chunk, confirming history reached the retrieval-adjacent
+    generation step correctly through the role-labeled `GatewayChatModel`
+    context path.
+
+  **Verified, default suite:** 199 passed (12 new: 5 for
+  `conversation_memory.py` itself, 3 for `orchestration_agent.py`'s
+  history seeding/saving, 4 for `pipeline.py`'s wiring including the
+  MCP-routed-answer-not-saved case; plus one existing `GatewayChatModel`
+  test updated for the new role-labeled context format, not left broken).
+
+- [x] **Phase 59 (2026-09-25) — User-directed: three new document-metadata
+  fields - author, doc_date, doc_version.**
+
+  **Spec:**
+  - **Context:** part of a broader "multimodal chunking/indexing" request
+    (text/tables/images) - this piece covers the metadata half. First
+    investigated live against a real KB document
+    (`JPMC Guild Tuition Assistance.pdf`) before assuming a gap existed:
+    confirmed `pypdf`'s plain `extract_text()` already captures a document's
+    closing "Document Version: 1.0 / Effective Date: .../ Last Updated:
+    .../ Next Review Date: ..." colophon (found on page 20) - this text is
+    already indexed today, just never pulled into a dedicated field.
+    `author`/`doc_date`/`doc_version` extend the existing extraction
+    pattern (same as Phase 36's three fields) to also capture this kind
+    of provenance data when a document states it.
+  - **Data/API contracts:** `DocumentMetadataInput`/`DocumentMetadataResult`
+    (`models/documents.py`) gain `author: str | None`, `doc_date: str |
+    None`, `doc_version: str | None` - same nullable,
+    caller-overrides-extraction pattern as every other field in that
+    sub-object. See `docs/agent-reference/endpoint-request-response-contracts.md`
+    for the finalized shape.
+  - **Deliberate scope boundary, confirmed with the user via
+    clarification, not assumed:** document-level only, stored in the SQL
+    metadata row exactly like `owner`/`purpose`/`effective_date` already
+    are - NOT added to chunk-level vector-store metadata or
+    `retriever.py`'s `METADATA_FIELD_INFO` (Self-Query filterable
+    fields). `doc_category`/`department`/`doc_description` are filter
+    dimensions a caller searches by; `author`/`doc_date`/`doc_version`
+    are provenance/citation data, a different category of field - this
+    phase doesn't touch `vector_indexer.py`'s chunk-metadata patching or
+    `retriever.py` at all.
+  - **Extraction:** `document_metadata_extractor.py`'s `EMPTY_RESULT`
+    and `EXTRACTION_QUESTION` prompt gain the three fields, same
+    best-effort/null-if-not-stated behavior as the existing five.
+  - **Storage:** both `sqlite_client.py` and `postgres_client.py` gain
+    three new columns via the existing additive `ALTER TABLE ADD COLUMN`
+    pattern (not a rename this time - genuinely new fields, unlike Phase
+    57). `record_document_metadata()`'s signature grows by three
+    parameters on `BaseMetadataClient` and both concrete clients.
+  - **User-visible behavior:** an uploaded document whose text states an
+    author, a document date, or a version number gets those captured
+    automatically (or a caller can supply them directly, same override
+    pattern as every other field). Documents that don't state any of
+    these keep them `null`, same as today's other optional fields when
+    absent.
+  - **Failure modes:** unchanged - extraction is best-effort inside the
+    same try/except as the other five fields; a parsing failure logs a
+    warning and leaves all extracted fields at their `EMPTY_RESULT`
+    default, never fails the upload.
+  - **Retrieval quality criteria:** N/A - metadata fields, not a
+    retrieval-quality change.
+  - **Out of scope:** page-number tracking per chunk and image
+    captioning - the other two pieces of the same multimodal request,
+    tracked as their own phases (59 was kept to metadata fields only, to
+    avoid one oversized phase bundling three genuinely separate
+    concerns - structural chunking change, new library + vision
+    capability, and this one).
+  - **Open questions:** none.
+
+  **Real gap found while implementing, not glossed over:** the
+  extraction call only ever sent the document's first `MAX_CHARACTERS_
+  SENT` (3000) characters to the LLM - fine for owner/department/
+  doc_category, which are almost always on a title page, but
+  author/doc_date/doc_version often sit in a closing colophon instead.
+  Confirmed live on `JPMC Guild Tuition Assistance.pdf` (20 pages): its
+  "Document Version: 1.0" line is on page 20, entirely outside the old
+  head-only excerpt - the new fields would have stayed `null` on every
+  real document shaped like this. Fixed: `extract_document_metadata()`
+  now sends both a head excerpt (unchanged, `MAX_CHARACTERS_SENT`) and a
+  tail excerpt (new, `TAIL_CHARACTERS_SENT`, default 1000) when the
+  document is longer than both combined.
+
+  **Verified live, not just tests:** deleted and re-uploaded that same
+  document fresh (extraction only runs on first index, not a re-index) -
+  response's `document_metadata` came back with `"doc_version": "1.0"`
+  and `"doc_date": "December 2025"`, both correctly pulled from page 20's
+  colophon, confirming the head+tail fix actually works against a real
+  document, not just a synthetic test string.
+
+  **Verified, default suite:** 201 passed (4 new: the renamed-field
+  round-trip test extended with the 3 new fields, plus 2 dedicated to the
+  head+tail excerpt fix - a short document unaffected, a long one proven
+  to carry both ends through to the LLM call).
+
+- [x] **Phase 60 (2026-09-25) — User-directed: collapse identity resolution +
+  role check into one real function, plus a comment-length compliance
+  sweep across every file in src/.**
+
+  **Spec:**
+  - **Context:** user pointed at `ingest_document.py`'s
+    `resolve_user_from_profile()` + `check_role()` pair (repeated at 8
+    call sites across 3 route files) and asked why it wasn't one
+    function, separately flagging a comment-length violation on the same
+    lines. First pass added a thin `require_role()` wrapper that composed
+    the two existing functions in one call, keeping them as separate
+    functions for a documented AuthN/AuthZ reason. **User rejected this
+    directly - the wrapper itself was the complaint** (a function whose
+    entire body is one line calling two other functions), not just the
+    8x call-site duplication. Corrected: `require_role()` now contains
+    the real 401/403 validation logic directly, in one function, not by
+    delegating to two single-caller helpers. `api/gateway/user_profile.py`
+    (`resolve_user_from_profile()`) and the separate `check_role()`
+    function are deleted - confirmed via full-repo grep that nothing else
+    called either one.
+  - **Data/API contracts:** none - same 401 (missing/invalid identity) /
+    403 (wrong role) behavior as before, now in one function.
+  - **User-visible behavior:** no change.
+  - **Failure modes:** none new.
+  - **Retrieval quality criteria:** N/A.
+  - **Out of scope:** the comment-length sweep below is a separate,
+    explicitly-requested piece of this same phase.
+  - **Open questions:** none.
+
+  **Comment-length sweep:** two passes. First: every docstring/comment
+  over the project's documented 2-line hard limit
+  (`docs/agent-reference/CODING-STANDARDS.md`) - 113 violations across the
+  files touched this session, mostly pre-existing debt. Second, after the
+  user restated the actual standard (**one line by default, two only
+  sparingly, delete comments that don't earn their place**): went back
+  through every file from the first pass and compressed further -
+  roughly 90 more edits, several docstrings removed outright rather than
+  shortened. A third layer (comments that are exactly 2 lines in files
+  never touched this session) was found but not fixed - flagged to the
+  user rather than expanding into new files unprompted.
+
+  **Verified:** `require_role()` covered by 4 direct unit tests
+  (`tests/hrb_chatbot/api/gateway/test_rbac.py`) - 401 on missing/unknown
+  identity, 403 on the wrong role, success returns the `UserProfile`.
+  Full default suite: 205 passed. `py_compile` across every file in
+  `src/` and a live app import both confirmed clean after every round of
+  edits, not assumed from tests alone.
+
+- [x] **Phase 61 (2026-09-27) — User-directed: multi-agentic-rag
+  scaffolding - real request/response contract and route, stubbed
+  pipeline, no orchestration logic yet.**
+
+  **Spec:**
+  - **Context:** user reviewed the IK FDE cohort's Multi-Agent Travel
+    Planner class (LangGraph orchestrator/parallel-workers/synthesizer,
+    `docs/id-fde-cohort/multi-agentic-system/Multi-Agent Travel
+    Planner.ipynb`) and asked for this project's own placeholder
+    scaffolding to be created first, deliberately not adopting the
+    notebook's code as-is - a design document on how to fit real
+    orchestration logic in later comes next, not in this phase. Matches
+    this project's own established stubbing precedent exactly (Phase 3's
+    `POST .../documents/{id}/index` and Phase 5's `POST .../query`): a
+    real, finalized request/response contract and route, wired through
+    gateway/RBAC/rate-limiting like every other endpoint, calling a
+    pipeline function whose internal steps raise `NotImplementedError`
+    naming the exact module and phase that will fill them in - not a bare
+    501 with no guidance.
+  - **Data/API contracts:** new `POST /v1/multi-agentic-rag/query`
+    (`models/multi_agentic_rag.py`): `MultiAgenticRagRequest`
+    (`user_profile`, `query`, `enable_conversation_memory`,
+    `conversation_id` - same shape as `AgenticRagRequest`, reusing Phase
+    58's shared conversation-memory module directly, not stubbed).
+    Response: `MultiAgenticRagResponse` (`query`, `answer`, `tasks` - one
+    `AgentTaskInfo` per dispatched sub-agent recording which agent
+    handled what, `tools_used` - reuses `ToolCallInfo` from
+    `models/agentic_rag.py`, `iterations`, `conversation_id`). Finalized
+    in `docs/agent-reference/endpoint-request-response-contracts.md`
+    before this spec, per this project's own SDD exception for contract
+    changes.
+  - **Naming:** `multi-agentic-rag`, matching the existing
+    `genai-rag`/`single-agentic-rag` naming line and the "single/multi-
+    agentic-rag" phrase already used in `golden_dataset_harness.py`'s own
+    docstring since Phase 8 - not the "multi-agent-retriever" name
+    floated in conversation, to stay consistent with what's already
+    named elsewhere in this codebase.
+  - **Scaffold, not implementation:** `ai/agents/workflow_agents/
+    multi_agent_pipeline.py` (new) - `run_multi_agent()` is the one real
+    entry point the route calls; its three internal steps
+    (`route_query()`, `dispatch_to_agents()`, `synthesize_results()`) each
+    raise `NotImplementedError` naming the design document (below) and
+    the phase that will implement them. Placeholders only, 0 bytes,
+    added in the two folders this project already reserved for exactly
+    this split (confirmed both already existed before this phase, not
+    created fresh): `ai/agents/workflow_agents/orchestrator_router.py`
+    (the routing/classification step) and
+    `ai/agents/workflow_agents/synthesizer.py` (the fan-in step) -
+    `ai/agents/domain_agents/` stays empty for now, since which reuse
+    strategy fills it (parameterizing the existing
+    `orchestration_agent.run_agent()` vs. new per-domain modules) is an
+    open question for the design document, not decided in this phase.
+  - **User-visible behavior:** `POST /v1/multi-agentic-rag/query` with a
+    well-formed request returns `501` naming
+    `ai/agents/workflow_agents/multi_agent_pipeline.py` and this phase
+    number, the same way Phase 3/5's stubs did - not a generic error.
+    Request validation (`422` on empty query, missing `user_profile`,
+    unknown role) works exactly like every other endpoint, since the
+    route is wired through the real gateway/RBAC/rate-limiting stack,
+    not bypassed.
+  - **Failure modes:** none beyond the deliberate `501` - this endpoint
+    does nothing yet.
+  - **Retrieval quality criteria:** N/A - no retrieval happens yet.
+  - **Out of scope:** all real orchestration logic (routing, parallel
+    dispatch, worker reuse strategy, synthesis) - tracked in the
+    accompanying design document
+    (`docs/dev-reference/react_agents/multi-agentic-rag-fit-plan.html`),
+    to be turned into this phase's own follow-up spec once the reuse
+    strategy is confirmed with the user, not assumed here.
+  - **Open questions:** none for this phase's own scope (scaffolding
+    only) - the real open question (how workers reuse
+    `orchestration_agent.run_agent()`) is the design document's subject,
+    not this spec's.
+
+  **Verified:** full default suite: 211 passed (205 + 6 new - 4 route
+  contract tests, 2 pipeline-scaffold tests). Live: `POST /v1/multi-
+  agentic-rag/query` with a well-formed request returns `501`, code
+  `NOT_IMPLEMENTED`, naming `ai/agents/workflow_agents/
+  orchestrator_router.py` (the first stub step to actually run) - not a
+  generic message. Missing `user_profile` → `401`; empty `query` → `422`
+  - both via the same `require_role()`/Pydantic validation every other
+  endpoint already uses, confirming the gateway layer runs before the
+  stub is ever reached. Re-ran both `genai-rag`'s and `single-agentic-
+  rag`'s query endpoints live afterward with real questions - both
+  answered exactly as before, confirming this phase changed nothing
+  about either existing endpoint.
+
+- [x] **Phase 62 (2026-09-29) — User-directed: rebuild the golden-dataset
+  eval harness to match the IK FDE cohort's own `5_evaluation/demo.py`
+  implementation directly, not DeepEval's built-in metrics as a proxy for it.**
+
+  **Spec:**
+  - **Context:** a direct comparison against `modules/5_evaluation/demo.py`
+    (the course's own reference implementation) surfaced four real gaps in
+    `golden_dataset_harness.py`, confirmed by reading both files side by
+    side, not assumed: (1) retrieval Precision/Recall/F1 are LLM-judged via
+    `DeepEval`'s `ContextualPrecisionMetric`/`ContextualRecallMetric`, not
+    the course's own exact document-ID set matching, even though the
+    golden dataset already carries `expected_source_document` - the exact
+    field the course's method needs; (2) "completeness" is mapped to
+    `AnswerRelevancyMetric`, a different concept (on-topic relevance) than
+    the course's own completeness check (does the answer cover everything
+    the reference answer covers); (3) the course's four named
+    failure-pattern diagnostics (high-precision/low-recall,
+    low-precision/high-recall, strong-retrieval/weak-generation,
+    low-groundedness) have no equivalent anywhere in this codebase; (4)
+    the only "A/B testing" artifact in this repo
+    (`tests/hrb_chatbot/test_ab_testing_demo.py`) is explicitly self-labeled
+    in its own docstring as "a REFERENCE PATTERN, not real evaluation
+    infrastructure," predates Phase 8, and only compares chunk count, not
+    retrieval config. User's explicit instruction for this phase: implement
+    evaluation, LLM-as-judge, and A/B testing "similar to the sample one" -
+    minimize deviation from the course's own method, not just its target
+    thresholds (which already matched numerically before this phase).
+  - **One necessary, flagged adaptation - not a deviation in method:** the
+    course's `demo.py` instantiates a raw `OpenAI()` client directly for its
+    LLM-as-judge calls. This project's own architecture (CLAUDE.md:
+    "Backend abstraction: gateways + enums, not scattered if/elif") requires
+    every LLM call go through `common/clients/llm_client/client_gateway.py`
+    - every other file in this codebase already follows this, including
+    `response_generator.py`. The judge calls in this phase use
+    `get_client_gateway().openai_chat().ask(question=..., temperature=0)`
+    instead of a raw client - same prompt text, same "Score: X" parsing,
+    same 0-10-normalized-to-0-1 scoring as the course, only the call
+    mechanism changes, to stay consistent with this project's own
+    non-negotiable client-gateway rule rather than introduce a second,
+    inconsistent way of calling an LLM in this codebase.
+  - **Data/API contracts:** none - no route, request, or response model
+    changes. This phase only touches
+    `ai/rag_pipeline/evaluations/golden_dataset_harness.py` and adds one
+    new file, `ai/rag_pipeline/evaluations/retrieval_ab_harness.py`.
+  - **Retrieval metrics (replacing DeepEval's contextual metrics):**
+    `calculate_retrieval_metrics(retrieved_ids, relevant_ids, k)` -
+    ported directly from the course's own function: same
+    precision = tp/k, recall = tp/len(relevant), f1 = harmonic mean.
+    `relevant_ids` is built from each case's `expected_source_document`
+    (a single string here, wrapped as a one-item set;
+    `unhappy_out_of_scope` cases carry `None` and are excluded from the
+    retrieval-metric average, the same way the course only ever scores
+    queries with a known relevant set).
+  - **Generation metrics (replacing DeepEval's Faithfulness/AnswerRelevancy):**
+    `evaluate_groundedness(answer, context_texts)` and
+    `evaluate_completeness(question, answer, reference_answer)` - same
+    prompts, same 0-10 LLM-as-judge scale, same "Score: X" / "Reasoning:"
+    parse logic, same verdict buckets (GROUNDED/PARTIAL/HALLUCINATED,
+    COMPLETE/PARTIAL/INCOMPLETE) as the course, called via this project's
+    own gateway per the adaptation above.
+  - **Failure-pattern diagnostics:** `diagnose_failure_patterns(scores)` -
+    the course's four named patterns (A-D), ported with the same
+    thresholds the course uses to trigger each one. Runs whenever
+    `get_release_decision()` doesn't return `PASS`, surfaced alongside the
+    release-gate flags, not replacing them.
+  - **Release gate:** `get_release_decision()` keeps its existing
+    PASS/REVIEW/BLOCK structure and numeric thresholds (already matched
+    the course's own thresholds before this phase) - only the metric key
+    names change, from DeepEval's naming (`contextual_precision`,
+    `contextual_recall`, `faithfulness`, `answer_relevancy`) to the
+    course's own naming (`precision`, `recall`, `f1`, `groundedness`,
+    `completeness`).
+  - **A/B testing harness:** new `retrieval_ab_harness.py`,
+    `compare_configurations(cases, configs, ask_factory)` - ported from
+    the course's own `compare_configurations()`, compares named retrieval
+    configurations (e.g. different `top_k` values) against the same
+    golden-dataset cases, reusing `calculate_retrieval_metrics()` so a
+    config comparison is scored identically to a release-gate run, not a
+    separate metric. Retires the placeholder role of
+    `test_ab_testing_demo.py` - that file's own docstring already says
+    real evaluation infrastructure was Phase 8/this phase's job, not its
+    own.
+  - **DeepEval dependency:** stays in `requirements.txt` for this phase -
+    `nfr_golden_dataset_harness.py` (Phase 51, a separate NFR-specific
+    harness) is out of this phase's scope and still uses it. Whether
+    DeepEval should be dropped entirely is flagged, not decided here.
+  - **User-visible behavior:** none - this harness only runs via
+    `pytest -m eval`, exactly as before. No route, no live-traffic change.
+  - **Failure modes:** an LLM-as-judge call that fails to parse a "Score:"
+    line falls back to `0.5`, matching the course's own fallback exactly
+    (not a deviation).
+  - **Out of scope:** gap #5 (keyword/hybrid retrieval - a retrieval-
+    architecture change, not an eval-harness fix) and gap #6 (agent
+    tool-call rationale trace - belongs to `orchestration_agent.py`, not
+    this harness). Both need their own future spec, not bundled here.
+  - **Open questions:** none for this phase's own scope.
+
+  **Verified:** full default suite: 230 passed (211 + 19 new - 10 for
+  `calculate_retrieval_metrics()`/`diagnose_failure_patterns()`, 5 for the
+  LLM-as-judge "Score: X" parsing via this project's existing
+  `FakeChatClient`/`FakeClientGateway` pattern, 3 for the A/B harness with a
+  fake `ask_factory`, 1 new `get_release_decision()` case confirming a
+  directly-passed `f1` is used as-is, not silently recomputed). `bandit -ll`
+  on both changed files: 0 Medium/High findings. `nfr_golden_dataset_harness.py`
+  (Phase 51) confirmed independent - no import of anything changed here,
+  still on DeepEval, untouched. `test_ab_testing_demo.py`'s placeholder role
+  is now superseded by `retrieval_ab_harness.py` - left in place, not
+  deleted, since removing it is a separate call the user hasn't made.
+
+## Verification checklist (Phases 1-3)
+
+1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
+2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
+   document id returned, file in `data/uploads/`, SQLite row exists. **Done**,
+   including the batch partial-success case.
+3. `POST /rag/documents/{id}/index` → clear `NotImplementedError` naming
+   `ai/doc_processing/`, not a crash.
+4. `POST /rag/query` → same stubbed-but-clear behavior, naming
+   `ai/rag_pipeline/`.

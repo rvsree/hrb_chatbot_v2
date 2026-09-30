@@ -1,6 +1,4 @@
-"""Anthropic client (chat + tools) - base URL is host-only, no "/v1".
-temperature is accepted for interface parity but never sent - Anthropic
-deprecated it; newer models reject anything but 1.0."""
+"""Anthropic client (chat + tools) - base URL is host-only, no "/v1"; temperature accepted but never sent."""
 
 import anthropic
 
@@ -64,8 +62,7 @@ class AnthropicChatClient(BaseLLMClient):
             self.client = None
 
     def warn_if_workspace_id_looks_wrong(self):
-        """Warn if ANTHROPIC_WORKSPACE_ID looks like a pasted workspace name rather
-        than its id - the only other symptom is an unhelpful 400 error from the API."""
+        """Warn if ANTHROPIC_WORKSPACE_ID looks like a pasted name rather than an id."""
         if not self.workspace_id:
             return
 
@@ -94,8 +91,7 @@ class AnthropicChatClient(BaseLLMClient):
         }
 
     def ask(self, question, context=None, system_prompt=None, temperature=0.0, max_tokens=None):
-        """Ask one question and return the answer text. `temperature` is accepted
-        but ignored - Anthropic has deprecated it, see module docstring."""
+        """Ask one question and return the answer text - `temperature` is accepted but ignored."""
         if context:
             message_text = f"Context:\n{context}\n\nQuestion:\n{question}"
         else:
@@ -126,8 +122,7 @@ class AnthropicChatClient(BaseLLMClient):
         return answer
 
     def ask_with_tools(self, messages, tools, temperature=0.0, max_tokens=None, tool_choice="auto"):
-        """Ask a question and let Claude call tools. Takes OpenAI-shaped messages
-        and tools, returns an OpenAI-shaped reply - conversions happen in the helpers below."""
+        """Ask and let Claude call tools - takes/returns OpenAI-shaped messages, converted below."""
         claude_tools = self.convert_tools_to_claude_format(tools)
         system_text, chat_messages = self.split_out_system_message(messages)
 
@@ -151,8 +146,7 @@ class AnthropicChatClient(BaseLLMClient):
 
     @staticmethod
     def convert_tools_to_claude_format(tools: list[dict]) -> list[dict]:
-        """Rewrite OpenAI-style tool defs into Claude's shape: name/description/schema
-        at the top level instead of nested under "function", schema key "input_schema"."""
+        """Rewrite OpenAI-style tool defs into Claude's shape - top-level, not nested under "function"."""
         claude_tools = []
         for tool in tools:
             if tool.get("type") != "function":
@@ -170,8 +164,7 @@ class AnthropicChatClient(BaseLLMClient):
 
     @staticmethod
     def split_out_system_message(messages: list[dict]) -> tuple[str | None, list[dict]]:
-        """Separate the system message from the rest of the conversation; returns
-        (system_text or None, remaining_messages)."""
+        """Separate the system message, returning (system_text or None, remaining_messages)."""
         system_text = None
         chat_messages = []
 
@@ -185,8 +178,7 @@ class AnthropicChatClient(BaseLLMClient):
 
     @staticmethod
     def convert_response_to_openai_format(response) -> dict:
-        """Rewrite Claude's reply into the OpenAI reply shape, so calling code
-        only ever has to understand one format."""
+        """Rewrite Claude's reply into the OpenAI reply shape, so calling code understands one format."""
         answer_text = ""
         tool_calls = []
 
@@ -223,8 +215,7 @@ class AnthropicChatClient(BaseLLMClient):
         }
 
     def health_check(self) -> dict:
-        """Report whether this client is usable: calls GET /v1/models, confirming
-        the API key, base URL and workspace header all work together at once."""
+        """Report whether this client is usable - calls GET /v1/models to confirm key/URL/workspace together."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 

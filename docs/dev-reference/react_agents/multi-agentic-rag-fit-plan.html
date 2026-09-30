@@ -1,0 +1,309 @@
+<title>Multi-Agentic-RAG Fit Plan</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800;900&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #f0f1f5; --surface: #ffffff; --surface-alt: #f5f6fa; --border: #dbdee7;
+    --text: #171a24; --text-muted: #555c70; --text-faint: #888fa3;
+    --built: #146b3f; --built-bg: #e3f6ea; --built-border: #b7e4c8;
+    --partial: #9a5a0c; --partial-bg: #fbf1dd; --partial-border: #edd6a2;
+    --gap: #b3261e; --gap-bg: #fce9e8; --gap-border: #f3c6c2;
+    --new: #7c3aed; --new-bg: #f1ebfe; --new-border: #ddccfb;
+    --reuse: #146b3f;
+    --shadow: 0 2px 4px rgba(15,20,30,0.06), 0 10px 22px rgba(15,20,30,0.07);
+    --band: #232a42; --node-bg: #ffffff;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d0f16; --surface: #14161f; --surface-alt: #161923; --border: #292d3d;
+      --text: #e7e9f0; --text-muted: #a5abbf; --text-faint: #6b7288;
+      --built: #4fc989; --built-bg: #132a1e; --built-border: #204a32;
+      --partial: #e0ac48; --partial-bg: #2c2311; --partial-border: #4a3a17;
+      --gap: #e5726b; --gap-bg: #2e1615; --gap-border: #4c2523;
+      --new: #b794f6; --new-bg: #241b36; --new-border: #3c2c56;
+      --reuse: #4fc989;
+      --shadow: 0 2px 4px rgba(0,0,0,0.35), 0 12px 26px rgba(0,0,0,0.4);
+      --band: #1a2038; --node-bg: #181b28;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d0f16; --surface: #14161f; --surface-alt: #161923; --border: #292d3d;
+    --text: #e7e9f0; --text-muted: #a5abbf; --text-faint: #6b7288;
+    --built: #4fc989; --built-bg: #132a1e; --built-border: #204a32;
+    --partial: #e0ac48; --partial-bg: #2c2311; --partial-border: #4a3a17;
+    --gap: #e5726b; --gap-bg: #2e1615; --gap-border: #4c2523;
+    --new: #b794f6; --new-bg: #241b36; --new-border: #3c2c56;
+    --reuse: #4fc989;
+    --shadow: 0 2px 4px rgba(0,0,0,0.35), 0 12px 26px rgba(0,0,0,0.4);
+    --band: #1a2038; --node-bg: #181b28;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans', -apple-system, sans-serif; padding-inline: 16px; padding-block: 28px 56px; }
+  .display { font-family: 'Archivo', sans-serif; } .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+  .wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 26px; }
+
+  header { display: flex; flex-direction: column; gap: 10px; }
+  .eyebrow { font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-faint); font-weight: 600; }
+  h1 { margin: 0; font-weight: 900; font-size: clamp(24px, 3.8vw, 32px); letter-spacing: -0.01em; text-wrap: balance; }
+  .subtitle { margin: 0; color: var(--text-muted); font-size: 13.5px; max-width: 84ch; line-height: 1.6; }
+
+  section.card { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+  .card-head { background: var(--band); color: #fff; padding: 12px 18px; }
+  .card-head h2 { margin: 0; font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 15px; }
+  .card-head p { margin: 4px 0 0; font-size: 11.5px; opacity: 0.75; }
+  .card-body { padding: 18px; }
+
+  /* gap findings */
+  .findings { display: flex; flex-direction: column; gap: 10px; }
+  .finding { display: grid; grid-template-columns: 28px 1fr; gap: 12px; padding: 12px 14px; border: 1px solid var(--gap-border); background: var(--gap-bg); border-radius: 10px; }
+  .finding .n { font-family: 'Archivo', sans-serif; font-weight: 900; color: var(--gap); font-size: 15px; }
+  .finding h3 { margin: 0 0 4px; font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 13.5px; color: var(--text); }
+  .finding p { margin: 0; font-size: 12.5px; color: var(--text-muted); line-height: 1.6; }
+  .finding .in-notebook { display: inline-block; margin-top: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: var(--text-faint); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 3px 7px; }
+
+  /* diagram */
+  .diagram-wrap { overflow-x: auto; }
+  figure { margin: 0; }
+  svg { display: block; width: 100%; height: auto; min-width: 700px; }
+  .lyr rect { fill: var(--node-bg); stroke: var(--border); stroke-width: 1.5; }
+  .lyr.reuse rect { stroke: var(--reuse); }
+  .lyr.new rect { stroke: var(--new); stroke-dasharray: 5 3; }
+  .lyr .title { font-family: 'Archivo', sans-serif; font-weight: 700; font-size: 12.5px; fill: var(--text); }
+  .lyr .sub { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; fill: var(--text-faint); }
+  .band-label { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.04em; fill: var(--text-faint); text-transform: uppercase; }
+  .edge { fill: none; stroke: var(--text-faint); stroke-width: 1.3; }
+  .edge.reuse { stroke: var(--reuse); stroke-width: 1.8; }
+  .edge-label { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; fill: var(--text-muted); }
+  figcaption { margin-top: 12px; font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+  .diagram-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+  .dleg { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-muted); }
+  .dleg .sw { width: 22px; height: 3px; border-radius: 2px; }
+  .dleg .sw.reuse-line { background: var(--reuse); }
+  .dleg .sw.new-line { background: var(--new); }
+  .dleg .sw.exist-line { background: var(--border); }
+
+  /* decisions */
+  .decisions { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+  .decision { border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: var(--surface); }
+  .decision .tag { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--new); font-weight: 700; }
+  .decision h3 { margin: 6px 0 8px; font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 14.5px; }
+  .decision .opt { border-top: 1px dashed var(--border); padding-top: 8px; margin-top: 8px; font-size: 12.5px; color: var(--text-muted); line-height: 1.55; }
+  .decision .opt b { color: var(--text); }
+
+  footer { border-top: 1px solid var(--border); padding-top: 16px; font-size: 12px; color: var(--text-faint); line-height: 1.7; }
+  footer .mono { color: var(--text-faint); }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">planning material &middot; open decisions flagged, none made here</div>
+    <h1 class="display">Multi-Agentic-RAG Fit Plan</h1>
+    <p class="subtitle">How real orchestration logic would slot into <span class="mono">hrb_chatbot_v2</span> on top of Phase 61's scaffold (<span class="mono">POST /v1/multi-agentic-rag/query</span>, live and returning 501 today) &mdash; without touching <span class="mono">genai-rag</span> or <span class="mono">single-agentic-rag</span>'s existing code paths, and reusing what's already built instead of re-deriving the course sample's own tools.</p>
+  </header>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Gaps in the FDE Sample's Own Implementation</h2>
+      <p>Not "vs our project" &mdash; real issues in the notebook's own code, found by tracing its logic carefully</p>
+    </div>
+    <div class="card-body">
+      <div class="findings">
+
+        <div class="finding">
+          <span class="n">1</span>
+          <div>
+            <h3>Stale results silently accumulate across turns</h3>
+            <p>With the checkpointer enabled, <span class="mono">agent_results</span>/<span class="mono">search_messages</span>/<span class="mono">planner_messages</span> are all <span class="mono">operator.add</span>-reduced - but every new call still passes <span class="mono">"agent_results": []</span> hoping to reset them. Under <span class="mono">operator.add</span>, adding <span class="mono">[]</span> is a no-op, not a clear - the previous turn's results never actually get purged, so the Synthesizer can merge in stale results from an earlier, unrelated question on a later turn.</p>
+            <span class="in-notebook">TravelPlannerState, cells 62 &amp; 99-101</span>
+          </div>
+        </div>
+
+        <div class="finding">
+          <span class="n">2</span>
+          <div>
+            <h3>Zero input safety</h3>
+            <p>No prompt-injection check, no off-topic rejection, no PII handling anywhere - the router and both workers act on raw user text directly. Reasonable for a teaching notebook, but a real gap if any of this pattern gets reused for a real system.</p>
+            <span class="in-notebook">no guardrail cell exists in the notebook</span>
+          </div>
+        </div>
+
+        <div class="finding">
+          <span class="n">3</span>
+          <div>
+            <h3>Router has no "neither" path</h3>
+            <p>The classifier is only ever told about 2 named agents and must pick at least one - there's no graceful way to say "this question isn't about travel at all." A real off-topic question would still get force-routed somewhere.</p>
+            <span class="in-notebook">classify_query_parallel()'s own system prompt</span>
+          </div>
+        </div>
+
+        <div class="finding">
+          <span class="n">4</span>
+          <div>
+            <h3>No error handling around the router's own LLM call</h3>
+            <p><span class="mono">structured_llm.invoke(...)</span> has no try/except - a rate limit, a malformed structured-output response, or a network blip crashes the whole graph with no fallback.</p>
+            <span class="in-notebook">classify_query_parallel()</span>
+          </div>
+        </div>
+
+        <div class="finding">
+          <span class="n">5</span>
+          <div>
+            <h3>Unbounded synthesis prompt</h3>
+            <p><span class="mono">results_formatted</span> concatenates every worker's full output with no truncation or token budget - a couple of long worker responses and the synthesis call's prompt size is fully unbounded.</p>
+            <span class="in-notebook">synthesizer_node()</span>
+          </div>
+        </div>
+
+        <div class="finding">
+          <span class="n">6</span>
+          <div>
+            <h3>Three different agent-construction styles, no stated reason</h3>
+            <p><span class="mono">create_deep_agent()</span> (a separate library) for one worker, <span class="mono">create_agent()</span> (LangChain's own prebuilt) for prototyping the other two, then fully hand-rolled node functions for the actual production graph - the notebook never explains why the prototyped agents weren't wired in directly instead of being reimplemented by hand.</p>
+            <span class="in-notebook">cells 24, 41-44, 77-81</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Shared Foundation, Three Consumers</h2>
+      <p>The reuse argument in one picture: what multi-agentic-rag would borrow vs. what's genuinely new</p>
+    </div>
+    <div class="card-body diagram-wrap">
+      <figure>
+        <svg viewBox="0 0 1180 520" role="img" aria-label="A shared foundation layer of retrieval, tools, conversation memory, guardrails, RBAC, and rate limiting sits beneath three consumers: genai-rag and single-agentic-rag, both existing and untouched, and multi-agentic-rag, which is new. Multi-agentic-rag's Router and Synthesizer are new code; its worker step reuses single-agentic-rag's existing run_agent function, called multiple times with different tool subsets, connected together by a new asyncio.gather dispatch step, not LangGraph.">
+
+          <text class="band-label" x="20" y="24">existing endpoints, untouched</text>
+          <!-- genai-rag -->
+          <g class="lyr">
+            <rect x="20" y="34" width="230" height="56" rx="9"></rect>
+            <text class="title" x="135" y="58" text-anchor="middle">genai-rag</text>
+            <text class="sub" x="135" y="74" text-anchor="middle">retrieve_document.py</text>
+          </g>
+          <!-- single-agentic-rag -->
+          <g class="lyr">
+            <rect x="270" y="34" width="230" height="56" rx="9"></rect>
+            <text class="title" x="385" y="58" text-anchor="middle">single-agentic-rag</text>
+            <text class="sub" x="385" y="74" text-anchor="middle">orchestration_agent.run_agent()</text>
+          </g>
+
+          <text class="band-label" x="560" y="24">new</text>
+          <!-- multi-agentic-rag block -->
+          <g class="lyr new">
+            <rect x="560" y="34" width="600" height="220" rx="10"></rect>
+          </g>
+          <text class="title" x="580" y="54" style="fill:var(--new)">multi-agentic-rag (Phase 61 scaffold, orchestration not built yet)</text>
+
+          <g class="lyr new">
+            <rect x="580" y="66" width="180" height="50" rx="8"></rect>
+            <text class="title" x="670" y="86" text-anchor="middle">Router</text>
+            <text class="sub" x="670" y="100" text-anchor="middle">orchestrator_router.py</text>
+          </g>
+          <line class="edge" x1="760" y1="91" x2="800" y2="91" marker-end="url(#a2)"></line>
+          <text class="edge-label" x="765" y="82">tasks</text>
+
+          <g class="lyr new">
+            <rect x="800" y="66" width="150" height="50" rx="8"></rect>
+            <text class="title" x="875" y="86" text-anchor="middle">Dispatch</text>
+            <text class="sub" x="875" y="100" text-anchor="middle">asyncio.gather()</text>
+          </g>
+
+          <line class="edge reuse" x1="875" y1="116" x2="875" y2="150" marker-end="url(#a1)"></line>
+          <text class="edge-label" x="885" y="136" style="fill:var(--reuse)">calls N times</text>
+          <g class="lyr reuse">
+            <rect x="740" y="150" width="270" height="54" rx="8"></rect>
+            <text class="title" x="875" y="171" text-anchor="middle" style="fill:var(--reuse)">run_agent() &mdash; reused</text>
+            <text class="sub" x="875" y="186" text-anchor="middle">same loop as single-agentic-rag,</text>
+            <text class="sub" x="875" y="197" text-anchor="middle">new optional tool_subset param</text>
+          </g>
+
+          <polyline class="edge" points="740,177 700,177 700,227 760,227" marker-end="url(#a2)"></polyline>
+          <text class="edge-label" x="705" y="205">merges results</text>
+          <g class="lyr new">
+            <rect x="580" y="204" width="180" height="46" rx="8"></rect>
+            <text class="title" x="670" y="223" text-anchor="middle">Synthesizer</text>
+            <text class="sub" x="670" y="237" text-anchor="middle">synthesizer.py</text>
+          </g>
+
+          <text class="band-label" x="560" y="284">shared foundation - every consumer above calls into this, unmodified</text>
+          <g class="lyr reuse">
+            <rect x="20" y="294" width="270" height="56" rx="9"></rect>
+            <text class="title" x="155" y="316" text-anchor="middle" style="fill:var(--reuse)">Retrieval</text>
+            <text class="sub" x="155" y="332" text-anchor="middle">retriever.py :: retrieve_chunks()</text>
+          </g>
+          <g class="lyr reuse">
+            <rect x="310" y="294" width="270" height="56" rx="9"></rect>
+            <text class="title" x="445" y="316" text-anchor="middle" style="fill:var(--reuse)">Tools</text>
+            <text class="sub" x="445" y="332" text-anchor="middle">agentic_tools.py (3 existing tools)</text>
+          </g>
+          <g class="lyr reuse">
+            <rect x="600" y="294" width="270" height="56" rx="9"></rect>
+            <text class="title" x="735" y="316" text-anchor="middle" style="fill:var(--reuse)">Conversation Memory</text>
+            <text class="sub" x="735" y="332" text-anchor="middle">conversation_memory.py (Phase 58)</text>
+          </g>
+          <g class="lyr reuse">
+            <rect x="890" y="294" width="270" height="56" rx="9"></rect>
+            <text class="title" x="1025" y="316" text-anchor="middle" style="fill:var(--reuse)">Identity + Rate Limit</text>
+            <text class="sub" x="1025" y="332" text-anchor="middle">require_role() / rate_limiter.py</text>
+          </g>
+          <g class="lyr reuse">
+            <rect x="20" y="368" width="400" height="50" rx="9"></rect>
+            <text class="title" x="220" y="388" text-anchor="middle" style="fill:var(--reuse)">Input/Output Guardrails</text>
+            <text class="sub" x="220" y="402" text-anchor="middle">guardrails_input.py / guardrails_output/ (genai-rag only today)</text>
+          </g>
+
+          <line class="edge reuse" x1="135" y1="90" x2="155" y2="292" marker-end="url(#a1)"></line>
+          <line class="edge reuse" x1="385" y1="90" x2="445" y2="292" marker-end="url(#a1)"></line>
+
+          <defs>
+            <marker id="a1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--reuse)"></path></marker>
+            <marker id="a2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"></path></marker>
+          </defs>
+        </svg>
+        <div class="diagram-legend">
+          <span class="dleg"><span class="sw reuse-line"></span>reused as-is</span>
+          <span class="dleg"><span class="sw new-line"></span>genuinely new code</span>
+        </div>
+        <figcaption>
+          Everything in the shared-foundation band is unmodified - genai-rag and single-agentic-rag never change, and multi-agentic-rag's worker step reuses all four boxes the same way single-agentic-rag already does (not drawn again to avoid crossing lines). The only piece that grows is <span class="mono">run_agent()</span> gaining two new <em>optional</em> parameters (a tool subset, a system-prompt override) - both default to today's exact behavior when omitted, so single-agentic-rag's own contract is untouched. One genuinely new reuse: the Router would be the first agentic endpoint to call the input guardrail (<span class="mono">check_input()</span>) - today only genai-rag does.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Open Decisions</h2>
+      <p>Two real forks worth a direct answer before writing the next spec &mdash; your call, not decided here</p>
+    </div>
+    <div class="card-body">
+      <div class="decisions">
+        <div class="decision">
+          <span class="tag">decision 1</span>
+          <h3>How workers actually run in parallel</h3>
+          <div class="opt"><b>Recommended:</b> plain <span class="mono">asyncio.gather()</span> over N calls to <span class="mono">run_agent()</span>. No new dependency, matches this project's existing "hand-written, no framework classes" style used everywhere else (retriever.py, orchestration_agent.py).</div>
+          <div class="opt"><b>Alternative:</b> adopt LangGraph's <span class="mono">StateGraph</span> + <span class="mono">Send()</span>, matching the course exactly. Real option: <span class="mono">langgraph==0.3.21</span> is already pinned (pulled in by <span class="mono">langchain</span>), so no new install - but it's a real framework adoption, current project convention is to avoid consolidating onto a new library without a recorded reason confirmed with you first.</div>
+        </div>
+        <div class="decision">
+          <span class="tag">decision 2</span>
+          <h3>Named domain-agent files, or parameters at the call site</h3>
+          <div class="opt"><b>Option A:</b> call <span class="mono">run_agent(query, tool_subset=[...])</span> directly from the dispatch step - fewer files, less indirection.</div>
+          <div class="opt"><b>Option B:</b> give each domain its own thin file in <span class="mono">ai/agents/domain_agents/</span> (already an empty, reserved folder) - e.g. <span class="mono">benefits_search_agent.py</span>, <span class="mono">leave_agent.py</span> - each just calling <span class="mono">run_agent()</span> with its own fixed tool subset. Same underlying reuse either way; this is about discoverability, not a different mechanism.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Also true today, not new to this plan: single-agentic-rag itself doesn't call the input/output guardrails yet either (confirmed - <span class="mono">orchestration_agent.py</span> has no reference to <span class="mono">guardrails_input</span>) - wiring the Router through <span class="mono">check_input()</span> would be multi-agentic-rag's first use of that guardrail from an agentic endpoint, not just genai-rag's.
+  </footer>
+
+</div>

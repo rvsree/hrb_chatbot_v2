@@ -1,13 +1,11 @@
-"""Ask the knowledge-base a question - spends real money on a well-formed
-request (one embedding call, one chat completion, per query)."""
+"""Ask the knowledge-base a question - spends real money per query (one embedding call, one chat completion)."""
 
 from fastapi import APIRouter, Request
 
 from src.hrb_chatbot.ai.pre_processing.guardrails_input import GuardrailBlockedError
 from src.hrb_chatbot.ai.rag_pipeline import pipeline
 from src.hrb_chatbot.api.dependencies import json_error
-from src.hrb_chatbot.api.gateway.user_profile import resolve_user_from_profile
-from src.hrb_chatbot.api.gateway.rbac import check_role
+from src.hrb_chatbot.api.gateway.rbac import require_role
 from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.enums import Role
 from src.hrb_chatbot.common.logging.logger import get_logger
@@ -20,10 +18,8 @@ logger = get_logger("retrieve_document")
 router_retrieve_document = APIRouter(tags=["query"])
 
 
-def _params_from_request(payload: RagQueryRequest) -> RagQueryParams:
-    """Map the nested request into the flat, framework-free dataclass every
-    layer below the route actually uses - keeps ai/rag_pipeline/ unaware
-    of this endpoint's wire shape."""
+def _params_from_request(payload: RagQueryRequest, employee_id: str | None = None) -> RagQueryParams:
+    """Map the nested request into the flat dataclass ai/rag_pipeline/ actually uses."""
     search_options = payload.search_options
     generation_options = payload.generation_options
     return RagQueryParams(
@@ -37,11 +33,14 @@ def _params_from_request(payload: RagQueryRequest) -> RagQueryParams:
         use_multi_query=search_options.use_multi_query if search_options else False,
         use_self_query=search_options.use_self_query if search_options else False,
         llm_provider=search_options.llm_provider if search_options else None,
+        employee_id=employee_id,
+        enable_conversation_memory=payload.enable_conversation_memory,
+        conversation_id=payload.conversation_id,
     )
 
 
-async def _answer_query(payload: RagQueryRequest) -> RagQueryResponse | object:
-    params = _params_from_request(payload)
+async def _answer_query(payload: RagQueryRequest, employee_id: str | None = None) -> RagQueryResponse | object:
+    params = _params_from_request(payload, employee_id)
     try:
         result = await pipeline.answer_query(params)
     except NotImplementedError as error:
@@ -65,12 +64,12 @@ async def _answer_query(payload: RagQueryRequest) -> RagQueryResponse | object:
             applied_filter=result.get("applied_filter"),
             sources=result["sources"],
         ),
+        conversation_id=result.get("conversation_id"),
     )
 
 
 @router_retrieve_document.post("/query", response_model=RagQueryResponse)
 async def query(payload: RagQueryRequest, request: Request):
-    userProfile = resolve_user_from_profile(payload.user_profile)
-    check_role(userProfile, Role.EMPLOYEE, Role.MANAGER, Role.HR_SUPPORT)
+    userProfile = require_role(payload.user_profile, Role.EMPLOYEE, Role.MANAGER, Role.HR_SUPPORT)
     enforce_rate_limit(request)
-    return await _answer_query(payload)
+    return await _answer_query(payload, employee_id=userProfile.employee_id)

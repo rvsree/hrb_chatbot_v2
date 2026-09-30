@@ -1,6 +1,4 @@
-"""Pinecone client - alternative to ChromaDB, same BaseVectorDBClient contract.
-Gotcha: query() returns "score" (higher=closer), not Chroma's "distance"
-(lower=closer) - both come back under "distances" for shape parity."""
+"""Pinecone client - alternative to ChromaDB. Gotcha: query() returns "score" (higher=closer), not Chroma's "distance"."""
 
 import json
 import time
@@ -14,16 +12,13 @@ from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("pinecone_client")
 
-# How long to wait, total, for a freshly created index to report ready before
-# giving up - serverless indexes are typically ready in a few seconds.
+# Total wait for a freshly created index to report ready - serverless indexes are typically ready in seconds.
 INDEX_READY_TIMEOUT_SECONDS = int(read_setting(None, "PINECONE_INDEX_READY_TIMEOUT_SECONDS", 60))
 INDEX_READY_POLL_SECONDS = int(read_setting(None, "PINECONE_INDEX_READY_POLL_SECONDS", 2))
 
 
 def _text_from_llama_index_node_content(metadata: dict) -> str:
-    """LlamaIndex (pre-Phase 17) stored chunk text inside a "_node_content"
-    JSON blob instead of this client's own "document" key - kept for
-    backward compat with any such vectors still in the index."""
+    """LlamaIndex used to store chunk text in a "_node_content" blob instead of this client's "document" key."""
     raw_node_content = metadata.get("_node_content")
     if not raw_node_content:
         return ""
@@ -53,8 +48,7 @@ class PineconeClient(BaseVectorDBClient):
         metric: str | None = None,
         dimension: int | None = None,
     ):
-        """Read settings and build the lightweight Pinecone client object - this
-        makes no network call by itself; creating/confirming the index is deferred, see _ensure_index()."""
+        """Read settings and build the lightweight Pinecone client object - no network call yet."""
         self.api_key = read_setting(api_key, "PINECONE_API_KEY")
         self.index_name = read_setting(index_name, "PINECONE_INDEX_NAME")
         self.cloud = read_setting(cloud, "PINECONE_CLOUD", self.DEFAULT_CLOUD)
@@ -88,8 +82,7 @@ class PineconeClient(BaseVectorDBClient):
         return self._client
 
     def _ensure_index(self) -> None:
-        """Create the configured index if it doesn't exist yet, and wait for it
-        to report ready. Safe to call repeatedly - a no-op once ready."""
+        """Create the configured index if needed and wait for it to be ready - safe to call repeatedly."""
         if self._index_ready:
             return
 
@@ -141,19 +134,15 @@ class PineconeClient(BaseVectorDBClient):
         metadatas: list[dict] | None = None,
     ) -> None:
         if metadatas is None:
-            # No metadata given - fill in an empty dict per id so the merge loop below
-            # always has something to write into.
+            # No metadata given - fill in an empty dict per id so the merge loop below has something to write into.
             metadatas = []
             for _ in ids:
                 metadatas.append({})
 
-        # Four lists line up by position - zip() walks all at once (Java:
-        # iterating four arrays with one shared index). strict=True catches
-        # mismatched lengths instead of silently truncating.
+        # Four lists line up by position - strict=True catches mismatched lengths instead of silently truncating.
         vectors = []
         for id_, embedding, document, metadata in zip(ids, embeddings, documents, metadatas, strict=True):
-            # Pinecone has no native "document text" field - stash it in metadata
-            # alongside whatever the caller already put there (document_id, chunk_index).
+            # Pinecone has no native "document text" field - stash it in metadata alongside what's already there.
             vector_metadata = dict(metadata)
             vector_metadata["document"] = document
             vectors.append({"id": id_, "values": embedding, "metadata": vector_metadata})
@@ -187,8 +176,7 @@ class PineconeClient(BaseVectorDBClient):
             metadatas.append(metadata)
             scores.append(match.score)
 
-        # Nested once to match Chroma's shape. "distances" here are Pinecone
-        # similarity scores (higher = closer) - see module docstring.
+        # Nested once to match Chroma's shape - "distances" here are Pinecone scores (higher = closer).
         return {"ids": [ids], "documents": [documents], "metadatas": [metadatas], "distances": [scores]}
 
     def delete(self, collection_name: str, ids: list[str]) -> None:
@@ -198,9 +186,7 @@ class PineconeClient(BaseVectorDBClient):
             self.get_index().delete(ids=ids, namespace=collection_name)
 
     def update_metadata(self, collection_name: str, ids: list[str], metadatas: list[dict]) -> None:
-        """Pinecone's update() is per-id and merges set_metadata rather than
-        replacing - harmless only because every caller here already passes
-        the full desired metadata. Gap: omitting "document" loses that chunk's text."""
+        """Pinecone's update() merges rather than replaces - harmless since callers pass the full metadata anyway."""
         with log_backend_call(
             logger, "pinecone", "vector.update_metadata", namespace=collection_name, chunk_count=len(ids)
         ):
@@ -209,8 +195,7 @@ class PineconeClient(BaseVectorDBClient):
                 index.update(id=id_, set_metadata=metadata, namespace=collection_name)
 
     def health_check(self) -> dict:
-        """Lists indexes, then calls _ensure_index() - creates the index on
-        first call (billable), a no-op after."""
+        """Lists indexes then calls _ensure_index() - creates it on first call (billable), a no-op after."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 

@@ -1,6 +1,4 @@
-"""Checks a generated answer against NeMo Guardrails' output rails -
-Gate 6 (Delivery Gate). Faithfulness (Gate 5) is DeepEval's job, not
-NeMo's - see RAG-ROADMAP.md Phase 7's scope cut."""
+"""Checks a generated answer against NeMo Guardrails' output rails (Gate 6) - faithfulness is DeepEval's job."""
 
 from src.hrb_chatbot.ai.pre_processing.guardrails_input import get_rails
 from src.hrb_chatbot.common.logging.logger import get_logger
@@ -12,8 +10,7 @@ SAFE_FALLBACK_ANSWER = "I'm not able to share that response. Please rephrase you
 
 
 async def check_output(query: str, answer: str) -> str:
-    """Runs output rails on the answer. Returns the answer to actually
-    return (masked if NeMo redacted PII, or a safe fallback if blocked)."""
+    """Runs output rails - returns masked text if PII was redacted, or a safe fallback if blocked."""
     messages = [{"role": "user", "content": query}, {"role": "assistant", "content": answer}]
     result = await get_rails().check_async(messages, rail_types=[RailType.OUTPUT])
 

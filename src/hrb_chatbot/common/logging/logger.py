@@ -1,5 +1,4 @@
-"""Sets up logging so every file prints messages the same way - get_logger(name)
-factory, distinct from log_helper.py's message-tagging."""
+"""Sets up logging so every file prints messages the same way - get_logger(name) factory."""
 
 import logging
 import sys
@@ -11,10 +10,7 @@ TIME_FORMAT = "%H:%M:%S"
 
 
 def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
-    """Return a logger with the given name, setting it up on first use.
-
-    Safe to call repeatedly with the same name - the handlers check below stops a second call from attaching a duplicate printer.
-    """
+    """Return a logger with the given name, setting it up on first use - safe to call repeatedly."""
     logger = logging.getLogger(name)
 
     # Already set up by an earlier call - just hand it back.

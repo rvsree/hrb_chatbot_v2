@@ -3,7 +3,7 @@
 An HR benefits chatbot backed by a RAG pipeline over the JPMC benefits
 knowledge base (`resources/kb_docs/`). Being built by hand, one feature at a
 time, to apply RAG concepts from the Interview Kickstart FDE cohort - see
-[docs/RAG-ROADMAP.md](docs/RAG-ROADMAP.md) for the phase-by-phase plan and
+[docs/agent-reference/RAG-ROADMAP.md](docs/agent-reference/RAG-ROADMAP.md) for the phase-by-phase plan and
 current status (that file is the source of truth for "what's done" - this
 README doesn't repeat it).
 
@@ -98,12 +98,12 @@ curl "http://127.0.0.1:8093/health?provider=openrouter"
 other). **Tavily has a client
 (`common/clients/web_client/tavily_client.py`) but is not wired into
 `/health` yet** - a known gap, tracked in
-[docs/BACKLOG.md](docs/BACKLOG.md), not something broken.
+[docs/agent-reference/BACKLOG.md](docs/agent-reference/BACKLOG.md), not something broken.
 
 ### Upload documents, index them, and ask the knowledge base
 
 All of these are implemented and verified live (see
-[docs/TESTING-GUIDE.md](docs/TESTING-GUIDE.md) for the automated test
+[docs/agent-reference/TESTING-GUIDE.md](docs/agent-reference/TESTING-GUIDE.md) for the automated test
 suite, and `postman/hrb_chatbot.postman_collection.json` for every
 request/response case, happy path and edge case, importable into Postman):
 
@@ -111,18 +111,18 @@ request/response case, happy path and edge case, importable into Postman):
 # upload a real PDF - chunks, embeds, and indexes in the same call (no
 # separate index step since Phase 26); identity travels as a JSON string in
 # the payload form field, not headers - copy the document_id from the response
-curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" -F "payload={\"user_profile\": {\"employee_id\": \"E00001\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}}" http://127.0.0.1:8093/v1/genai-rag/ingest-document/documents
+curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/pdf" -F "payload={\"user_profile\": {\"employee_id\": \"EMP051\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}}" http://127.0.0.1:8093/v1/genai-rag/ingest-document/documents
 
 # ask a question - real retrieval + grounded generation (spends: one real
 # embedding call + one real chat completion). Evaluations and guardrails
-# are still hand-written and not built yet - see docs/RAG-ROADMAP.md for
+# are still hand-written and not built yet - see docs/agent-reference/RAG-ROADMAP.md for
 # exactly what's in and what's deliberately deferred
-curl -X POST http://127.0.0.1:8093/v1/genai-rag/retrieve-document/query -H "Content-Type: application/json" -d "{\"user_profile\": {\"employee_id\": \"E00002\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"}, \"query\": \"How many weeks of parental leave do I get?\"}"
+curl -X POST http://127.0.0.1:8093/v1/genai-rag/retrieve-document/query -H "Content-Type: application/json" -d "{\"user_profile\": {\"employee_id\": \"EMP052\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"}, \"query\": \"How many weeks of parental leave do I get?\"}"
 ```
 
 Idempotency (the `Idempotency-Key` header) and content-hash duplicate-upload
 detection were removed 2026-09-13 - re-uploading identical content now
-always creates a new document. See `docs/RAG-ROADMAP.md`'s phase entry for
+always creates a new document. See `docs/agent-reference/RAG-ROADMAP.md`'s phase entry for
 why, and for the planned Redis-backed idempotency re-implementation.
 
 For testing every endpoint from a GUI instead of curl, import
@@ -144,7 +144,7 @@ docker run --rm --env-file .env -p 8093:8093 hrb-chatbot:local
 ```
 
 Build- and run-verified, including a real deployment to AWS App Runner -
-see [docs/AWS-DEVOPS-RUNBOOK.md](docs/AWS-DEVOPS-RUNBOOK.md) for the full
+see [docs/agent-reference/AWS-DEVOPS-RUNBOOK.md](docs/agent-reference/AWS-DEVOPS-RUNBOOK.md) for the full
 containerize → ECR → App Runner pipeline, exactly which build flags are
 required and why (three separate real bugs were found and fixed getting
 this image to actually run in App Runner, not just build locally), and how
@@ -154,7 +154,7 @@ to review/validate every AWS resource this project provisions.
 
 `feature-<name>` branches → `develop` (integration, fully gated) →
 `master` (production - `deploy.yml` deploys from here only). See
-[docs/CICD-BRANCHING-STRATEGY.md](docs/CICD-BRANCHING-STRATEGY.md) for the
+[docs/agent-reference/CICD-BRANCHING-STRATEGY.md](docs/agent-reference/CICD-BRANCHING-STRATEGY.md) for the
 branch roles, every CI gate and the threshold it enforces (test pass rate,
 coverage floor, security scanning, and the A/B-testing bar for once
 Phase 8's eval harness exists), and the deployment-testing step that now
@@ -168,7 +168,7 @@ runs after every real deploy.
 ```
 
 No test needs a real API key or network call - see
-[docs/TESTING-GUIDE.md](docs/TESTING-GUIDE.md) for what's covered, why
+[docs/agent-reference/TESTING-GUIDE.md](docs/agent-reference/TESTING-GUIDE.md) for what's covered, why
 those specific cases, and the fake-based pattern to copy when testing the
 hand-written RAG pipeline once it exists.
 
@@ -183,16 +183,16 @@ them.
 
 ## Project conventions
 
-See [docs/CODING-STANDARDS.md](docs/CODING-STANDARDS.md) for the error
+See [docs/agent-reference/CODING-STANDARDS.md](docs/agent-reference/CODING-STANDARDS.md) for the error
 handling, logging, and API contract conventions this codebase follows.
 
 ## Known gaps and planned work
 
-See [docs/BACKLOG.md](docs/BACKLOG.md).
+See [docs/agent-reference/BACKLOG.md](docs/agent-reference/BACKLOG.md).
 
 ## Design questions and FAQ
 
-[docs/FAQ.md](docs/FAQ.md) - deep-dive answers on document update
+[docs/agent-reference/FAQ.md](docs/agent-reference/FAQ.md) - deep-dive answers on document update
 strategy, where RAG metadata lives and which store is right for filtering
 search results, and how document indexing/categorization works - each
 split clearly into what this project does today vs. general RAG design

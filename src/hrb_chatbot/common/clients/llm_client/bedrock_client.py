@@ -1,6 +1,4 @@
-"""Bedrock client - the unified Converse API (not the older per-model-family
-InvokeModel shapes). Untested against a real AWS account - reviewed, not
-verified; see ask_with_tools()'s OpenAI<->Bedrock conversion."""
+"""Bedrock client - the unified Converse API. Untested against a real AWS account - reviewed, not verified."""
 
 import boto3
 
@@ -91,8 +89,7 @@ class BedrockChatClient(BaseLLMClient):
         return answer_text
 
     def ask_with_tools(self, messages, tools, temperature=0.0, max_tokens=None, tool_choice="auto"):
-        """Ask a question and let the model call tools. Takes OpenAI-shaped messages/tools,
-        returns an OpenAI-shaped reply - same conversion pattern anthropic_client.py uses."""
+        """Ask and let the model call tools - same OpenAI-shaped conversion pattern anthropic_client.py uses."""
         bedrock_tools = self._convert_tools_to_bedrock_format(tools)
         system_text, bedrock_messages = self._convert_messages_to_bedrock_format(messages)
 
@@ -118,8 +115,7 @@ class BedrockChatClient(BaseLLMClient):
 
     @staticmethod
     def _convert_tools_to_bedrock_format(tools: list[dict]) -> list[dict]:
-        """Rewrite OpenAI-style tool defs into Bedrock's toolSpec shape: name,
-        description, and schema nested under "toolSpec", schema key "inputSchema": {"json": ...}."""
+        """Rewrite OpenAI-style tool defs into Bedrock's toolSpec shape."""
         bedrock_tools = []
         for tool in tools:
             if tool.get("type") != "function":
@@ -141,8 +137,7 @@ class BedrockChatClient(BaseLLMClient):
     def _convert_messages_to_bedrock_format(
         messages: list[dict],
     ) -> tuple[str | None, list[dict]]:
-        """Rewrite OpenAI-shaped messages into Bedrock's Converse shape: splits out
-        the system message, and groups tool results into "user" turns since Bedrock has no "tool" role."""
+        """Rewrite OpenAI-shaped messages into Bedrock's Converse shape - Bedrock has no "tool" role."""
         system_text = None
         bedrock_messages: list[dict] = []
         pending_tool_results: list[dict] = []
@@ -197,8 +192,7 @@ class BedrockChatClient(BaseLLMClient):
 
     @staticmethod
     def _convert_response_to_openai_format(response: dict) -> dict:
-        """Rewrite a Converse reply into the shape OpenAI uses, so calling
-        code only ever has to understand one reply format."""
+        """Rewrite a Converse reply into the shape OpenAI uses, so calling code understands one format."""
         answer_text = ""
         tool_calls = []
 
@@ -240,9 +234,7 @@ class BedrockChatClient(BaseLLMClient):
         }
 
     def health_check(self) -> dict:
-        """Report whether this client is usable: calls ListFoundationModels to
-        confirm. AWS creds may come from an IAM role rather than .env, so there's
-        no cheap "is a key present" check to do first - this is the only way to know."""
+        """Calls ListFoundationModels - AWS creds may come from an IAM role, no cheap key-check to do first."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 

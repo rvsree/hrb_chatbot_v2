@@ -62,7 +62,7 @@ COPY --from=builder /opt/venv /opt/venv
 
 # /srv holds src/ so imports written as `from src.hrb_chatbot...` resolve the
 # same way they do when running locally from the repository root - see
-# docs/RAG-ROADMAP.md's note on the src.hrb_chatbot.* import convention.
+# docs/agent-reference/RAG-ROADMAP.md's note on the src.hrb_chatbot.* import convention.
 # No .env is copied in: a container is configured through environment
 # variables at run time (see README.md's Docker section), not a file baked
 # into the image.

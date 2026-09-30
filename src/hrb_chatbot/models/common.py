@@ -10,8 +10,6 @@ class UserProfile(BaseModel):
 
 
 class IdentityPayload(BaseModel):
-    """The JSON body for GET/DELETE endpoints (Phase 45) - identity only,
-    no other fields. Non-standard HTTP (a GET/DELETE body), a deliberate
-    choice: every endpoint takes JSON payload, no query params, no headers."""
+    """The JSON body for GET/DELETE endpoints - identity only, deliberately never a query param or header."""
 
     user_profile: UserProfile | None = None

@@ -5,7 +5,7 @@ Phase 26: upload now indexes immediately (one endpoint, no separate
 
 Phase 45: identity travels as a JSON payload on every request, including
 GET/DELETE (non-standard HTTP, deliberate - see
-docs/endpoint-request-response-contracts.md) - not headers, not query params."""
+docs/agent-reference/endpoint-request-response-contracts.md) - not headers, not query params."""
 
 import io
 import json
@@ -20,7 +20,7 @@ from src.hrb_chatbot.services import documents_service
 
 client = TestClient(app)
 
-HR_SUPPORT_USER_PROFILE = {"employee_id": "E00001", "full_name": "Hana Support", "role": "hr_support"}
+HR_SUPPORT_USER_PROFILE = {"employee_id": "EMP051", "full_name": "Hana Support", "role": "hr_support"}
 
 
 def _payload(user_profile=None, chunk_info=None, document_metadata=None) -> dict:
@@ -67,8 +67,8 @@ def _fake_indexing(monkeypatch):
             "chunk_overlap": 150,
             "document_version": 1,
             "document_metadata": {
-                "owner": None, "department": None, "doc_type": None, "purpose": None,
-                "doc_classification": None, "effective_date": None, "audience": None,
+                "owner": None, "department": None, "doc_category": None, "purpose": None,
+                "doc_description": None, "effective_date": None, "audience": None,
                 "confidentiality_level": None,
             },
         }
@@ -102,7 +102,7 @@ def test_single_valid_pdf_is_uploaded_and_indexed():
     assert result["error"] is None
     assert result["chunk_info"]["action"] == "insert"
     assert result["chunk_info"]["chunks_indexed"] == 1
-    assert result["uploaded_by"] == "E00001"
+    assert result["uploaded_by"] == "EMP051"
     # Bug found 2026-09-21: is_current was reporting null on a fresh upload.
     assert result["versioning_info"]["is_current"] is True
     assert result["versioning_info"]["supersedes"] is None
@@ -126,8 +126,8 @@ def test_chunking_strategy_size_and_overlap_form_fields_reach_the_pipeline(monke
             "chunk_overlap": 50,
             "document_version": 1,
             "document_metadata": {
-                "owner": None, "department": None, "doc_type": None, "purpose": None,
-                "doc_classification": None, "effective_date": None, "audience": None,
+                "owner": None, "department": None, "doc_category": None, "purpose": None,
+                "doc_description": None, "effective_date": None, "audience": None,
                 "confidentiality_level": None,
             },
         }
@@ -268,7 +268,7 @@ def test_uploaded_document_appears_in_list_and_get_by_id():
     # the DB (the real write_chunks() does that internally) - status stays
     # "uploaded" here, same as documents_service.create_document() set it.
     assert document["status"] == "uploaded"
-    assert document["uploaded_by"] == "E00001"
+    assert document["uploaded_by"] == "EMP051"
 
 
 def test_get_unknown_document_id_is_a_404_with_the_standard_error_shape():
@@ -292,7 +292,7 @@ def test_deleting_an_indexed_document_removes_it():
     body = delete_response.json()
     assert body["document_id"] == document_id
     assert body["filename"] == "to-delete.pdf"
-    assert body["deleted_by"] == "E00001"
+    assert body["deleted_by"] == "EMP051"
 
     # Really gone, not just reported as deleted.
     get_response = _get(f"/v1/genai-rag/ingest-document/documents/{document_id}")
@@ -447,7 +447,7 @@ def test_ingestion_without_any_identity_is_a_401():
 def test_ingestion_with_an_unknown_role_value_is_a_401():
     response = _get(
         "/v1/genai-rag/ingest-document/documents",
-        {"employee_id": "E00001", "full_name": "Hana Support", "role": "made-up-role"},
+        {"employee_id": "EMP051", "full_name": "Hana Support", "role": "made-up-role"},
     )
 
     assert response.status_code == 401
@@ -461,7 +461,7 @@ def test_ingestion_as_employee_or_manager_is_a_403_only_hr_support_may_upload():
         response = client.post(
             "/v1/genai-rag/ingest-document/documents",
             files=_pdf_file(),
-            data=_payload(user_profile={"employee_id": "E00002", "full_name": "Some Employee", "role": role}),
+            data=_payload(user_profile={"employee_id": "EMP052", "full_name": "Some Employee", "role": role}),
         )
 
         assert response.status_code == 403, role
@@ -511,7 +511,7 @@ def test_cleanup_delete_removes_test_noise_and_reports_deleted_by():
     assert delete_response.status_code == 200
     body = delete_response.json()
     assert body["documents_deleted"] >= 1
-    assert body["deleted_by"] == "E00001"
+    assert body["deleted_by"] == "EMP051"
 
     # Really gone.
     assert _get(f"/v1/genai-rag/ingest-document/documents/{document_id}").status_code == 404
@@ -539,4 +539,4 @@ def test_delete_all_calls_the_service_and_returns_its_result(monkeypatch):
     response = _delete("/v1/genai-rag/ingest-document/documents")
 
     assert response.status_code == 200
-    assert response.json() == {"documents_deleted": 3, "chunks_removed": 12, "deleted_by": "E00001"}
+    assert response.json() == {"documents_deleted": 3, "chunks_removed": 12, "deleted_by": "EMP051"}

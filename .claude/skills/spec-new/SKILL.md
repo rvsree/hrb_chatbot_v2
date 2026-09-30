@@ -4,7 +4,7 @@ description: >
   Write a spec for a planned phase in hrb_chatbot_v2, before any code for it
   is written. Invoke as /spec-new <phase-name-or-number>, e.g.
   "/spec-new Phase 15" or "/spec-new evaluation". Also use this to promote a
-  docs/BACKLOG.md item into a new phase entry with a spec.
+  docs/agent-reference/BACKLOG.md item into a new phase entry with a spec.
 argument-hint: "<phase name, number, or backlog item to promote>"
 allowed-tools: Read Edit Grep
 ---
@@ -12,15 +12,15 @@ allowed-tools: Read Edit Grep
 # Write a new spec
 
 This project has no separate `specs/` folder - a spec is a `**Spec:**` block
-written into the target phase's own bullet in `docs/RAG-ROADMAP.md`'s
-`## Phases` section, **before** that phase's code starts. `docs/RAG-ROADMAP.md`
+written into the target phase's own bullet in `docs/agent-reference/RAG-ROADMAP.md`'s
+`## Phases` section, **before** that phase's code starts. `docs/agent-reference/RAG-ROADMAP.md`
 stays both the plan and the history in one file, matching how every phase in
 it already works - a spec is just that same bullet, written earlier in the
 phase's lifecycle instead of only after the fact.
 
 **One deliberate exception, added 2026-09-20:** a phase touching any
 endpoint's request/response shape gets that shape confirmed in
-`docs/endpoint-request-response-contracts.md` *first*, iterated on there
+`docs/agent-reference/endpoint-request-response-contracts.md` *first*, iterated on there
 directly with the user until every sub-object is marked **Finalized**,
 *before* this phase's own `**Spec:**` block is written. That file is a
 second source of truth on purpose, not a drift - endpoint shapes get
@@ -30,12 +30,12 @@ own spec then just points at it (see Phase 45's entry for the pattern).
 
 ## Steps
 
-1. Find the target phase's `- [ ]` bullet in `docs/RAG-ROADMAP.md`'s
-   `## Phases` section (or, if promoting a `docs/BACKLOG.md` item, add a new
+1. Find the target phase's `- [ ]` bullet in `docs/agent-reference/RAG-ROADMAP.md`'s
+   `## Phases` section (or, if promoting a `docs/agent-reference/BACKLOG.md` item, add a new
    `- [ ]` bullet at the end of that section using the same
    `**Phase N (status) — Title.**` opening format every other bullet uses).
 2. If this phase touches any endpoint's request/response shape, confirm it
-   in `docs/endpoint-request-response-contracts.md` first (add a new section
+   in `docs/agent-reference/endpoint-request-response-contracts.md` first (add a new section
    marked "Proposed, awaiting confirmation", flip to "Finalized" once the
    user agrees) - do this before step 3, not after.
 3. Append a nested `**Spec:**` sub-list to that bullet, using this template -
@@ -46,7 +46,7 @@ own spec then just points at it (see Phase 45's entry for the pattern).
    - **Spec:**
      - **Context:** why this phase, what triggered it.
      - **Data/API contracts:** point at the relevant, now-Finalized section
-       of `docs/endpoint-request-response-contracts.md` - name the actual
+       of `docs/agent-reference/endpoint-request-response-contracts.md` - name the actual
        Pydantic model(s) in `src/hrb_chatbot/models/` too, but the wire
        shape itself lives in that file, not repeated here.
      - **User-visible behavior:** what a caller can do after this phase that
@@ -70,6 +70,6 @@ own spec then just points at it (see Phase 45's entry for the pattern).
 
 ## What "done" looks like
 
-The phase's bullet in `docs/RAG-ROADMAP.md` now has a `**Spec:**` sub-list,
+The phase's bullet in `docs/agent-reference/RAG-ROADMAP.md` now has a `**Spec:**` sub-list,
 committed on its own before implementation starts, so the spec is reviewable
 independent of any code diff.

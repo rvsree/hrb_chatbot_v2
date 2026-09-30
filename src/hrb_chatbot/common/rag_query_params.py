@@ -1,6 +1,4 @@
-"""Plain, framework-free container for one /query request - kept out of
-every layer's signature. Not Pydantic: only routes/ owns request models
-(see CLAUDE.md's architecture section)."""
+"""Plain, framework-free container for one /query request - not Pydantic, since only routes/ owns request models."""
 
 from dataclasses import dataclass
 
@@ -17,3 +15,6 @@ class RagQueryParams:
     use_multi_query: bool = False
     use_self_query: bool = False
     llm_provider: str | None = None
+    employee_id: str | None = None  # Phase 49: caller's own id, for MCP tool routing
+    enable_conversation_memory: bool = False  # Phase 58
+    conversation_id: str | None = None  # Phase 58

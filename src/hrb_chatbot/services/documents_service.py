@@ -1,5 +1,4 @@
-"""Saves uploaded files to disk and records their metadata - validated once
-here so single/batch upload share the same rules; rejections are data, not raised."""
+"""Saves uploaded files to disk and records their metadata - rejections are data, not raised."""
 
 import hashlib
 import json
@@ -31,8 +30,7 @@ UPLOAD_DIRECTORY = Path("data/uploads")
 
 
 def validate_file(upload: UploadFile, size: int) -> tuple[str, str] | None:
-    """Return (message, error_code) for why this file is rejected, or None.
-    error_code is stable (common/error_codes.py); message can change freely."""
+    """Return (message, error_code) for why this file is rejected, or None."""
     filename = upload.filename or ""
 
     if upload.content_type != ALLOWED_CONTENT_TYPE and not filename.lower().endswith(".pdf"):
@@ -59,11 +57,7 @@ async def save_upload(
     document_metadata_override: DocumentMetadataInput | None = None,
     uploaded_by: str | None = None,
 ) -> DocumentUploadResult:
-    """Validate, store, and record one uploaded file. Never raises.
-    `supersedes_document_id` only records intent - the flip happens later,
-    once this new upload successfully indexes. `uploaded_by` is the
-    caller's employee_id (from the request payload's user_profile) - an
-    audit field only, not part of any access-control decision."""
+    """Validate, store, and record one uploaded file - never raises."""
     try:
         content = await upload.read()
     except Exception as error:
@@ -89,8 +83,7 @@ async def save_upload(
             error_code=code,
         )
 
-    # Same bytes = same document, regardless of filename - unlike an
-    # Idempotency-Key (a request-retry cache), this catches ANY upload of identical content, any time.
+    # Same bytes = same document, regardless of filename - catches any upload of identical content, any time.
     content_hash = hashlib.sha256(content).hexdigest()
     existing = await get_db_gateway().metadata_store().find_by_content_hash(content_hash)
     if existing is not None:
@@ -151,8 +144,7 @@ async def save_upload(
             uploaded_by=uploaded_by,
         )
     except Exception as error:
-        # A real, unexpected failure - logged with the id for traceability, but
-        # still reported as a per-file rejection so the rest of the batch continues.
+        # A real, unexpected failure - reported as a per-file rejection so the rest of the batch continues.
         logger.error("Failed to store upload %r (document %s): %s", upload.filename, document_id, error)
         return DocumentUploadResult(
             filename=upload.filename,
@@ -164,8 +156,7 @@ async def save_upload(
 
     logger.info("Stored upload %r as document %s", upload.filename, document_id)
 
-    # Phase 26: index immediately - chunk, embed, write to the vector
-    # store - as part of the same upload call, not a separate step.
+    # Index immediately - chunk, embed, write to the vector store - as part of the same upload call.
     index_outcome = await _index_now(
         document_id, file_path,
         chunking_strategy=chunking_strategy, chunk_size=chunk_size, chunk_overlap=chunk_overlap,
@@ -190,10 +181,7 @@ async def save_upload(
             chunks_removed=index_outcome.get("chunks_removed"),
         ),
         document_metadata=DocumentMetadataResult(**document_metadata) if document_metadata else None,
-        # 0 if indexing failed - matches what the row actually holds then
-        # (create_document() inserts 0; only a successful index moves it to 1+).
-        # is_current=True regardless: create_document() always inserts the new
-        # row as is_current=1 - nothing has superseded it yet.
+        # 0 if indexing failed - matches what the row holds (only a successful index moves it to 1+).
         versioning_info=VersioningInfo(
             document_version=index_outcome.get("document_version", 0),
             is_current=True,
@@ -210,12 +198,8 @@ async def _index_now(
     chunk_overlap: int | None = None,
     document_metadata_override: DocumentMetadataInput | None = None,
 ) -> dict:
-    """Chunk/embed/index a just-uploaded file - chunking_strategy/chunk_size/
-    chunk_overlap default to .env's CHUNK_DEFAULT_* when not given. Never
-    raises - a failure here still leaves the file uploaded, just not
-    indexed (status becomes 'failed' on the document row)."""
-    # exclude supersedes_document_id - that's handled separately, at
-    # create_document() time, not part of the extraction-overridable set.
+    """Chunk/embed/index a just-uploaded file - never raises, a failure leaves status 'failed'."""
+    # supersedes_document_id is handled separately, at create_document() time.
     override_dict = (
         document_metadata_override.model_dump(exclude={"supersedes_document_id"})
         if document_metadata_override
@@ -245,12 +229,8 @@ async def save_uploads(
     document_metadata_override: DocumentMetadataInput | None = None,
     uploaded_by: str | None = None,
 ) -> list[DocumentUploadResult]:
-    """Validate, store, and record every uploaded file - one result per file.
-    `supersedes_document_id` only applies to a single-file upload (422 on a batch);
-    chunking_strategy/chunk_size/chunk_overlap/document_metadata_override apply
-    to every file in the batch."""
-    # One at a time, not in parallel (asyncio.gather would do that) - simpler
-    # to follow, and file uploads aren't the bottleneck here.
+    """Validate, store, and record every uploaded file - one result per file."""
+    # One at a time, not in parallel - simpler to follow, and uploads aren't the bottleneck here.
     results = []
     for upload in uploads:
         result = await save_upload(
@@ -267,8 +247,7 @@ async def save_uploads(
 
 
 def _parse_chunk_ids(document: dict) -> dict:
-    """Turn the stored chunk_ids JSON string into a real list for the API
-    response - metadata clients store it as text; this is the one place that decodes it."""
+    """Turn the stored chunk_ids JSON string into a real list - the one place that decodes it."""
     raw = document.get("chunk_ids")
     if raw:
         document["chunk_ids"] = json.loads(raw)
@@ -292,11 +271,7 @@ async def get_document(document_id: str) -> dict | None:
 
 
 async def delete_document(document_id: str, deleted_by: str | None = None) -> dict | None:
-    """Delete one document: vectors, metadata row, uploaded file. Returns
-    None if unknown (route -> 404). Vectors go first, while chunk_ids still
-    exists in metadata - a failed retry can still find them; metadata is
-    removed last. `deleted_by` is the caller's employee_id, pass-through
-    only (not stored - the row itself is gone)."""
+    """Delete one document: vectors, metadata row, uploaded file - None if unknown."""
     gateway = get_db_gateway()
     metadata_store = gateway.metadata_store()
     document = await metadata_store.get_document(document_id)
@@ -309,8 +284,7 @@ async def delete_document(document_id: str, deleted_by: str | None = None) -> di
 
     if chunk_ids:
         vector_store = gateway.vector_store(provider=document.get("vector_db"))
-        # Phase 44 restored LlamaIndex indexing, which prefixes Pinecone ids
-        # again - storage_chunk_ids() is a no-op for Chroma, real for Pinecone.
+        # LlamaIndex indexing prefixes Pinecone ids - storage_chunk_ids() is a no-op for Chroma, real for Pinecone.
         vector_store.delete(
             collection_name=COLLECTION_NAME,
             ids=storage_chunk_ids(vector_store.PROVIDER_NAME, document_id, chunk_ids),
@@ -332,8 +306,7 @@ async def delete_document(document_id: str, deleted_by: str | None = None) -> di
 
 
 async def delete_all_documents(deleted_by: str | None = None) -> dict:
-    """Delete every document: vectors, metadata rows, uploaded files - same
-    full delete as delete_document(), just for all of them (Phase 27)."""
+    """Delete every document - same full delete as delete_document(), just for all of them."""
     documents = await list_documents()
     documents_deleted = 0
     chunks_removed = 0
@@ -353,15 +326,12 @@ async def _find_test_noise_documents(max_file_size_bytes: int) -> list[dict]:
 
 
 async def list_test_noise_documents(max_file_size_bytes: int) -> list[dict]:
-    """Preview only - which documents would delete_test_noise_documents()
-    remove, without removing anything (Phase 46)."""
+    """Preview only - which documents delete_test_noise_documents() would remove, without removing anything."""
     return await _find_test_noise_documents(max_file_size_bytes)
 
 
 async def delete_test_noise_documents(max_file_size_bytes: int, deleted_by: str | None = None) -> dict:
-    """Delete every document below max_file_size_bytes - same full-delete
-    semantics as delete_document(), just scoped to the test-noise subset
-    instead of everything (Phase 46)."""
+    """Delete every document below max_file_size_bytes - same semantics as delete_document(), test-noise scoped."""
     documents = await _find_test_noise_documents(max_file_size_bytes)
     documents_deleted = 0
     chunks_removed = 0

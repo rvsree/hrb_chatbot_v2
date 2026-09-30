@@ -1,12 +1,10 @@
-"""LangChain-native chat model wrapping this project's own ask() clients
-(Phase 20) - not langchain-anthropic/langchain-aws, which can't install
-here at all (real version conflict - see RAG-ROADMAP.md's Phase 20 entry)."""
+"""LangChain-native chat model wrapping this project's own ask() clients (real version conflict rules out langchain-anthropic/aws)."""
 
 from typing import Any
 
 from langchain_core.callbacks.manager import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.messages.ai import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
@@ -24,9 +22,17 @@ _PROVIDER_CLIENTS = {
 }
 
 
+def _label_for_context(message: BaseMessage) -> str:
+    # Role-labeled so the model can tell who said what in the flattened context string ask() builds.
+    if isinstance(message, HumanMessage):
+        return f"User: {message.content}"
+    if isinstance(message, AIMessage):
+        return f"Assistant: {message.content}"
+    return str(message.content)
+
+
 def _split_messages(messages: list[BaseMessage]) -> tuple[str, str | None, str | None]:
-    """Last message is the question; earlier SystemMessage -> system_prompt,
-    everything else -> context."""
+    """Last message is the question; earlier SystemMessage -> system_prompt, everything else -> context."""
     if not messages:
         return "", None, None
 
@@ -37,7 +43,9 @@ def _split_messages(messages: list[BaseMessage]) -> tuple[str, str | None, str |
 
     system_parts = [str(message.content) for message in earlier if isinstance(message, SystemMessage)]
     context_parts = [
-        str(message.content) for message in earlier if not isinstance(message, SystemMessage) and message.content
+        _label_for_context(message)
+        for message in earlier
+        if not isinstance(message, SystemMessage) and message.content
     ]
     system_prompt = "\n\n".join(system_parts) if system_parts else None
     context = "\n\n".join(context_parts) if context_parts else None
@@ -45,9 +53,7 @@ def _split_messages(messages: list[BaseMessage]) -> tuple[str, str | None, str |
 
 
 class GatewayChatModel(BaseChatModel):
-    """Adapts one of this project's own LLM clients to LangChain's
-    BaseChatModel - `provider` picks which one, via client_gateway.py.
-    model_name_override/max_tokens are optional per-call overrides."""
+    """Adapts one of this project's own LLM clients to LangChain's BaseChatModel."""
 
     provider: LlmProvider = LlmProvider.OPENAI
     temperature: float = 0.0
@@ -67,9 +73,7 @@ class GatewayChatModel(BaseChatModel):
     ) -> ChatResult:
         question, context, system_prompt = _split_messages(messages)
 
-        # A one-off model override only means something for OpenAI today
-        # (the only provider that ever sets it) - a fresh client, not the
-        # shared gateway's cached one.
+        # A model override only means something for OpenAI today - a fresh client, not the shared gateway's cached one.
         if self.model_name_override and self.provider == LlmProvider.OPENAI:
             chat_client = OpenAIChatClient(model=self.model_name_override)
         else:

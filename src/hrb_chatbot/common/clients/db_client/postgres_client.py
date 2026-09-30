@@ -1,5 +1,4 @@
-"""Postgres client - an alternative document-metadata store to SQLite, same
-BaseMetadataClient contract as sqlite_client.py."""
+"""Postgres client - an alternative document-metadata store, same BaseMetadataClient contract as sqlite_client.py."""
 
 import asyncio
 import json
@@ -25,8 +24,7 @@ CREATE TABLE IF NOT EXISTS documents (
 )
 """
 
-# Columns added after the table already existed - Postgres's ADD COLUMN IF
-# NOT EXISTS means no try/except needed (unlike sqlite_client.py).
+# Columns added after the table already existed - Postgres's IF NOT EXISTS means no try/except needed.
 ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS chunk_ids TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS document_version INTEGER NOT NULL DEFAULT 1",
@@ -44,14 +42,21 @@ ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS superseded_by TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS owner TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS department TEXT",
-    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_type TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_category TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS purpose TEXT",
-    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_classification TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_description TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS effective_date TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS audience TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS confidentiality_level TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS uploaded_by TEXT",
+    # Provenance/citation fields, not filter dimensions like doc_category/department/doc_description.
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS author TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_date TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_version TEXT",
 ]
+
+# Rename rather than add-new/leave-old, so stored values survive - checked against information_schema first.
+RENAME_COLUMNS = [("doc_type", "doc_category"), ("doc_classification", "doc_description")]
 
 # Speeds up find_by_content_hash() - one lookup per upload, worth an index.
 CREATE_CONTENT_HASH_INDEX = (
@@ -117,6 +122,17 @@ class PostgresClient(BaseMetadataClient):
     def _ensure_table_sync(self) -> None:
         with self._connect() as conn:
             conn.execute(CREATE_DOCUMENTS_TABLE)
+
+            existing_columns = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'documents'"
+                ).fetchall()
+            }
+            for old_name, new_name in RENAME_COLUMNS:
+                if old_name in existing_columns and new_name not in existing_columns:
+                    conn.execute(f"ALTER TABLE documents RENAME COLUMN {old_name} TO {new_name}")
+
             for add_column in ADD_COLUMNS:
                 conn.execute(add_column)
             conn.execute(CREATE_CONTENT_HASH_INDEX)
@@ -141,9 +157,7 @@ class PostgresClient(BaseMetadataClient):
         supersedes: str | None,
         uploaded_by: str | None,
     ) -> None:
-        # document_version starts at 0, not 1 - "no successfully indexed
-        # version yet". record_successful_index() always does version + 1,
-        # so the first real index lands on 1.
+        # document_version starts at 0 ("no successfully indexed version yet") - the first real index lands on 1.
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO documents (id, filename, file_path, status, error_message, "
@@ -256,8 +270,7 @@ class PostgresClient(BaseMetadataClient):
                 ),
             ).fetchone()
 
-            # Replace this document's rows in `chunks` - same delete-then-insert
-            # shape as sqlite_client.py and the vector store's own cleanup.
+            # Replace this document's rows in `chunks` - same delete-then-insert shape as sqlite_client.py.
             conn.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
             if chunk_ids:
                 with conn.cursor() as cur:
@@ -299,27 +312,34 @@ class PostgresClient(BaseMetadataClient):
         document_id: str,
         owner: str | None,
         department: str | None,
-        doc_type: str | None,
+        doc_category: str | None,
         purpose: str | None,
-        doc_classification: str | None,
+        doc_description: str | None,
         effective_date: str | None,
         audience: str | None,
         confidentiality_level: str | None,
+        author: str | None,
+        doc_date: str | None,
+        doc_version: str | None,
     ) -> None:
         with self._connect() as conn:
             conn.execute(
-                "UPDATE documents SET owner = %s, department = %s, doc_type = %s, purpose = %s, "
-                "doc_classification = %s, effective_date = %s, audience = %s, "
-                "confidentiality_level = %s, updated_at = now() WHERE id = %s",
+                "UPDATE documents SET owner = %s, department = %s, doc_category = %s, purpose = %s, "
+                "doc_description = %s, effective_date = %s, audience = %s, "
+                "confidentiality_level = %s, author = %s, doc_date = %s, doc_version = %s, "
+                "updated_at = now() WHERE id = %s",
                 (
                     owner,
                     department,
-                    doc_type,
+                    doc_category,
                     purpose,
-                    doc_classification,
+                    doc_description,
                     effective_date,
                     audience,
                     confidentiality_level,
+                    author,
+                    doc_date,
+                    doc_version,
                     document_id,
                 ),
             )
@@ -330,12 +350,15 @@ class PostgresClient(BaseMetadataClient):
         document_id: str,
         owner: str | None,
         department: str | None,
-        doc_type: str | None,
+        doc_category: str | None,
         purpose: str | None,
-        doc_classification: str | None,
+        doc_description: str | None,
         effective_date: str | None = None,
         audience: str | None = None,
         confidentiality_level: str | None = None,
+        author: str | None = None,
+        doc_date: str | None = None,
+        doc_version: str | None = None,
     ) -> None:
         await self._ensure_table()
         with log_backend_call(logger, "postgres", "metadata.record_document_metadata", document_id=document_id):
@@ -344,12 +367,15 @@ class PostgresClient(BaseMetadataClient):
                 document_id,
                 owner,
                 department,
-                doc_type,
+                doc_category,
                 purpose,
-                doc_classification,
+                doc_description,
                 effective_date,
                 audience,
                 confidentiality_level,
+                author,
+                doc_date,
+                doc_version,
             )
 
     async def record_successful_index(
@@ -411,14 +437,12 @@ class PostgresClient(BaseMetadataClient):
 
     @staticmethod
     def _dict_row_factory(cursor):
-        """Turn each result row into a dict keyed by column name, matching
-        sqlite_client.py's row shape (ISO datetime strings, not datetime objects)."""
+        """Turn each result row into a dict keyed by column name, matching sqlite_client.py's row shape."""
         columns = [desc.name for desc in cursor.description]
 
         def make_row(values):
             row = dict(zip(columns, values, strict=True))
-            # last_indexed_at was missed here when added - a real bug: it
-            # left a raw datetime leaking through instead of a string.
+            # last_indexed_at was missed here originally, leaking a raw datetime instead of a string.
             for key in ("created_at", "updated_at", "last_indexed_at"):
                 if row.get(key) is not None:
                     row[key] = row[key].isoformat()
@@ -427,8 +451,7 @@ class PostgresClient(BaseMetadataClient):
         return make_row
 
     def health_check(self) -> dict:
-        """Report whether this client is usable: connects, creates the table if
-        missing, and counts rows."""
+        """Report whether this client is usable - connects, creates the table if missing, counts rows."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 

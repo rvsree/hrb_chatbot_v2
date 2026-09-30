@@ -2,8 +2,8 @@
 name: session-start
 description: >
   Run at the start of a Claude Code session on hrb_chatbot_v2. Loads current
-  branch, recent commits, and open work from docs/RAG-ROADMAP.md and
-  docs/BACKLOG.md, so a session that starts with no memory of prior ones
+  branch, recent commits, and open work from docs/agent-reference/RAG-ROADMAP.md and
+  docs/agent-reference/BACKLOG.md, so a session that starts with no memory of prior ones
   still knows what's in flight. Invoke automatically on session start, or
   explicitly as /session-start.
 allowed-tools: Read Bash(git *) Grep
@@ -15,12 +15,12 @@ Run these checks and report one short summary - not a wall of text. This
 project pays real API-usage cost per session; don't pad output.
 
 1. `git branch --show-current` and `git log --oneline -5`.
-2. Count rows in `docs/RAG-ROADMAP.md`'s "Status at a glance" table (under
+2. Count rows in `docs/agent-reference/RAG-ROADMAP.md`'s "Status at a glance" table (under
    `## Status at a glance`) whose Status column contains `📋` (Planned) or
    `🚧` (in progress, not done). Report the count and the lowest-numbered
    open phase by name.
 3. Count open (non-strikethrough, not under `## Cleanup done ...`) items in
-   `docs/BACKLOG.md`.
+   `docs/agent-reference/BACKLOG.md`.
 4. `git status --short` - report a count of uncommitted files, or "none".
 
 Output format:

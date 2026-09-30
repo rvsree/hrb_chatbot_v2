@@ -1,6 +1,4 @@
-"""ChromaDB client. Two modes via CHROMA_DB_MODE ("persistent"/"http"); the
-real client is built lazily in get_client(), not __init__, since HttpClient
-can handshake over the network - constructing this class must stay instant."""
+"""ChromaDB client. Two modes via CHROMA_DB_MODE ("persistent"/"http"); built lazily in get_client(), not __init__."""
 
 import re
 
@@ -133,8 +131,7 @@ class ChromaDBClient(BaseVectorDBClient):
             collection.update(ids=ids, metadatas=metadatas)
 
     def health_check(self) -> dict:
-        """Report whether this client is usable: builds the real client and calls
-        list_collections()."""
+        """Report whether this client is usable - builds the real client and calls list_collections()."""
         result = {"provider": self.PROVIDER_NAME}
         result.update(self.get_configuration())
 

@@ -1,0 +1,311 @@
+<title>RAG Evaluation Remediation Plan</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --border: #dde1e7;
+    --text: #1c2430;
+    --text-dim: #5b6472;
+    --navy: #1f3a5f;
+    --navy-dim: #345580;
+    --accent: #b45309;
+    --accent-bg: #fef3e2;
+    --ok: #1a7f4e;
+    --ok-bg: #e7f6ee;
+    --gap: #b3261e;
+    --gap-bg: #fdeceb;
+    --mono-bg: #eef1f5;
+    --shadow: 0 1px 2px rgba(20,30,50,.06), 0 4px 14px rgba(20,30,50,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161d;
+      --surface: #1a2029;
+      --border: #2b3341;
+      --text: #e7ebf1;
+      --text-dim: #9aa4b2;
+      --navy: #7ea0d4;
+      --navy-dim: #5f83b8;
+      --accent: #f0a94e;
+      --accent-bg: #3a2c14;
+      --ok: #4fd393;
+      --ok-bg: #14301f;
+      --gap: #ff7a70;
+      --gap-bg: #3a1614;
+      --mono-bg: #222a35;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 20px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12161d;
+    --surface: #1a2029;
+    --border: #2b3341;
+    --text: #e7ebf1;
+    --text-dim: #9aa4b2;
+    --navy: #7ea0d4;
+    --navy-dim: #5f83b8;
+    --accent: #f0a94e;
+    --accent-bg: #3a2c14;
+    --ok: #4fd393;
+    --ok-bg: #14301f;
+    --gap: #ff7a70;
+    --gap-bg: #3a1614;
+    --mono-bg: #222a35;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 20px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Inter", -apple-system, "Segoe UI", sans-serif;
+    padding: 28px 16px 60px;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; }
+
+  header.page { margin-bottom: 28px; }
+  header.page .eyebrow {
+    font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--navy-dim); font-weight: 700; margin-bottom: 6px;
+  }
+  header.page h1 { font-size: 26px; margin: 0 0 8px; letter-spacing: -0.01em; }
+  header.page p.sub { color: var(--text-dim); font-size: 14.5px; max-width: 68ch; margin: 0; }
+
+  .status-strip {
+    display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px;
+  }
+  .status-pill {
+    font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--border); color: var(--text-dim);
+  }
+  .status-pill strong { color: var(--text); }
+
+  section { margin: 36px 0; }
+  section > h2 {
+    font-size: 12.5px; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--navy-dim); font-weight: 700; margin: 0 0 4px;
+  }
+  section > .lede { color: var(--text-dim); font-size: 14px; margin: 0 0 16px; max-width: 72ch; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: var(--shadow); padding: 20px 22px;
+  }
+
+  pre.mermaid {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px 14px; box-shadow: var(--shadow); overflow-x: auto;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  caption { text-align: left; font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); font-weight: 700; }
+  tr:last-child td { border-bottom: none; }
+  td code, span.code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12.3px; background: var(--mono-bg); padding: 1px 5px; border-radius: 5px; }
+
+  .tag { display:inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+  .tag.gap { background: var(--gap-bg); color: var(--gap); }
+  .tag.ok { background: var(--ok-bg); color: var(--ok); }
+  .tag.new { background: var(--accent-bg); color: var(--accent); }
+
+  .decision-list { display: flex; flex-direction: column; gap: 12px; }
+  .decision {
+    background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 10px; padding: 14px 16px; box-shadow: var(--shadow);
+  }
+  .decision .q { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  .decision .why { color: var(--text-dim); font-size: 13px; }
+
+  .note {
+    background: var(--accent-bg); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+    border-radius: 10px; padding: 12px 16px; font-size: 13.5px; color: var(--text);
+  }
+  .note strong { color: var(--accent); }
+
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 2px 0; font-size: 12px; color: var(--text-dim); }
+  .legend .item { display: flex; align-items: center; gap: 6px; }
+  .legend .dot { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+  .diagram-callout {
+    font-size: 13px; color: var(--text); background: var(--surface); border: 1px dashed var(--navy-dim);
+    border-radius: 8px; padding: 8px 12px; margin: 10px 0 0; font-weight: 600;
+  }
+
+  footer.page { margin-top: 44px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--text-dim); font-size: 12px; }
+
+  @media (max-width: 560px) {
+    header.page h1 { font-size: 22px; }
+    .card, pre.mermaid { padding: 14px; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="page">
+    <div class="eyebrow">hrb_chatbot_v2 &middot; planning document, not yet an approved phase</div>
+    <h1>RAG Evaluation Remediation Plan</h1>
+    <p class="sub">How to close the 6 confirmed gaps between this project's evaluation code and the IK FDE cohort's own <span class="code">5_evaluation/demo.py</span> reference implementation &mdash; scoped to the retrieval evaluation pipeline for <span class="code">POST /v1/genai-rag/retrieve-document/query</span>.</p>
+    <div class="status-strip">
+      <span class="status-pill">Scope: <strong>evaluation only</strong></span>
+      <span class="status-pill">Live endpoint impact: <strong>none</strong></span>
+      <span class="status-pill">Spec status: <strong>not yet written to RAG-ROADMAP.md</strong></span>
+      <span class="status-pill">Code changed so far: <strong>zero</strong></span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Current State &mdash; is the retrieval endpoint actually being evaluated?</h2>
+    <p class="lede">Yes &mdash; the golden-dataset harness is not a separate thing from the retrieval endpoint. It calls the exact same <span class="code">pipeline.py</span> function the live endpoint calls, just offline and manually, with 23 known questions instead of live HTTP traffic. That's the whole reason golden-dataset language shows up when you ask about retrieval endpoint evaluation &mdash; it <em>is</em> the retrieval endpoint's evaluation.</p>
+    <pre class="mermaid">
+flowchart TD
+    REQ["Live HTTP request \n POST /retrieve-document/query"]:::live
+    GD["golden_dataset.json \n 23 known questions + \n known correct answers"]:::data
+    PIPE["pipeline.py \n retrieve + generate \n (ONE function, called by both)"]:::shared
+    RESP["JSON response \n back to the caller"]:::live
+    HARN["golden_dataset_harness.py \n scores each answer"]:::eval
+    GATE["PASS / REVIEW / BLOCK"]:::eval
+
+    REQ -->|"real traffic"| PIPE
+    GD -->|"offline test run,\npytest -m eval"| PIPE
+    PIPE -->|"live path"| RESP
+    PIPE -->|"eval path"| HARN
+    HARN --> GATE
+
+    classDef live fill:#dbe8ff,stroke:#3763b5,color:#173a70,stroke-width:1.5px;
+    classDef data fill:#fef3e2,stroke:#b45309,color:#7c3d05,stroke-width:1.5px;
+    classDef shared fill:#1f3a5f,stroke:#0d2038,color:#ffffff,stroke-width:2px;
+    classDef eval fill:#e7f6ee,stroke:#1a7f4e,color:#0f4a2e,stroke-width:1.5px;
+    </pre>
+    <div class="diagram-callout">The dark navy box is the one piece of code both paths run through &mdash; that's why testing against the golden dataset is testing the retrieval endpoint.</div>
+    <div class="legend">
+      <span class="item"><span class="dot" style="background:#3763b5"></span>Live traffic path</span>
+      <span class="item"><span class="dot" style="background:#b45309"></span>Fixed test data</span>
+      <span class="item"><span class="dot" style="background:#1f3a5f"></span>Shared code (both paths run this)</span>
+      <span class="item"><span class="dot" style="background:#1a7f4e"></span>Evaluation / scoring</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>The 6 confirmed gaps, mapped to this plan</h2>
+    <p class="lede">Two of the six are agentic-loop concerns, not retrieval-evaluation concerns &mdash; called out as out of scope for this specific plan rather than silently dropped.</p>
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>#</th><th>Gap</th><th>In scope here?</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1</td><td>Retrieval Precision/Recall/F1 are LLM-judged, not exact <span class="code">expected_source_document</span> ID matching like the course</td><td><span class="tag gap">in scope</span></td></tr>
+          <tr><td>2</td><td>"Completeness" is mapped to <span class="code">AnswerRelevancyMetric</span> &mdash; a different concept than the course's reference-coverage check</td><td><span class="tag gap">in scope</span></td></tr>
+          <tr><td>3</td><td>No failure-pattern diagnostics (the course's 4 named root-cause patterns)</td><td><span class="tag gap">in scope</span></td></tr>
+          <tr><td>4</td><td>No real A/B testing harness &mdash; only a labeled placeholder predating Phase 8</td><td><span class="tag gap">in scope</span></td></tr>
+          <tr><td>5</td><td>No keyword/hybrid retrieval (vector-only, despite course calling hybrid the production default)</td><td><span class="tag new">separate phase</span> &mdash; a retrieval-architecture change, not an evaluation-harness fix; would need its own spec</td></tr>
+          <tr><td>6</td><td>No "Decision: rationale" trace before agent tool calls</td><td><span class="tag new">out of scope</span> &mdash; belongs to <span class="code">orchestration_agent.py</span>, the agentic loop, not retrieval evaluation</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Target Workflow</h2>
+    <p class="lede">Same shared <span class="code">pipeline.py</span> call from the diagram above &mdash; this zooms into what happens after, inside <span class="code">golden_dataset_harness.py</span>. Blue = stays as-is today. Red = today's gap. Amber = new. Everything still runs offline, on demand; nothing here touches the live endpoint.</p>
+    <pre class="mermaid">
+flowchart TD
+    ASK["Same pipeline.py call \n from the diagram above"]:::shared
+
+    ASK --> R1["Retrieval score: \n DeepEval LLM-judge \n (kept)"]:::keep
+    ASK --> R2["Retrieval score: \n exact document-ID match \n Gap #1 &mdash; missing today"]:::gap
+    ASK --> G1["Generation score: \n Faithfulness \n (kept, already correct)"]:::keep
+    ASK --> G2["Generation score: \n Completeness via AnswerRelevancy \n Gap #2 &mdash; wrong metric today"]:::gap
+
+    R2 --> R2FIX["FIX: add deterministic \n Precision/Recall/F1 scorer"]:::fix
+    G2 --> G2FIX["FIX: replace with GEval \n scored on expected_answer"]:::fix
+
+    R1 --> AGG["Aggregate scores"]:::shared
+    R2FIX --> AGG
+    G1 --> AGG
+    G2FIX --> AGG
+
+    AGG --> GATE["PASS / REVIEW / BLOCK \n (thresholds unchanged)"]:::keep
+    AGG --> DIAGGAP["No root-cause diagnosis \n Gap #3 &mdash; missing today"]:::gap
+    DIAGGAP --> DIAGFIX["FIX: add Pattern A-D \n root-cause check"]:::fix
+
+    ABGAP["Config A/B comparison \n Gap #4 &mdash; only a placeholder today"]:::gap --> ABFIX["FIX: real A/B harness, \n reuses the same scorers above"]:::fix
+    ABFIX -.-> AGG
+
+    classDef shared fill:#1f3a5f,stroke:#0d2038,color:#ffffff,stroke-width:2px;
+    classDef keep fill:#e7f6ee,stroke:#1a7f4e,color:#0f4a2e,stroke-width:1.5px;
+    classDef gap fill:#fdeceb,stroke:#b3261e,color:#7a170f,stroke-width:1.5px;
+    classDef fix fill:#fef3e2,stroke:#b45309,color:#7c3d05,stroke-width:1.5px;
+    </pre>
+    <div class="legend">
+      <span class="item"><span class="dot" style="background:#1f3a5f"></span>Shared / entry point</span>
+      <span class="item"><span class="dot" style="background:#1a7f4e"></span>Already correct &mdash; kept as-is</span>
+      <span class="item"><span class="dot" style="background:#b3261e"></span>Confirmed gap today</span>
+      <span class="item"><span class="dot" style="background:#b45309"></span>Proposed fix</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Gap-by-gap remediation</h2>
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>Gap</th><th>Fix</th><th>Where</th><th>Size</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>#1 &mdash; retrieval metrics</td>
+            <td>Add a deterministic scorer: compare <span class="code">response.retrieval_info.sources[].document_id</span> against each case's <span class="code">expected_source_document</span>, compute Precision/Recall/F1 exactly like the course's <span class="code">calculate_retrieval_metrics()</span>. Report it <em>alongside</em> the existing DeepEval contextual metrics, not instead of &mdash; the two catch different failure modes (exact source vs. paraphrase-level relevance).</td>
+            <td><span class="code">golden_dataset_harness.py</span> &mdash; new function</td>
+            <td>Small</td>
+          </tr>
+          <tr>
+            <td>#2 &mdash; completeness</td>
+            <td>Replace <span class="code">AnswerRelevancyMetric</span> for the "completeness" slot with a metric that actually checks fact coverage against <span class="code">expected_answer</span> / <span class="code">expected_keywords</span> &mdash; DeepEval's <span class="code">GEval</span> with a custom rubric mirroring the course's <span class="code">evaluate_completeness()</span> prompt is the direct match.</td>
+            <td><span class="code">golden_dataset_harness.py</span> &mdash; <span class="code">build_metrics()</span></td>
+            <td>Small</td>
+          </tr>
+          <tr>
+            <td>#3 &mdash; failure patterns</td>
+            <td>Port the course's 4 named patterns (A: high-precision/low-recall, B: low-precision/high-recall, C: strong-retrieval/weak-generation, D: low-groundedness) into a new function that runs against the aggregated scores whenever the gate isn't PASS.</td>
+            <td><span class="code">golden_dataset_harness.py</span> &mdash; new <span class="code">diagnose_failure_patterns()</span></td>
+            <td>Small</td>
+          </tr>
+          <tr>
+            <td>#4 &mdash; A/B harness</td>
+            <td>Real config comparison &mdash; k=3 vs k=5, similarity vs MMR, chunk size &mdash; reusing the same scoring functions from #1/#2 so a config change is measured on the same metrics as a release gate, not a separate toy metric. Retires <span class="code">test_ab_testing_demo.py</span>'s placeholder role.</td>
+            <td>New <span class="code">ai/rag_pipeline/evaluations/retrieval_ab_harness.py</span></td>
+            <td>Medium</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Open decisions &mdash; need your call before this becomes a real spec</h2>
+    <p class="lede">Per this project's own SDD process, none of this can be implemented until a <span class="code">**Spec:**</span> block exists in <span class="code">RAG-ROADMAP.md</span> and you've reviewed it &mdash; the <span class="code">spec_gate.py</span> hook enforces that literally. These are the calls only you can make first.</p>
+    <div class="decision-list">
+      <div class="decision">
+        <div class="q">Keep both retrieval scoring methods, or replace DeepEval's contextual metrics with the deterministic one?</div>
+        <div class="why">Keeping both is more evaluation coverage but two numbers to explain in an interview or a report. Replacing matches the course exactly but drops the paraphrase-sensitivity DeepEval's LLM-judge gives you.</div>
+      </div>
+      <div class="decision">
+        <div class="q">Should this offline harness get wired into CI as an automatic gate, or stay manual (<span class="code">pytest -m eval</span>)?</div>
+        <div class="why">Manual matches the course. CI-gated is a real step beyond the course, and directly closes the "is this a CI gate or manual" open item already sitting in the EY interview prep document.</div>
+      </div>
+      <div class="decision">
+        <div class="q">Does gap #5 (keyword/hybrid retrieval) become its own future phase?</div>
+        <div class="why">It's a retrieval-architecture change, not an evaluation fix &mdash; bundling it here would break "one task at a time." Flagging it now so it doesn't quietly disappear.</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="note">
+    <strong>What this document is not:</strong> it is not an implementation, not a merged spec, and no source file under <span class="code">src/</span> has been touched to produce it. It exists so you can approve, redirect, or reject the plan before any code gets written &mdash; matching the spec-first rule this whole conversation started from.
+  </div>
+
+  <footer class="page">
+    hrb_chatbot_v2 &middot; planning document &middot; grounded in <span class="code">modules/5_evaluation/demo.py</span> (IK FDE cohort) and this project's live code, verified by direct file reads, not memory.
+  </footer>
+</div>

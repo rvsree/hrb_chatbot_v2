@@ -1,5 +1,4 @@
-"""Wraps this project's own ChromaDB/Pinecone clients into LangChain's own
-VectorStore objects - the one shared builder for both query and write sides."""
+"""Wraps this project's own ChromaDB/Pinecone clients into LangChain's VectorStore objects."""
 
 import json
 
@@ -16,9 +15,7 @@ COLLECTION_NAME = "hrb_chatbot_kb"
 
 
 class _TextBackfillPineconeIndex:
-    """Backfills a "text" metadata key on query results from whichever of two
-    older storage shapes a chunk actually used, so LangChain's unguarded
-    metadata.pop("text") never raises - see docs/FAQ.md's entry 8."""
+    """Backfills a "text" metadata key so LangChain's unguarded metadata.pop("text") never raises."""
 
     def __init__(self, real_index):
         self._real_index = real_index
@@ -56,9 +53,7 @@ def get_embeddings(embedding_model: str | None = None) -> OpenAIEmbeddings:
 def get_vector_store(
     vector_db: str | None, embedding_model: str | None = None, collection_name: str = COLLECTION_NAME
 ):
-    """Return (LangChain vector store, resolved provider name). collection_name
-    is a real parameter, not just the module constant, so a test can point at
-    an isolated collection without monkeypatching a global."""
+    """Return (LangChain vector store, resolved provider name) - collection_name lets a test isolate itself."""
     vector_store_client = get_db_gateway().vector_store(provider=vector_db)
     embeddings = get_embeddings(embedding_model)
 

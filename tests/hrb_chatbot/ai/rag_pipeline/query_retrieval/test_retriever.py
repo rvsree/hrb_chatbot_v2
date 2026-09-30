@@ -290,7 +290,7 @@ async def test_unknown_search_strategy_raises_value_error(monkeypatch):
 # parser, see StructuredQueryOutputParser.parse).
 _SELF_QUERY_FILTER_RESPONSE = (
     '```json\n{\n  "query": "401k vesting schedule",\n  '
-    '"filter": "eq(\\"doc_classification\\", \\"401k\\")"\n}\n```'
+    '"filter": "eq(\\"doc_description\\", \\"401k\\")"\n}\n```'
 )
 _SELF_QUERY_NO_FILTER_RESPONSE = '```json\n{\n  "query": "how much PTO do I get",\n  "filter": "NO_FILTER"\n}\n```'
 
@@ -303,7 +303,7 @@ def test_combine_with_current_only_ands_extra_filter_with_is_current():
     """The spec's own hard rule: is_current must never be overridable by a
     parsed filter - a plain dict merge could let a same-shaped key silently
     replace CURRENT_CHUNKS_ONLY, so this must $and them instead."""
-    extra = {"doc_classification": {"$eq": "401k"}}
+    extra = {"doc_description": {"$eq": "401k"}}
     combined = retriever._combine_with_current_only(extra)
     assert combined == {"$and": [retriever.CURRENT_CHUNKS_ONLY, extra]}
 
@@ -340,7 +340,7 @@ async def test_parse_self_query_filter_returns_the_models_own_parsed_filter(monk
 
     applied_filter = retriever._parse_self_query_filter(store, provider, "what's my 401k vesting schedule", "openai")
 
-    assert applied_filter == {"doc_classification": {"$eq": "401k"}}
+    assert applied_filter == {"doc_description": {"$eq": "401k"}}
 
 
 async def test_parse_self_query_filter_returns_none_when_the_model_finds_nothing_to_filter_on(monkeypatch):
@@ -356,7 +356,7 @@ async def test_parse_self_query_filter_returns_none_when_the_model_finds_nothing
 async def test_retrieve_chunks_use_self_query_excludes_superseded_chunks_even_when_a_filter_is_parsed(monkeypatch):
     """The core correctness case this phase's spec calls out explicitly:
     is_current must stay under this project's own control - a superseded
-    chunk that also matches the parsed doc_classification filter must still
+    chunk that also matches the parsed doc_description filter must still
     be excluded, not let through because it satisfies the parsed filter."""
     collection_name, vector_store_client, metadata_store, embeddings = _setup(monkeypatch)
     await metadata_store.create_document("doc-old", "401k-v1.pdf", "data/uploads/doc-old/401k-v1.pdf")
@@ -369,13 +369,13 @@ async def test_retrieve_chunks_use_self_query_excludes_superseded_chunks_even_wh
                 "id": "doc-old:0",
                 "text": "stale 401k text",
                 "embedding": [1.0, 0.0],
-                "metadata": {"document_id": "doc-old", "chunk_index": 0, "is_current": False, "doc_classification": "401k"},
+                "metadata": {"document_id": "doc-old", "chunk_index": 0, "is_current": False, "doc_description": "401k"},
             },
             {
                 "id": "doc-new:0",
                 "text": "current 401k text",
                 "embedding": [1.0, 0.0],
-                "metadata": {"document_id": "doc-new", "chunk_index": 0, "is_current": True, "doc_classification": "401k"},
+                "metadata": {"document_id": "doc-new", "chunk_index": 0, "is_current": True, "doc_description": "401k"},
             },
         ],
     )
@@ -387,4 +387,4 @@ async def test_retrieve_chunks_use_self_query_excludes_superseded_chunks_even_wh
     document_ids = [chunk["document_id"] for chunk in chunks]
     assert "doc-new" in document_ids
     assert "doc-old" not in document_ids
-    assert applied_filter == {"doc_classification": {"$eq": "401k"}}
+    assert applied_filter == {"doc_description": {"$eq": "401k"}}

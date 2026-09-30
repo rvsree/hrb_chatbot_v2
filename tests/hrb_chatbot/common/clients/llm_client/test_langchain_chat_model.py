@@ -3,7 +3,7 @@ langchain_chat_model.py) - adapts this project's own ask() clients to
 LangChain's BaseChatModel. Uses FakeChatClient from conftest.py - no real
 network call."""
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from src.hrb_chatbot.common.clients.llm_client import langchain_chat_model
 from src.hrb_chatbot.common.clients.llm_client.langchain_chat_model import GatewayChatModel
@@ -22,8 +22,30 @@ def test_last_message_is_the_question_earlier_message_becomes_context(monkeypatc
     assert result.content == "an answer"
     call = fake_chat.calls[0]
     assert call["question"] == "the real question"
-    assert call["context"] == "earlier turn"
+    assert call["context"] == "User: earlier turn"
     assert call["system_prompt"] is None
+
+
+def test_phase_58_multi_turn_history_is_role_labeled_in_context(monkeypatch):
+    fake_chat = FakeChatClient(answer="an answer")
+    monkeypatch.setattr(
+        langchain_chat_model, "get_client_gateway", lambda: FakeClientGateway(chat_client=fake_chat)
+    )
+
+    llm = GatewayChatModel(provider="openai")
+    llm.invoke(
+        [
+            SystemMessage(content="you are helpful"),
+            HumanMessage(content="what database issues have we had?"),
+            AIMessage(content="Two tickets about connection timeouts."),
+            HumanMessage(content="what was the current question"),
+        ]
+    )
+
+    call = fake_chat.calls[0]
+    assert call["system_prompt"] == "you are helpful"
+    assert call["context"] == "User: what database issues have we had?\n\nAssistant: Two tickets about connection timeouts."
+    assert call["question"] == "what was the current question"
 
 
 def test_a_system_message_becomes_system_prompt_not_context(monkeypatch):

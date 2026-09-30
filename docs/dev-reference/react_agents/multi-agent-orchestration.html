@@ -1,0 +1,359 @@
+<title>Multi-Agent Orchestration</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800;900&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #f0f1f5; --surface: #ffffff; --surface-alt: #f5f6fa; --border: #dbdee7;
+    --text: #171a24; --text-muted: #555c70; --text-faint: #888fa3;
+    --built: #146b3f; --built-bg: #e3f6ea; --built-border: #b7e4c8;
+    --partial: #9a5a0c; --partial-bg: #fbf1dd; --partial-border: #edd6a2;
+    --gap: #6b7286; --gap-bg: #eef0f4; --gap-border: #d5d9e3;
+    --flow: #3457d5; --parallel: #7c3aed; --parallel-bg: #f1ebfe; --parallel-border: #ddccfb;
+    --shadow: 0 2px 4px rgba(15,20,30,0.06), 0 10px 22px rgba(15,20,30,0.07);
+    --band: #232a42; --node-bg: #ffffff;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d0f16; --surface: #14161f; --surface-alt: #161923; --border: #292d3d;
+      --text: #e7e9f0; --text-muted: #a5abbf; --text-faint: #6b7288;
+      --built: #4fc989; --built-bg: #132a1e; --built-border: #204a32;
+      --partial: #e0ac48; --partial-bg: #2c2311; --partial-border: #4a3a17;
+      --gap: #8991a8; --gap-bg: #191d29; --gap-border: #2a2f42;
+      --flow: #7c96ff; --parallel: #b794f6; --parallel-bg: #241b36; --parallel-border: #3c2c56;
+      --shadow: 0 2px 4px rgba(0,0,0,0.35), 0 12px 26px rgba(0,0,0,0.4);
+      --band: #1a2038; --node-bg: #181b28;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d0f16; --surface: #14161f; --surface-alt: #161923; --border: #292d3d;
+    --text: #e7e9f0; --text-muted: #a5abbf; --text-faint: #6b7288;
+    --built: #4fc989; --built-bg: #132a1e; --built-border: #204a32;
+    --partial: #e0ac48; --partial-bg: #2c2311; --partial-border: #4a3a17;
+    --gap: #8991a8; --gap-bg: #191d29; --gap-border: #2a2f42;
+    --flow: #7c96ff; --parallel: #b794f6; --parallel-bg: #241b36; --parallel-border: #3c2c56;
+    --shadow: 0 2px 4px rgba(0,0,0,0.35), 0 12px 26px rgba(0,0,0,0.4);
+    --band: #1a2038; --node-bg: #181b28;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans', -apple-system, sans-serif; padding-inline: 16px; padding-block: 28px 56px; }
+  .display { font-family: 'Archivo', sans-serif; } .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+  .wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 26px; }
+
+  header { display: flex; flex-direction: column; gap: 10px; }
+  .eyebrow { font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-faint); font-weight: 600; }
+  h1 { margin: 0; font-weight: 900; font-size: clamp(24px, 3.8vw, 32px); letter-spacing: -0.01em; text-wrap: balance; }
+  .subtitle { margin: 0; color: var(--text-muted); font-size: 13.5px; max-width: 84ch; line-height: 1.6; }
+  .source-tag { display: inline-flex; align-items: center; gap: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--text-faint); background: var(--surface); border: 1px solid var(--border); padding: 5px 10px; border-radius: 8px; width: fit-content; }
+
+  section.card { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+  .card-head { background: var(--band); color: #fff; padding: 12px 18px; }
+  .card-head h2 { margin: 0; font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 15px; }
+  .card-head p { margin: 4px 0 0; font-size: 11.5px; opacity: 0.75; }
+  .card-body { padding: 18px; }
+
+  /* diagram */
+  .diagram-wrap { overflow-x: auto; }
+  figure { margin: 0; }
+  svg { display: block; width: 100%; height: auto; min-width: 640px; }
+  .node rect { fill: var(--node-bg); stroke: var(--border); stroke-width: 1.5; }
+  .node .title { font-family: 'Archivo', sans-serif; font-weight: 700; font-size: 13px; fill: var(--text); }
+  .node .sub { font-family: 'IBM Plex Mono', monospace; font-size: 10px; fill: var(--text-faint); }
+  .lane-label { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; fill: var(--text-muted); }
+  .edge { fill: none; stroke: var(--text-faint); stroke-width: 1.5; }
+  .edge-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; fill: var(--text-muted); }
+  .edge.parallel { stroke: var(--parallel); stroke-width: 2; }
+  .edge-label.parallel { fill: var(--parallel); font-weight: 600; }
+  .subagent rect { stroke: var(--parallel); stroke-dasharray: 4 3; }
+  figcaption { margin-top: 12px; font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+  figcaption .mono { color: var(--text-faint); }
+
+  /* concept cards */
+  .concepts { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
+  .concept { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .concept .num { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--parallel); font-weight: 600; }
+  .concept h3 { margin: 0; font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 14.5px; }
+  .concept p { margin: 0; font-size: 12.5px; color: var(--text-muted); line-height: 1.6; }
+  .concept .in-code { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: var(--text-faint); background: var(--surface-alt); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; width: fit-content; }
+
+  /* gap table */
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th { text-align: left; padding: 8px 14px; font-family: 'Archivo', sans-serif; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-faint); border-bottom: 1px solid var(--border); }
+  tbody td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--surface-alt); }
+  .topic-name { font-weight: 700; }
+  .status-pill { font-size: 10px; font-weight: 700; padding: 2px 9px; border-radius: 999px; white-space: nowrap; display: inline-block; }
+  .status-pill.built { color: var(--built); background: var(--built-bg); border: 1px solid var(--built-border); }
+  .status-pill.partial { color: var(--partial); background: var(--partial-bg); border: 1px solid var(--partial-border); }
+  .status-pill.gap { color: var(--gap); background: var(--gap-bg); border: 1px solid var(--gap-border); }
+  .where { color: var(--text-muted); font-size: 11.5px; line-height: 1.55; }
+  .where .mono { font-size: 10.5px; color: var(--text-faint); }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; padding: 14px 18px 0; }
+  .legend-item { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-muted); background: var(--surface-alt); border: 1px solid var(--border); padding: 5px 10px 5px 8px; border-radius: 999px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.built { background: var(--built); } .dot.partial { background: var(--partial); } .dot.gap { background: var(--gap); }
+
+  footer { border-top: 1px solid var(--border); padding-top: 16px; font-size: 12px; color: var(--text-faint); line-height: 1.7; }
+  footer .mono { color: var(--text-faint); }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">beginner walkthrough &middot; planning material, nothing implemented yet</div>
+    <h1 class="display">Multi-Agent Orchestration</h1>
+    <p class="subtitle">A plain-language tour of the <strong>orchestrator &rarr; parallel workers &rarr; synthesizer</strong> pattern taught in the IK FDE cohort's Multi-Agent Travel Planner class (LangGraph), followed by an honest status check against what <span class="mono">hrb_chatbot_v2</span> has today. Status only &mdash; no ranking, no build/defer/drop recommendation made here.</p>
+    <span class="source-tag">source: docs/id-fde-cohort/multi-agentic-system/Multi-Agent Travel Planner.ipynb</span>
+  </header>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>The Workflow</h2>
+      <p>One user question, split across specialist agents, run at the same time, merged into one answer</p>
+    </div>
+    <div class="card-body diagram-wrap">
+      <figure>
+        <svg viewBox="0 0 1180 660" role="img" aria-label="A user query enters an orchestrator, which classifies it into one or more tasks and dispatches them in parallel to a Search Agent and a Planner Agent. Each agent loops with its own tool node until it has a real answer, then both results converge on a Synthesizer, which produces the Final Answer. The Planner Agent's tool node can itself call a separate Itinerary Research Agent as if it were a tool.">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"></path>
+            </marker>
+            <marker id="arrowP" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--parallel)"></path>
+            </marker>
+          </defs>
+
+          <!-- Query -->
+          <g class="node">
+            <rect x="480" y="14" width="220" height="44" rx="9"></rect>
+            <text class="title" x="590" y="32" text-anchor="middle">User Query</text>
+            <text class="sub" x="590" y="46" text-anchor="middle">user_query</text>
+          </g>
+          <line class="edge" x1="590" y1="58" x2="590" y2="88" marker-end="url(#arrow)"></line>
+
+          <!-- Orchestrator -->
+          <g class="node">
+            <rect x="410" y="90" width="360" height="66" rx="9"></rect>
+            <text class="title" x="590" y="114" text-anchor="middle">Orchestrator (Router)</text>
+            <text class="sub" x="590" y="130" text-anchor="middle">classify_query_parallel()</text>
+            <text class="sub" x="590" y="144" text-anchor="middle">returns a validated task list, not free text</text>
+          </g>
+
+          <!-- fan-out (parallel) -->
+          <polyline class="edge parallel" points="590,156 590,190 255,190 255,228" marker-end="url(#arrowP)"></polyline>
+          <polyline class="edge parallel" points="590,156 590,190 925,190 925,228" marker-end="url(#arrowP)"></polyline>
+          <text class="edge-label parallel" x="590" y="184" text-anchor="middle">Send() &mdash; both branches run concurrently</text>
+
+          <!-- lane labels -->
+          <text class="lane-label" x="255" y="210" text-anchor="middle">SEARCH LANE</text>
+          <text class="lane-label" x="925" y="210" text-anchor="middle">PLANNER LANE</text>
+
+          <!-- Search Agent -->
+          <g class="node">
+            <rect x="90" y="230" width="330" height="56" rx="9"></rect>
+            <text class="title" x="255" y="252" text-anchor="middle">Search Agent</text>
+            <text class="sub" x="255" y="268" text-anchor="middle">search_agent_node()</text>
+          </g>
+          <!-- Planner Agent -->
+          <g class="node">
+            <rect x="760" y="230" width="330" height="56" rx="9"></rect>
+            <text class="title" x="925" y="252" text-anchor="middle">Planner Agent</text>
+            <text class="sub" x="925" y="268" text-anchor="middle">planner_agent_node()</text>
+          </g>
+
+          <!-- Search tool loop -->
+          <g class="node">
+            <rect x="90" y="326" width="330" height="48" rx="9"></rect>
+            <text class="title" x="255" y="346" text-anchor="middle">Search Tools</text>
+            <text class="sub" x="255" y="360" text-anchor="middle">search_tool_node() &middot; flights / hotels</text>
+          </g>
+          <line class="edge" x1="170" y1="286" x2="170" y2="324" marker-end="url(#arrow)"></line>
+          <text class="edge-label" x="178" y="308">has tool_calls</text>
+          <line class="edge" x1="340" y1="324" x2="340" y2="286" marker-end="url(#arrow)"></line>
+          <text class="edge-label" x="292" y="308">tool result</text>
+
+          <!-- Planner tool loop -->
+          <g class="node">
+            <rect x="760" y="326" width="330" height="48" rx="9"></rect>
+            <text class="title" x="925" y="346" text-anchor="middle">Planner Tools</text>
+            <text class="sub" x="925" y="360" text-anchor="middle">planner_tool_node() &middot; web search + sub-agent</text>
+          </g>
+          <line class="edge" x1="840" y1="286" x2="840" y2="324" marker-end="url(#arrow)"></line>
+          <text class="edge-label" x="848" y="308">has tool_calls</text>
+          <line class="edge" x1="1010" y1="324" x2="1010" y2="286" marker-end="url(#arrow)"></line>
+          <text class="edge-label" x="962" y="308">tool result</text>
+
+          <!-- Sub-agent as tool -->
+          <line class="edge" x1="925" y1="374" x2="925" y2="408" marker-end="url(#arrow)"></line>
+          <text class="edge-label" x="935" y="395">one tool IS another agent</text>
+          <g class="node subagent">
+            <rect x="790" y="410" width="270" height="46" rx="9"></rect>
+            <text class="title" x="925" y="429" text-anchor="middle">Itinerary Research Agent</text>
+            <text class="sub" x="925" y="443" text-anchor="middle">deep ReAct agent, called via @tool</text>
+          </g>
+
+          <!-- exits to synthesizer -->
+          <polyline class="edge" points="420,258 440,258 440,528 460,528" marker-end="url(#arrow)"></polyline>
+          <text class="edge-label" x="446" y="400" transform="rotate(-90 446 400)" text-anchor="middle">no tool_calls &rarr; done</text>
+          <polyline class="edge" points="760,258 740,258 740,528 720,528" marker-end="url(#arrow)"></polyline>
+          <text class="edge-label" x="734" y="400" transform="rotate(90 734 400)" text-anchor="middle">no tool_calls &rarr; done</text>
+
+          <!-- Synthesizer -->
+          <g class="node">
+            <rect x="460" y="500" width="260" height="56" rx="9"></rect>
+            <text class="title" x="590" y="524" text-anchor="middle">Synthesizer</text>
+            <text class="sub" x="590" y="540" text-anchor="middle">synthesizer_node() &middot; merges agent_results</text>
+          </g>
+          <line class="edge" x1="590" y1="556" x2="590" y2="588" marker-end="url(#arrow)"></line>
+
+          <!-- Final answer -->
+          <g class="node">
+            <rect x="480" y="590" width="220" height="44" rx="9"></rect>
+            <text class="title" x="590" y="608" text-anchor="middle">Final Answer</text>
+            <text class="sub" x="590" y="622" text-anchor="middle">final_answer</text>
+          </g>
+        </svg>
+        <figcaption>
+          Both lanes run at the same time once <span class="mono">Send()</span> dispatches them &mdash; the graph doesn't wait for Search to finish before starting Planner. If the router only picked one lane, the Synthesizer skips merging and passes that lane's answer straight through. The whole graph can also be wrapped in a checkpointer (<span class="mono">InMemorySaver</span>, keyed by <span class="mono">thread_id</span>) so it remembers earlier turns across separate calls &mdash; not drawn above since it applies to the entire graph, not one step.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>The Concepts, One at a Time</h2>
+      <p>Same order the diagram reads in, explained plainly</p>
+    </div>
+    <div class="card-body">
+      <div class="concepts">
+
+        <div class="concept">
+          <span class="num">01</span>
+          <h3>Orchestrator / Router</h3>
+          <p>One LLM call reads the question and decides which specialist(s) should handle it &mdash; by filling out a structured form (a validated object), not by writing free-text. Like a receptionist who fills in a routing slip instead of just describing the problem out loud.</p>
+          <span class="in-code">classify_query_parallel()</span>
+        </div>
+
+        <div class="concept">
+          <span class="num">02</span>
+          <h3>Send() &mdash; Parallel Dispatch</h3>
+          <p>Normally a graph runs one step, then the next. <span class="mono" style="font-size:11px">Send(node, state)</span> lets one decision point start <em>multiple</em> nodes at the same time, each with its own copy of state &mdash; one manager splitting a request into two tickets handed out at once, not one after another.</p>
+          <span class="in-code">dispatch_to_agents()</span>
+        </div>
+
+        <div class="concept">
+          <span class="num">03</span>
+          <h3>Worker Agent + Tool Loop</h3>
+          <p>Each specialist is a small loop: ask the LLM &rarr; if it wants a tool, run the tool and feed the result back &rarr; ask again &rarr; repeat until it gives a real answer instead of a tool request. The same tool-calling loop this project already has in single-agentic-rag &mdash; just run twice here, once per worker.</p>
+          <span class="in-code">search_agent_node() / planner_agent_node()</span>
+        </div>
+
+        <div class="concept">
+          <span class="num">04</span>
+          <h3>Sub-Agent as a Tool</h3>
+          <p>One whole agent can be wrapped up and handed to <em>another</em> agent as if it were an ordinary function. The Planner doesn't know <span class="mono" style="font-size:11px">itinerary_research_agent</span> is secretly a full reasoning agent underneath &mdash; calling it looks exactly like calling a search function.</p>
+          <span class="in-code">@tool("itinerary_research_agent")</span>
+        </div>
+
+        <div class="concept">
+          <span class="num">05</span>
+          <h3>Synthesizer (fan-in)</h3>
+          <p>If only one worker answered, its raw answer becomes the final answer &mdash; no extra step. If more than one answered, this makes one more LLM call whose only job is to organize what's already been found into one readable response. It does no new research.</p>
+          <span class="in-code">synthesizer_node()</span>
+        </div>
+
+        <div class="concept">
+          <span class="num">06</span>
+          <h3>Concurrent-Safe State (reducers)</h3>
+          <p>Two workers can try to update the same shared state at almost the same moment. Marking a field <span class="mono" style="font-size:11px">Annotated[List, operator.add]</span> tells the graph "combine both writes into one list" instead of letting one silently overwrite the other.</p>
+          <span class="in-code">agent_results: Annotated[List[dict], operator.add]</span>
+        </div>
+
+        <div class="concept">
+          <span class="num">07</span>
+          <h3>Persistence / Checkpointing</h3>
+          <p>The graph can remember a conversation across separate calls, as long as the same <span class="mono" style="font-size:11px">thread_id</span> is passed each time and the graph is compiled with a checkpointer. Same goal as this project's own hand-built conversation memory &mdash; a first-party library feature here instead of a custom dict.</p>
+          <span class="in-code">InMemorySaver() + config["thread_id"]</span>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Status Check Against hrb_chatbot_v2</h2>
+      <p>What the course pattern needs vs. what already exists here today &mdash; status only</p>
+    </div>
+    <div class="legend">
+      <span class="legend-item"><span class="dot built"></span>Built</span>
+      <span class="legend-item"><span class="dot partial"></span>Partially built / built differently</span>
+      <span class="legend-item"><span class="dot gap"></span>Not built</span>
+    </div>
+    <div class="card-body">
+      <table>
+        <thead>
+          <tr><th style="width:19%">Concept</th><th style="width:14%">Status</th><th>Where this actually stands</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="topic-name">Tool-calling agent loop (ReAct)</td>
+            <td><span class="status-pill built">Built</span></td>
+            <td class="where">The exact loop mechanism already exists and runs live: <span class="mono">ai/agents/workflow_agents/orchestration_agent.py :: run_agent()</span>. The course just runs two independent copies of this same idea, one per worker.</td>
+          </tr>
+          <tr>
+            <td class="topic-name">LLM-based structured-output router</td>
+            <td><span class="status-pill gap">Not built</span></td>
+            <td class="where">Nothing plays this role today. Phase 49's MCP routing (<span class="mono">is_leave_balance_query()</span>) is plain keyword matching, not an LLM call, and single-agentic-rag has no separate routing step at all &mdash; the one agent decides everything itself, in its own loop.</td>
+          </tr>
+          <tr>
+            <td class="topic-name">Parallel multi-agent dispatch (Send API)</td>
+            <td><span class="status-pill gap">Not built</span></td>
+            <td class="where">Single-agentic-rag always runs exactly one reasoning loop per request &mdash; nothing runs concurrently. Worth knowing: <span class="mono">langgraph==0.3.21</span> is already pinned in <span class="mono">requirements.txt</span> (pulled in by <span class="mono">langchain</span>'s own dependency tree) but isn't imported anywhere in <span class="mono">src/</span> today &mdash; the library is already present, not a new install, if this path is ever chosen.</td>
+          </tr>
+          <tr>
+            <td class="topic-name">Sub-agent-as-a-tool composition</td>
+            <td><span class="status-pill gap">Not built</span></td>
+            <td class="where">None of single-agentic-rag's 3 tools (<span class="mono">SearchKnowledgeBase</span>, <span class="mono">GetLeaveBalance</span>, <span class="mono">GetLeaveHistory</span>) are themselves agents &mdash; all three are single-purpose leaf functions.</td>
+          </tr>
+          <tr>
+            <td class="topic-name">Synthesizer / fan-in merge step</td>
+            <td><span class="status-pill gap">Not built</span></td>
+            <td class="where">No merge step exists because only one agent ever runs per request today &mdash; there is nothing yet to merge.</td>
+          </tr>
+          <tr>
+            <td class="topic-name">Concurrent-safe state merging</td>
+            <td><span class="status-pill gap">Not built</span></td>
+            <td class="where">No concept of merging concurrent writes exists, since nothing runs in parallel yet to write concurrently.</td>
+          </tr>
+          <tr>
+            <td class="topic-name">Multi-turn conversation persistence</td>
+            <td><span class="status-pill partial">Built differently</span></td>
+            <td class="where">The capability exists &mdash; <span class="mono">ai/pre_processing/conversation_memory.py</span> (Phase 58), a hand-built in-memory store keyed by <span class="mono">conversation_id</span>, verified live on both genai-rag and single-agentic-rag. Same goal as the course's <span class="mono">InMemorySaver</span>/<span class="mono">thread_id</span>, different (custom, not library) mechanism.</td>
+          </tr>
+          <tr>
+            <td class="topic-name">Web search tool wired into an agent</td>
+            <td><span class="status-pill partial">Partially built</span></td>
+            <td class="where"><span class="mono">common/clients/web_client/tavily_client.py</span> is a real, working Tavily client already registered in <span class="mono">client_gateway.py</span> &mdash; but no tool or agent actually calls it yet.</td>
+          </tr>
+          <tr>
+            <td class="topic-name">Deep-research sub-agent framework (deepagents)</td>
+            <td><span class="status-pill gap">Not built</span></td>
+            <td class="where"><span class="mono">deepagents</span> is not a dependency of this project at all &mdash; the course uses it for one worker's open-ended research loop.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Notebook is a general travel-planning demo, not HR-benefits-specific &mdash; the patterns above (routing, parallel dispatch, sub-agent-as-tool, synthesis) are what would carry over into a future <span class="mono">multi-agentic-rag</span> phase, not the flight/hotel search tools themselves.<br>
+    Flagged, not fixed: several <span class="mono">docs/dev-reference/</span> files currently exist in two places at once (a flat copy and a subfoldered copy, e.g. <span class="mono">rag-architecture-layers.html</span>) &mdash; noticed while placing this page, out of scope for this review.
+  </footer>
+
+</div>

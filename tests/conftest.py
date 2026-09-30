@@ -241,9 +241,12 @@ class FakeMetadataStore(BaseMetadataClient):
             "superseded_by": None,
             "owner": None,
             "department": None,
-            "doc_type": None,
+            "doc_category": None,
             "purpose": None,
-            "doc_classification": None,
+            "doc_description": None,
+            "author": None,
+            "doc_date": None,
+            "doc_version": None,
             "uploaded_by": uploaded_by,
         }
 
@@ -307,23 +310,29 @@ class FakeMetadataStore(BaseMetadataClient):
         document_id,
         owner,
         department,
-        doc_type,
+        doc_category,
         purpose,
-        doc_classification,
+        doc_description,
         effective_date=None,
         audience=None,
         confidentiality_level=None,
+        author=None,
+        doc_date=None,
+        doc_version=None,
     ):
         document = self.documents.get(document_id)
         if document is not None:
             document["owner"] = owner
             document["department"] = department
-            document["doc_type"] = doc_type
+            document["doc_category"] = doc_category
             document["purpose"] = purpose
-            document["doc_classification"] = doc_classification
+            document["doc_description"] = doc_description
             document["effective_date"] = effective_date
             document["audience"] = audience
             document["confidentiality_level"] = confidentiality_level
+            document["author"] = author
+            document["doc_date"] = doc_date
+            document["doc_version"] = doc_version
 
     async def get_document(self, document_id):
         return self.documents.get(document_id)

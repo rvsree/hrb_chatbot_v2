@@ -1,5 +1,4 @@
-"""Shared interface every document-metadata store implements - one row per
-document; chunk_ids tracked here so re-indexing can find stale chunks to delete."""
+"""Shared interface every document-metadata store implements - one row per document."""
 
 from abc import ABC, abstractmethod
 
@@ -21,16 +20,12 @@ class BaseMetadataClient(ABC):
         supersedes: str | None = None,
         uploaded_by: str | None = None,
     ) -> None:
-        """Insert one row for a newly-uploaded document (status 'uploaded',
-        version 1, is_current true). `supersedes` only records intent here -
-        the actual flip happens later, in record_successful_index().
-        `uploaded_by` is the caller's employee_id, for the audit trail only."""
+        """Insert one row for a newly-uploaded document; `supersedes` only records intent, not the flip."""
         raise NotImplementedError
 
     @abstractmethod
     async def find_by_content_hash(self, content_hash: str) -> dict | None:
-        """Return the most recent document with this exact content hash, or
-        None - same bytes/any filename means "same document," not a fresh one."""
+        """Return the most recent document with this exact content hash, or None."""
         raise NotImplementedError
 
     @abstractmethod
@@ -42,8 +37,7 @@ class BaseMetadataClient(ABC):
 
     @abstractmethod
     async def set_chunk_ids(self, document_id: str, chunk_ids: list[str]) -> None:
-        """Record which vector-store ids this document's chunks were written under,
-        replacing the previous record. Read back via get_document()["chunk_ids"]."""
+        """Record which vector-store ids this document's chunks were written under."""
         raise NotImplementedError
 
     @abstractmethod
@@ -57,16 +51,12 @@ class BaseMetadataClient(ABC):
         chunk_size: int,
         chunk_overlap: int,
     ) -> int:
-        """One update for everything a successful index changes: chunk_ids,
-        counts, model/store/chunk settings, status -> 'indexed', version += 1
-        - plus the `chunks` table (delete-then-insert). Returns the new version."""
+        """One update for everything a successful index changes; returns the new version."""
         raise NotImplementedError
 
     @abstractmethod
     async def mark_superseded(self, document_id: str, superseded_by: str) -> list[str]:
-        """Flip an existing document to is_current=false (its row + `chunks`
-        rows), recording its replacement. Returns chunk_ids so the caller can
-        also flip the vector store - this method only ever touches SQL."""
+        """Flip an existing document to is_current=false; returns chunk_ids so the caller can flip the vector store too."""
         raise NotImplementedError
 
     @abstractmethod
@@ -75,16 +65,17 @@ class BaseMetadataClient(ABC):
         document_id: str,
         owner: str | None,
         department: str | None,
-        doc_type: str | None,
+        doc_category: str | None,
         purpose: str | None,
-        doc_classification: str | None,
+        doc_description: str | None,
         effective_date: str | None = None,
         audience: str | None = None,
         confidentiality_level: str | None = None,
+        author: str | None = None,
+        doc_date: str | None = None,
+        doc_version: str | None = None,
     ) -> None:
-        """Record LLM-extracted document metadata (best-effort - any field may
-        be None if extraction couldn't determine it). Never raises; a failure
-        to extract this enrichment must not block indexing itself."""
+        """Record LLM-extracted document metadata (best-effort) - never raises."""
         raise NotImplementedError
 
     @abstractmethod
@@ -94,8 +85,7 @@ class BaseMetadataClient(ABC):
 
     @abstractmethod
     async def delete_document(self, document_id: str) -> None:
-        """Remove one document's row - a no-op if the id doesn't exist (the
-        404 check is documents_service.delete_document()'s job, not this one's)."""
+        """Remove one document's row - a no-op if the id doesn't exist."""
         raise NotImplementedError
 
     @abstractmethod
@@ -105,6 +95,5 @@ class BaseMetadataClient(ABC):
 
     @abstractmethod
     def health_check(self) -> dict:
-        """Report whether this store is usable - never raises, same contract
-        as every other client's health_check in this project."""
+        """Report whether this store is usable - never raises."""
         raise NotImplementedError

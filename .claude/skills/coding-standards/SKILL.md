@@ -11,9 +11,9 @@ allowed-tools: Read Grep
 # Coding standards check
 
 This is a thin wrapper, not a second copy of the rules - the actual
-standards live in **`docs/CODING-STANDARDS.md`**. Read that file, then apply
+standards live in **`docs/agent-reference/CODING-STANDARDS.md`**. Read that file, then apply
 it to the file in question. Do not duplicate its content here; if it's ever
-out of date with this skill's expectations, `docs/CODING-STANDARDS.md` is
+out of date with this skill's expectations, `docs/agent-reference/CODING-STANDARDS.md` is
 correct and this skill should be updated to match, not the other way round.
 
 ## What to check, in short (full reasoning is in the doc)
@@ -21,8 +21,8 @@ correct and this skill should be updated to match, not the other way round.
 1. **Comments explain *why*, briefly** - not what the code already says by
    being well-named. **Two-line hard limit** (inline comments, docstrings,
    module docstrings alike); a third line only at a genuinely critical spot,
-   sparingly - move real design reasoning to `docs/FAQ.md` or the phase's
-   own spec in `docs/RAG-ROADMAP.md` instead of a long docstring.
+   sparingly - move real design reasoning to `docs/agent-reference/FAQ.md` or the phase's
+   own spec in `docs/agent-reference/RAG-ROADMAP.md` instead of a long docstring.
 2. **Errors, by layer:** client layer (`common/clients/**`) returns errors
    as data, never raises from `health_check()`; service layer raises;
    route layer (`api/**/routes_*.py`) catches and returns the consistent
@@ -42,5 +42,5 @@ correct and this skill should be updated to match, not the other way round.
    open-ended (model names) stay `str`.
 
 Report violations found before writing them to disk, referencing the
-specific rule in `docs/CODING-STANDARDS.md` (or this list) each one
+specific rule in `docs/agent-reference/CODING-STANDARDS.md` (or this list) each one
 violates - not a vague "this could be cleaner."

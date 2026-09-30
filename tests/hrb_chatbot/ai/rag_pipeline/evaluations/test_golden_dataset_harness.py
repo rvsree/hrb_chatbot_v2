@@ -1,4 +1,5 @@
-"""Scores genai-rag against the golden dataset's 23 real cases (Phase 8).
+"""Scores genai-rag against the golden dataset's 23 real cases (Phase 8,
+rebuilt in Phase 62 to match modules/5_evaluation/demo.py directly).
 Real API calls, real cost - excluded from the default suite, run with
 `pytest -m eval -v`. Not mocked on purpose: this is the one place this
 project checks retrieval/generation quality against real data, for real."""
@@ -16,7 +17,8 @@ async def ask_genai_rag(query: str) -> dict:
     """Adapts genai-rag's real pipeline to the harness's plain contract."""
     result = await pipeline.answer_query(RagQueryParams(query=query))
     retrieved_texts = [chunk["text"] for chunk in result["sources"]]
-    return {"answer": result["answer"], "retrieved_texts": retrieved_texts}
+    retrieved_ids = [chunk["document_id"] for chunk in result["sources"]]
+    return {"answer": result["answer"], "retrieved_texts": retrieved_texts, "retrieved_ids": retrieved_ids}
 
 
 async def test_golden_dataset_cases_score_above_zero():

@@ -118,9 +118,7 @@ async def index_document(
     if result["action"] == "insert":
         try:
             document_metadata = extract_document_metadata(text)
-            # Phase 45: whatever the caller actually sent overrides the
-            # extraction guess for that field; a field the caller left null
-            # still gets whatever extraction found.
+            # Whatever the caller sent overrides the extraction guess; a field left null keeps extraction's value.
             if document_metadata_override:
                 for key, value in document_metadata_override.items():
                     if value is not None:
@@ -133,9 +131,9 @@ async def index_document(
                 document_id,
                 result["chunk_ids"],
                 resolved_vector_db,
-                doc_type=document_metadata["doc_type"],
+                doc_category=document_metadata["doc_category"],
                 department=document_metadata["department"],
-                doc_classification=document_metadata["doc_classification"],
+                doc_description=document_metadata["doc_description"],
             )
         except Exception as error:
             logger.warning(

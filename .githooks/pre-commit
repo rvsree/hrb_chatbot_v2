@@ -1,7 +1,7 @@
 #!/bin/sh
 # Blocks a commit that would ship a real API key, matching the manual
 # content-level scan (not just filename checks) done by hand before the
-# first push of this repo - see docs/RAG-ROADMAP.md's git setup notes.
+# first push of this repo - see docs/agent-reference/RAG-ROADMAP.md's git setup notes.
 # A filename check alone isn't enough: .env is already gitignored, but
 # nothing stops a real key ending up pasted into a script, a notebook, or
 # this file's own scratch output.
