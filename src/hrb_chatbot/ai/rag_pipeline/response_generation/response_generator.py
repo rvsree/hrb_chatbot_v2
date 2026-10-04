@@ -4,6 +4,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableLambda
 
+from src.hrb_chatbot.ai.pre_processing.context_builder import build_context_from_chunks
 from src.hrb_chatbot.common.clients.llm_client.client_gateway import get_client_gateway
 from src.hrb_chatbot.common.clients.llm_client.langchain_chat_model import GatewayChatModel
 from src.hrb_chatbot.common.enums import LlmProvider
@@ -61,15 +62,6 @@ RAG_PROMPT = ChatPromptTemplate.from_messages(
 )
 
 
-def _build_context(chunks: list[dict]) -> str:
-    """One block per chunk, labeled with its source filename so the model's
-    own answer can reference where a fact came from."""
-    blocks = []
-    for chunk in chunks:
-        blocks.append(f"[{chunk['filename']}, chunk {chunk['chunk_index']}]\n{chunk['text']}")
-    return "\n\n".join(blocks)
-
-
 def _to_result(message: AIMessage) -> dict:
     # GatewayChatModel sets response_metadata["model"] - StrOutputParser()
     # alone would discard it, and this app's response needs model_used too.
@@ -97,7 +89,7 @@ def generate_answer(
     )
     chain = RAG_PROMPT | llm | RunnableLambda(_to_result)
 
-    context = _build_context(chunks)
+    context = build_context_from_chunks(chunks)
     result = chain.invoke({"context": context, "question": query, "chat_history": chat_history or []})
 
     logger.info("Generated a %d-character answer from %d chunk(s)", len(result["answer"]), len(chunks))

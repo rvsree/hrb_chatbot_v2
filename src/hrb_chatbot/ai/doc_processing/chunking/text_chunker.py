@@ -28,14 +28,24 @@ DEFAULT_CHUNK_OVERLAP = int(read_setting(None, "CHUNK_DEFAULT_OVERLAP", 150))
 # critical for short tickets/documents" takeaway from workshop Module 1.
 WHOLE_DOCUMENT_MAX_LENGTH = DEFAULT_CHUNK_SIZE
 
-# table_extractor.py appends tables as [TABLE]...[/TABLE] blocks - matched
-# here so decide_chunk_size() can keep one whole in one chunk.
+# table_extractor.py appends tables as [TABLE]...[/TABLE] blocks - pulled out
+# before chunking (Phase 75) so a table is never split across two chunks.
 TABLE_BLOCK_PATTERN = re.compile(r"\[TABLE\](.*?)\[/TABLE\]", re.DOTALL)
 
 # Above this length, a document would fragment into 10+ tiny chunks at the
 # default size, each losing surrounding context - use a larger chunk size instead.
 LARGE_DOCUMENT_MIN_LENGTH = int(read_setting(None, "CHUNK_LARGE_DOCUMENT_MIN_LENGTH", 10_000))
 LARGE_DOCUMENT_CHUNK_SIZE = int(read_setting(None, "CHUNK_LARGE_DOCUMENT_CHUNK_SIZE", 1500))
+
+
+def _split_out_tables(text: str) -> tuple[str, list[str]]:
+    """Pulls every [TABLE]...[/TABLE] block out of text - the table-free text
+    plus each table block (with its markers) kept separate, so a table is
+    never at the mercy of a chunk-size boundary and never influences
+    chunk sizing for the rest of the document (Phase 75)."""
+    table_blocks = [f"[TABLE]{match}[/TABLE]" for match in TABLE_BLOCK_PATTERN.findall(text)]
+    text_without_tables = TABLE_BLOCK_PATTERN.sub("", text).strip()
+    return text_without_tables, table_blocks
 
 
 def extract_text_from_pdf(file_path: str) -> str:
@@ -120,8 +130,11 @@ CHUNKING_STRATEGIES = {
 
 
 def decide_chunking_strategy(text: str) -> str:
-    """Auto-pick a strategy when none was given - "semantic" stays explicit-only."""
-    stripped = text.strip()
+    """Auto-pick a strategy when none was given - "semantic" stays explicit-only.
+    Decided from the table-free text (Phase 75) - table markdown shouldn't
+    influence prose-structure detection."""
+    text_without_tables, _ = _split_out_tables(text)
+    stripped = text_without_tables.strip()
 
     # A line is a markdown heading only if "#" starts it after stripping
     # leading whitespace - an incidental "#" mid-sentence doesn't count.
@@ -162,30 +175,25 @@ def decide_chunking_strategy(text: str) -> str:
 
 
 def decide_chunk_size(text: str) -> int:
-    """Auto-pick a chunk size when none was given - only grows past the default, never shrinks it."""
-    stripped = text.strip()
+    """Auto-pick a chunk size when none was given - only grows past the default, never shrinks it.
+    Tables no longer factor in (Phase 75): each table becomes its own whole
+    chunk regardless of size (see chunk_text()), so there's no need to
+    inflate chunk size for the rest of the document just because one table
+    is large."""
+    text_without_tables, _ = _split_out_tables(text)
+    stripped = text_without_tables.strip()
 
-    table_lengths = [len(block) for block in TABLE_BLOCK_PATTERN.findall(stripped)]
-    largest_table_length = max(table_lengths, default=0)
-
-    candidates = [DEFAULT_CHUNK_SIZE]
     if len(stripped) > LARGE_DOCUMENT_MIN_LENGTH:
-        candidates.append(LARGE_DOCUMENT_CHUNK_SIZE)
-    if largest_table_length > DEFAULT_CHUNK_SIZE:
-        # Big enough that the splitter never recurses into this block.
-        candidates.append(largest_table_length + DEFAULT_CHUNK_OVERLAP)
-
-    chunk_size = max(candidates)
-    if chunk_size != DEFAULT_CHUNK_SIZE:
+        chunk_size = LARGE_DOCUMENT_CHUNK_SIZE
         logger.info(
-            "chunk_size: auto-select rationale - %d character(s), largest [TABLE] block=%d "
-            "character(s) -> %d (default is %d)",
+            "chunk_size: auto-select rationale - %d character(s) -> %d (default is %d)",
             len(stripped),
-            largest_table_length,
             chunk_size,
             DEFAULT_CHUNK_SIZE,
         )
-    return chunk_size
+        return chunk_size
+
+    return DEFAULT_CHUNK_SIZE
 
 
 def chunk_text(
@@ -194,7 +202,11 @@ def chunk_text(
     chunk_size: int | None = None,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
 ) -> list[str]:
-    """Split text using the given strategy/chunk_size, or auto-select both if not given."""
+    """Split text using the given strategy/chunk_size, or auto-select both if not given.
+    Table blocks (Phase 75) are pulled out before splitting and appended as
+    their own whole chunks afterward - a table can never be cut across two
+    chunks, regardless of strategy or size. A document with no tables
+    behaves exactly as before."""
     if chunking_strategy:
         strategy = chunking_strategy
         logger.info("chunking: explicit strategy=%s", strategy)
@@ -205,12 +217,24 @@ def chunk_text(
     if strategy not in CHUNKING_STRATEGIES:
         raise ValueError(f"Unknown chunking_strategy {strategy!r} - choose one of {list(CHUNKING_STRATEGIES)}")
 
-    chunk_function = CHUNKING_STRATEGIES[strategy]
-    if strategy in ("fixed", "recursive"):
-        resolved_chunk_size = chunk_size if chunk_size is not None else decide_chunk_size(text)
-        chunks = chunk_function(text, chunk_size=resolved_chunk_size, chunk_overlap=chunk_overlap)
-    else:
-        chunks = chunk_function(text)
+    text_without_tables, table_blocks = _split_out_tables(text)
 
-    logger.info("Split %d characters of text into %d chunks (strategy=%s)", len(text), len(chunks), strategy)
+    chunk_function = CHUNKING_STRATEGIES[strategy]
+    if not text_without_tables:
+        prose_chunks = []
+    elif strategy in ("fixed", "recursive"):
+        resolved_chunk_size = chunk_size if chunk_size is not None else decide_chunk_size(text)
+        prose_chunks = chunk_function(text_without_tables, chunk_size=resolved_chunk_size, chunk_overlap=chunk_overlap)
+    else:
+        prose_chunks = chunk_function(text_without_tables)
+
+    chunks = prose_chunks + table_blocks
+
+    logger.info(
+        "Split %d characters of text into %d chunks (strategy=%s, %d table block(s) kept whole)",
+        len(text),
+        len(chunks),
+        strategy,
+        len(table_blocks),
+    )
     return chunks

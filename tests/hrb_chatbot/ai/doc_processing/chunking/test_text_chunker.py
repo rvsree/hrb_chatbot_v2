@@ -8,7 +8,6 @@ splitters. "semantic" needs a real embedding call, so it's not covered here
 real API cost inside pytest."""
 
 from src.hrb_chatbot.ai.doc_processing.chunking.text_chunker import (
-    DEFAULT_CHUNK_OVERLAP,
     DEFAULT_CHUNK_SIZE,
     LARGE_DOCUMENT_CHUNK_SIZE,
     LARGE_DOCUMENT_MIN_LENGTH,
@@ -156,17 +155,12 @@ def test_decide_chunk_size_defaults_when_no_signal_applies():
     assert decide_chunk_size(text) == DEFAULT_CHUNK_SIZE
 
 
-def test_decide_chunk_size_grows_to_fit_a_large_table_block():
-    table_content = "a" * 1500
-    # No newlines inside the tags - TABLE_BLOCK_PATTERN captures exactly
-    # what's between [TABLE] and [/TABLE], so this keeps the expected math simple.
+def test_decide_chunk_size_ignores_table_size_entirely():
+    # Phase 75 - a huge table no longer inflates chunk_size at all, since
+    # tables are pulled out and kept whole before any size-based splitting happens.
+    table_content = "a" * 5000
     text = f"Some intro text.\n\n[TABLE]{table_content}[/TABLE]"
 
-    assert decide_chunk_size(text) == len(table_content) + DEFAULT_CHUNK_OVERLAP
-
-
-def test_decide_chunk_size_ignores_a_table_smaller_than_the_default():
-    text = "Some intro text.\n\n[TABLE]\nsmall table\n[/TABLE]"
     assert decide_chunk_size(text) == DEFAULT_CHUNK_SIZE
 
 
@@ -175,21 +169,34 @@ def test_decide_chunk_size_grows_for_a_long_document():
     assert decide_chunk_size(text) == LARGE_DOCUMENT_CHUNK_SIZE
 
 
-def test_decide_chunk_size_takes_the_max_when_both_signals_apply():
-    table_content = "b" * (LARGE_DOCUMENT_CHUNK_SIZE + 500)  # bigger than either default candidate
-    padding = "word " * (LARGE_DOCUMENT_MIN_LENGTH // 4)
-    text = f"{padding}\n\n[TABLE]{table_content}[/TABLE]"
-
-    assert decide_chunk_size(text) == len(table_content) + DEFAULT_CHUNK_OVERLAP
-
-
-def test_chunk_text_auto_sizes_when_no_chunk_size_given():
-    table_content = "c" * 1500
+def test_chunk_text_keeps_a_table_block_whole_even_when_it_exceeds_chunk_size():
+    # Phase 75 - a table far bigger than chunk_size still comes back as one
+    # unbroken chunk, never split across two.
+    table_content = "c" * 5000
     text = f"Some intro text.\n\n[TABLE]\n{table_content}\n[/TABLE]"
 
-    # Forced onto "recursive" so chunk_size is actually used (the table
-    # block alone is short text, so auto-strategy would otherwise pick "none").
-    chunks = chunk_text(text, chunking_strategy="recursive")
+    chunks = chunk_text(text, chunking_strategy="recursive", chunk_size=500, chunk_overlap=50)
 
-    assert len(chunks) == 1
-    assert table_content in chunks[0]
+    table_chunks = [chunk for chunk in chunks if table_content in chunk]
+    assert len(table_chunks) == 1
+    assert table_chunks[0].count("[TABLE]") == 1
+    assert table_chunks[0].count("[/TABLE]") == 1
+
+
+def test_chunk_text_handles_multiple_tables_as_separate_whole_chunks():
+    text = "Intro text.\n\n[TABLE]\nfirst table\n[/TABLE]\n\nMore text.\n\n[TABLE]\nsecond table\n[/TABLE]"
+
+    chunks = chunk_text(text, chunking_strategy="recursive", chunk_size=500, chunk_overlap=50)
+
+    table_chunks = [chunk for chunk in chunks if "[TABLE]" in chunk]
+    assert len(table_chunks) == 2
+    assert any("first table" in chunk for chunk in table_chunks)
+    assert any("second table" in chunk for chunk in table_chunks)
+
+
+def test_chunk_text_with_no_tables_behaves_exactly_as_before():
+    text = "This is one sentence about JPMorgan Chase benefits policy. " * 40
+    chunks = chunk_text(text, chunking_strategy="recursive", chunk_size=500, chunk_overlap=50)
+
+    assert len(chunks) > 1
+    assert not any("[TABLE]" in chunk for chunk in chunks)

@@ -638,3 +638,211 @@ orchestration exists to route to it, per the user's own sequencing.
   to revisit this later rather than resolve it now - Phase 17 proceeds as
   already spec'd in the meantime. Whoever picks this up next should read
   Phase 17's spec and its "not carried over" note in `CLAUDE.md` first.
+
+## Candidate future use case: unpaid-leave benefits-lapse notification (proposed 2026-10-02, not decided)
+
+User-proposed use case, captured here per their own request - not refined
+into a spec, not started, and not yet decided whether this gets built,
+narrowed, or dropped. Revisit before doing anything else with it.
+
+- **The use case as proposed:** an employee goes on unpaid leave. They may
+  still owe their own share of health-benefit premiums for the plan year
+  they enrolled in, since payroll deduction stops during unpaid leave. If
+  unpaid, their policy lapses within 30 days. The system should notify
+  affected employees by email before that happens. Needs sample data: 10-15
+  employees, and an enrollment table covering 100+ employees' benefit
+  elections per calendar year, across real US unpaid-leave types (FMLA,
+  personal leave of absence, military/USERRA leave, workers'-comp-related
+  leave - each has different real-world premium-continuation rules the
+  30-day constant above oversimplifies).
+- **Separate question raised in the same request:** HR also uploads
+  documents containing employee and health-policy information that need
+  entity extraction - should that use NLP (rule-based/NER) rather than an
+  LLM?
+- **Review findings (full discussion in this session's transcript, not
+  reproduced in full here):**
+  - The eligibility/deadline decision logic is pure date arithmetic - no
+    LLM belongs in that path. Recommendation: a scheduled batch job /
+    rules engine, not a RAG or agentic feature, and not part of
+    `ai/rag_pipeline/` at all.
+  - Even the notification email text is a debatable LLM use - a wrong
+    date or dollar amount in a benefits-lapse notice is a real-stakes
+    mistake. A plain string template may be the safer choice over an LLM
+    call here. Phase 63's `build_benefits_lapse_warning_prompt()`
+    (`ai/prompts/notification_prompts.py`) exists as the requested
+    illustrative example only, not as a recommendation to use it.
+  - Entity extraction method should depend on actual document structure,
+    not be decided upfront - rule-based/NER for fixed-template forms,
+    LLM extraction (see `build_entity_extraction_prompt()`, same file as
+    above) for free-text documents, either way routed through this
+    project's existing PII-masking guardrails (Phase 7) before anything
+    sensitive reaches a log or a prompt.
+  - Open architecture question, not resolved: does employee/enrollment
+    data live in a new table in this project's own database, or in
+    `hrb_lms_mcp` (already the system of record this project queries for
+    leave balance/history via MCP, Phase 49)? Duplicating employee data
+    here would cut against the "no duplicated employee data" principle
+    already established in the OAuth2 schema design (see
+    `docs/agent-reference/RAG-ROADMAP.md` Phase 50/53 and
+    `docs/dev-reference/database/db-model-overview.html`).
+  - Suggested sequencing if this moves forward: (1) decide where the data
+    lives, (2) build the deterministic eligibility logic first, with real
+    test coverage, zero LLM involvement, (3) decide and record the email
+    approach (template vs. LLM) explicitly rather than defaulting to one,
+    (4) only then pick an entity-extraction method, once real sample HR
+    documents are in hand to evaluate against.
+- **Not done:** no sample employee/enrollment dataset, no new database
+  table, no notification workflow, no scheduled job, no real email
+  sending. A first pass at this also added a prompt template
+  (`build_benefits_lapse_warning_prompt()`) parameterized to this exact
+  use case's fields - flagged by the user as implementing a piece of an
+  undecided use case regardless of being "just a prompt," and removed the
+  same session. Nothing from this discussion is implemented anywhere.
+
+## Candidate future requirement: Analytics domain agent needs historical data (proposed 2026-10-03, sequencing confirmed 2026-10-05)
+
+Surfaced while confirming multi-agentic-rag's domain-agent taxonomy (see
+`docs/dev-reference/react_agents/multi-agentic-rag-fit-plan.html`, Decision
+2 and "What Decision 2 Opens Up"). Not started, not scheduled - but the
+*order* of work is now confirmed, driven by a real use case (below), not
+assumed generically anymore.
+
+- **Confirmed driving use case (2026-10-05): Caregiver leave approval,
+  human-in-the-loop.** In practice, HR benefits reviews whether an employee
+  requesting Caregiver leave has already availed the same leave type (e.g.
+  STD/LTD) in the last 12 months before approving. This needs data from
+  **both** stores, not one: `HRB_LMS_OPS_DB` (live/current leave records -
+  what `GetLeaveHistory`, Phase 49, already reads) **and**
+  `HRB_LMS_ANALYTICS_DB` (historical/archived records) - a case closed and
+  archived into Analytics could still fall inside a 12-month lookback
+  window that Ops alone wouldn't show. Confirmed sequencing: **Ops DB
+  dataset first, Analytics DB dataset second, HITL build third.**
+- **Ops DB dataset (do first):** 30-50 employees with real leave records
+  linked to the Ops DB table - `GetLeaveHistory`'s mechanism already works
+  today, it just has almost no real data behind it (a handful of test
+  employees, not 30-50). **Open, not decided:** whether these are new
+  leave records added to *existing* `hrb_emp_lms` employees, or a new
+  employee set - the former matches this project's own "no duplicated
+  employee data" principle (OAuth schema design) and is the default
+  assumption until confirmed otherwise. Also open: the actual mix of leave
+  types/patterns needed for a believable demo (some employees with recent
+  STD/LTD, some without, so the HITL check has real cases to differ on).
+- **Analytics DB dataset (do second):** still what the original ask below
+  covers - 100+ historical records for trend-style NL2SQL queries. Now
+  understood to be a related but separate dataset from the Ops DB one, not
+  interchangeable with it - Ops answers "has this one employee taken this
+  leave," Analytics answers trend/aggregate questions across employees.
+- **HITL build (do third, after both datasets exist):** the actual
+  Caregiver-leave-approval workflow - gathers the employee's Ops+Analytics
+  leave history, reads any supporting documentation, and pauses for a
+  human (HR benefits) decision. **DeepAgents scoped-adoption decision
+  (2026-10-05):** use DeepAgents specifically for this case-prep agent
+  (document reading + multi-source gathering is exactly what it's for) -
+  not for Vector KB/LMS Ops/SQL DB, which stay plain bounded lookups. The
+  pause-for-approval mechanism itself is plain LangGraph `interrupt()`,
+  not a DeepAgents-exclusive feature.
+- **Original ask, still accurate:** an Analytics domain agent (NL2SQL over
+  benefits-cost/leave-pattern trends) needs 100+ historical records to
+  demonstrate against - real data, not a handful of rows, so a trend query
+  has something to actually aggregate. Maps to Phase 52 (planned, not
+  started, per `docs/dev-reference/mcp/mcp-integration-overview.html`) -
+  `hrb_lms_analytics` exists in the DB design doc
+  (`docs/dev-reference/database/db-model-overview.html`) as a read-only
+  MCP-accessed store, not built.
+- **Still open, unrelated to this item:** whether the unpaid-leave
+  benefits-lapse use case above shares any of this same dataset - not
+  assumed; conflating them without checking would risk baking one use
+  case's data shape into a different one's demo data.
+- **Not done:** no schema, no data in either store, no MCP server for
+  Analytics, no domain agents, no HITL workflow.
+
+## Multi-agentic-rag follow-ups (confirmed gaps after Phase 64, 2026-10-04)
+
+Phase 64 (`docs/agent-reference/RAG-ROADMAP.md`) shipped the real Planner/
+Orchestration/Reviewer Agent graph. These are the real, verified-against-
+the-actual-code gaps left after that - none started. Listed in a sensible
+pickup order (cheap/no-dependency items first, items that build on each
+other grouped together), not by how they were raised in conversation.
+
+1. ~~**No per-agent model tiering - cost reduction never actually
+   built.**~~ Done, Phase 65 (2026-10-04). `planner_agent._build_llm()`
+   reads a new `OPENAI_PLANNER_MODEL` setting, falling back to the
+   existing `OPENAI_CHAT_MODEL` when unset - scoped to the Planner only,
+   per this item's own suggested fix. `.env` carries the new var
+   commented out; no real cheaper model picked (a separate cost/quality
+   call for the user to make).
+2. ~~**Blind spot - no cost/token logging on any agent LLM call.**~~ Done,
+   Phase 66 (2026-10-04), combined with #3 (same three call sites).
+   `log_backend_call()` + a `response.usage_metadata` token-count log line
+   (verified live before writing - a real field, not guessed) now wrap
+   `planner_agent.py`/`reviewer_agent.py`/`orchestration_agent.py`'s
+   `ainvoke()` calls, same pattern `openai_client.py` already used.
+3. ~~**Blind spot - no timeout on any agent LLM call or graph node.**~~
+   Done, Phase 66 (2026-10-04). `asyncio.wait_for(..., timeout=
+   AGENT_LLM_TIMEOUT_SECONDS)` (30s) wraps the same three call sites as
+   #2. An `asyncio.TimeoutError` surfaces as an uncaught 500 today - a
+   dedicated error code is a follow-up if timeouts turn out to happen
+   often in practice, not assumed necessary yet.
+4. ~~**Golden dataset has no multi-part questions, and multi-agentic-rag
+   was never validated against it.**~~ Done, Phase 67 (2026-10-04). Added
+   `multi-agent-same-domain-01` (same-domain compound, 401k+tuition) and
+   `multi-agent-cross-domain-01` (KB + live leave-balance) to
+   `golden_dataset.json`, plus a live test
+   (`test_multi_agent_pipeline_golden_cases.py`) that runs both through
+   `run_multi_agent()` on every `pytest -m eval`. **Found and fixed a real
+   local-environment gap along the way, unrelated to multi-agentic-rag
+   itself:** only 3 of the 6 KB PDFs the golden dataset assumes were
+   actually indexed locally - traced down to confirm it affected genai-rag
+   too (not an agent-code bug), fixed by re-ingesting the missing 3 PDFs
+   through the real upload endpoint. See Phase 67's own Verified block in
+   RAG-ROADMAP.md for the full trace.
+5. ~~**Query decomposition (Phase 5.1) is still a 0-byte placeholder.**~~
+   Resolved, Phase 68 (2026-10-04) - **no separate component built**, by
+   live evidence: once #4's indexing gap was fixed, the Planner split the
+   same-domain compound case into two correctly-focused `vector_kb_agent`
+   tasks with zero prompt changes. Decision and evidence recorded in
+   `query_decompose.py`'s own docstring. Still open: genai-rag's own non-
+   agentic pipeline has no equivalent splitting mechanism - a separate,
+   unraised question.
+6. ~~**DeepEval harness is generic but has never been pointed at the
+   agentic pipelines.**~~ Done, Phase 69 (2026-10-04). Two new test-local
+   adapters (matching the existing `ask_genai_rag()` pattern) point
+   `score_case()` at `run_agent()` and `run_multi_agent()`. Needed a real
+   fix first, not a workaround: neither function exposed the raw tool/
+   domain-agent output text needed for a meaningful groundedness check -
+   added `tool_outputs`/`agent_result_texts` to each function's return
+   dict (additive, no public API contract change).
+7. **Multi-turn conversation only saves the final answer - prior turns are
+   never read back into reasoning.** Confirmed in `multi_agent_pipeline
+   .run_multi_agent()`: `enable_conversation_memory`/`conversation_id`
+   load/save the turn, but the Planner and domain agents never see prior
+   history - every call reasons fresh, so "what about last year's number"
+   won't resolve correctly. (Same real gap exists in single-agentic-rag's
+   one already-tested memory case - not new to multi-agentic-rag.) Fix:
+   thread `conversation_memory.load_history()`'s result into the Planner's
+   prompt (and optionally the Reviewer's).
+8. **Conversation storage is in-memory only (STM), no LTM, no metadata.**
+   `ai/pre_processing/conversation_memory.py`'s `_CONVERSATIONS` is a plain
+   Python dict - wiped on every restart, single-process only (same
+   limitation already called out for the rate limiter, see
+   "Observability" above). No metadata beyond a timestamp is recorded (no
+   which-agent-answered, no token/cost, no latency). Worth doing after #7,
+   not before - no point persisting history that reasoning doesn't use yet.
+9. ~~**Web-search agent (Tavily) was never built as an agent, only as a raw
+   client.**~~ Done, Phase 70 (2026-10-04). New `ai/agents/domain_agents/
+   web_search_agent.py` wraps the existing `get_client_gateway().tavily()`
+   client; added as the Planner's 5th routing option
+   (`PLANNER_SYSTEM_PROMPT` describes it as external/current information,
+   explicitly distinct from `vector_kb_agent`'s internal-policy scope) and
+   as a 5th node/edge in the graph. Live-verified with a real Tavily call
+   (current IRS mileage rate question) routed correctly end to end.
+
+Items 7 and 8 above are intentionally on hold (2026-10-04) - explicit user
+instruction to pick them up later, after items 1-6 and 9 (done, see above).
+
+Related, already tracked separately above (not repeated here): per-
+domain-agent evals / "Reviewer Agent also does evals" (Option A from
+`multi-agentic-rag-fit-plan.html`) - not built, Phase 64's Reviewer only
+merges; SQL DB Agent / LMS Analytics Agent real logic - blocked on the Ops
+DB / Analytics DB datasets in the section above this one, already
+sequenced.

@@ -75,6 +75,19 @@ async def test_search_knowledge_base_no_results(monkeypatch):
     assert "No relevant" in result
 
 
+async def test_search_knowledge_base_vector_db_failure_is_an_error_string_not_a_crash(monkeypatch):
+    """Chaos/failure-injection (Phase 74) - the vector DB itself raising, not just returning no results."""
+
+    async def _fake_retrieve_chunks_raising(query, top_k=5, **kwargs):
+        raise ConnectionError("chromadb unreachable")
+
+    monkeypatch.setattr(agentic_tools, "retrieve_chunks", _fake_retrieve_chunks_raising)
+
+    result = await agentic_tools.search_knowledge_base("What's the 401k match?")
+
+    assert result.startswith("Error:")
+
+
 async def test_get_leave_balance_tool_formats_mcp_content(monkeypatch):
     async def _fake_get_leave_balance(employee_id):
         return {"tool": "get_leave_balance", "content": ['{"available": 11.0}']}
@@ -88,6 +101,20 @@ async def test_get_leave_balance_tool_formats_mcp_content(monkeypatch):
 
 async def test_get_leave_balance_tool_missing_employee_id_is_an_error_string():
     result = await agentic_tools.get_leave_balance_tool("")
+    assert result.startswith("Error:")
+
+
+async def test_get_leave_balance_tool_wraps_failure_as_error_string_not_crash(monkeypatch):
+    """Chaos/failure-injection (Phase 74) - existing coverage for this tool was
+    history-only (test_get_leave_history_tool_...), not balance."""
+
+    async def _fake_get_leave_balance_raising(employee_id):
+        raise ConnectionError("hrb_lms_mcp unreachable")
+
+    monkeypatch.setattr(agentic_tools, "get_leave_balance", _fake_get_leave_balance_raising)
+
+    result = await agentic_tools.get_leave_balance_tool("EMP052")
+
     assert result.startswith("Error:")
 
 

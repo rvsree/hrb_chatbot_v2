@@ -65,6 +65,11 @@
   .finding p { margin: 0; font-size: 12.5px; color: var(--text-muted); line-height: 1.6; }
   .finding .in-notebook { display: inline-block; margin-top: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: var(--text-faint); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 3px 7px; }
 
+  .llmbadge { display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 9px; font-weight: 700; letter-spacing: 0.03em; padding: 1px 7px; border-radius: 999px; margin-left: 6px; vertical-align: middle; text-transform: uppercase; }
+  .llmbadge.react { background: #2a1660; color: #e8e0ff; }
+  .llmbadge.llmcall { background: #1c3f8f; color: #dbe6fb; }
+  .llmbadge.embed { background: #0d6e5c; color: #d4f5ed; }
+
   /* diagram */
   .diagram-wrap { overflow-x: auto; }
   figure { margin: 0; }
@@ -72,6 +77,7 @@
   .lyr rect { fill: var(--node-bg); stroke: var(--border); stroke-width: 1.5; }
   .lyr.reuse rect { stroke: var(--reuse); }
   .lyr.new rect { stroke: var(--new); stroke-dasharray: 5 3; }
+  .lyr.partial rect { stroke: var(--partial); stroke-dasharray: 2 2; }
   .lyr .title { font-family: 'Archivo', sans-serif; font-weight: 700; font-size: 12.5px; fill: var(--text); }
   .lyr .sub { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; fill: var(--text-faint); }
   .band-label { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.04em; fill: var(--text-faint); text-transform: uppercase; }
@@ -95,6 +101,39 @@
   .decision .opt b { color: var(--text); }
 
   footer { border-top: 1px solid var(--border); padding-top: 16px; font-size: 12px; color: var(--text-faint); line-height: 1.7; }
+
+  /* user journey, stagewise - HTML/CSS, not hand-positioned SVG text */
+  .uj-wrap { display: flex; flex-direction: column; align-items: stretch; max-width: 760px; margin: 0 auto; }
+  .uj-row { display: flex; align-items: stretch; gap: 20px; width: 100%; }
+  .uj-label { flex: 0 0 104px; display: flex; align-items: center; justify-content: flex-end; text-align: right; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+  .uj-card { flex: 1; border-radius: 12px; padding: 18px 22px; box-shadow: var(--shadow); }
+  .uj-card h4 { margin: 0 0 7px; font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 17px; line-height: 1.3; }
+  .uj-card p { margin: 0; font-size: 13.5px; color: var(--text); opacity: 0.85; line-height: 1.55; }
+  .uj-card .uj-mono { display: inline-block; margin-top: 10px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text); opacity: 0.7; background: rgba(0,0,0,0.18); padding: 3px 10px; border-radius: 6px; }
+  .uj-card .uj-caveat { display: block; margin-top: 8px; font-size: 12.5px; font-weight: 700; }
+  .uj-card.built { background: var(--built-bg); border: 1.5px solid var(--built-border); }
+  .uj-card.built h4 { color: var(--built); }
+  .uj-card.partial { background: var(--partial-bg); border: 1.5px dashed var(--partial-border); }
+  .uj-card.partial h4 { color: var(--partial); }
+  .uj-card.planned { background: var(--new-bg); border: 1.5px dashed var(--new-border); }
+  .uj-card.planned h4 { color: var(--new); }
+  .uj-card .uj-caveat.c-partial { color: var(--partial); }
+  .uj-card .uj-caveat.c-planned { color: var(--new); }
+  .uj-arrow { display: flex; justify-content: flex-end; padding: 8px 0; padding-right: calc(50% - 300px); color: var(--text-faint); }
+  .uj-arrow svg { width: 26px; height: 26px; }
+  .uj-parallel { margin-left: 124px; border: 2px dashed var(--border); border-radius: 16px; padding: 18px; background: rgba(255,255,255,0.025); }
+  .uj-parallel-title { text-align: center; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 14px; font-weight: 700; }
+  .uj-agents-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .uj-agent-card { border-radius: 10px; padding: 13px; text-align: center; box-shadow: var(--shadow); }
+  .uj-agent-card h5 { margin: 0 0 5px; font-family: 'Archivo', sans-serif; font-size: 14px; font-weight: 800; }
+  .uj-agent-card p { margin: 0; font-size: 11px; color: var(--text); opacity: 0.8; line-height: 1.4; }
+  @media (max-width: 760px) {
+    .uj-row { flex-direction: column; gap: 6px; }
+    .uj-label { justify-content: flex-start; text-align: left; }
+    .uj-arrow { padding-right: 0; justify-content: center; }
+    .uj-parallel { margin-left: 0; }
+    .uj-agents-grid { grid-template-columns: 1fr 1fr; }
+  }
   footer .mono { color: var(--text-faint); }
 </style>
 
@@ -179,7 +218,7 @@
     </div>
     <div class="card-body diagram-wrap">
       <figure>
-        <svg viewBox="0 0 1180 520" role="img" aria-label="A shared foundation layer of retrieval, tools, conversation memory, guardrails, RBAC, and rate limiting sits beneath three consumers: genai-rag and single-agentic-rag, both existing and untouched, and multi-agentic-rag, which is new. Multi-agentic-rag's Router and Synthesizer are new code; its worker step reuses single-agentic-rag's existing run_agent function, called multiple times with different tool subsets, connected together by a new asyncio.gather dispatch step, not LangGraph.">
+        <svg viewBox="0 0 1180 560" role="img" aria-label="A shared foundation layer of retrieval, tools, conversation memory, guardrails, RBAC, and rate limiting sits beneath three consumers: genai-rag and single-agentic-rag, both existing and untouched, and multi-agentic-rag, which is new. Multi-agentic-rag's Planner Agent and Reviewer Agent are new code; Orchestration Agent dispatches to four domain agents organized by knowledgebase: Vector KB, LMS Ops, and SQL DB agents reuse existing backends and are plausibly deterministic, not LLM calls; LMS Analytics Agent is the one that genuinely needs LLM reasoning, for NL2SQL, and maps to a not-yet-started phase. NoSQL Agent was dropped 2026-10-04, pending a clearer use case.">
 
           <text class="band-label" x="20" y="24">existing endpoints, untouched</text>
           <!-- genai-rag -->
@@ -198,13 +237,13 @@
           <text class="band-label" x="560" y="24">new</text>
           <!-- multi-agentic-rag block -->
           <g class="lyr new">
-            <rect x="560" y="34" width="600" height="220" rx="10"></rect>
+            <rect x="560" y="34" width="610" height="260" rx="10"></rect>
           </g>
           <text class="title" x="580" y="54" style="fill:var(--new)">multi-agentic-rag (Phase 61 scaffold, orchestration not built yet)</text>
 
           <g class="lyr new">
             <rect x="580" y="66" width="180" height="50" rx="8"></rect>
-            <text class="title" x="670" y="86" text-anchor="middle">Router</text>
+            <text class="title" x="670" y="86" text-anchor="middle">Planner Agent</text>
             <text class="sub" x="670" y="100" text-anchor="middle">orchestrator_router.py</text>
           </g>
           <line class="edge" x1="760" y1="91" x2="800" y2="91" marker-end="url(#a2)"></line>
@@ -212,56 +251,86 @@
 
           <g class="lyr new">
             <rect x="800" y="66" width="150" height="50" rx="8"></rect>
-            <text class="title" x="875" y="86" text-anchor="middle">Dispatch</text>
-            <text class="sub" x="875" y="100" text-anchor="middle">asyncio.gather()</text>
+            <text class="title" x="875" y="83" text-anchor="middle" style="font-size:11.5px">Orchestration Agent</text>
+            <text class="sub" x="875" y="99" text-anchor="middle" style="font-size:8px">asyncio.gather() - name TBC, see below</text>
           </g>
 
-          <line class="edge reuse" x1="875" y1="116" x2="875" y2="150" marker-end="url(#a1)"></line>
-          <text class="edge-label" x="885" y="136" style="fill:var(--reuse)">calls N times</text>
+          <text class="edge-label" x="875" y="135" text-anchor="middle">one domain agent per knowledgebase (decision 2, confirmed) - NoSQL dropped 2026-10-04</text>
+
+          <!-- four domain agents, by knowledgebase, not business question - NoSQL dropped 2026-10-04, may return later -->
+          <line class="edge reuse" x1="840" y1="116" x2="632" y2="148" marker-end="url(#a1)"></line>
           <g class="lyr reuse">
-            <rect x="740" y="150" width="270" height="54" rx="8"></rect>
-            <text class="title" x="875" y="171" text-anchor="middle" style="fill:var(--reuse)">run_agent() &mdash; reused</text>
-            <text class="sub" x="875" y="186" text-anchor="middle">same loop as single-agentic-rag,</text>
-            <text class="sub" x="875" y="197" text-anchor="middle">new optional tool_subset param</text>
+            <rect x="580" y="148" width="104" height="58" rx="7"></rect>
+            <text class="title" x="632" y="168" text-anchor="middle" style="fill:var(--reuse); font-size:10px">Vector KB Agent</text>
+            <text class="sub" x="632" y="181" text-anchor="middle" style="font-size:8.5px">retriever.py</text>
+            <text class="sub" x="632" y="193" text-anchor="middle" style="font-size:8px">likely no LLM</text>
           </g>
 
-          <polyline class="edge" points="740,177 700,177 700,227 760,227" marker-end="url(#a2)"></polyline>
-          <text class="edge-label" x="705" y="205">merges results</text>
+          <line class="edge reuse" x1="865" y1="116" x2="784" y2="148" marker-end="url(#a1)"></line>
+          <g class="lyr reuse">
+            <rect x="732" y="148" width="104" height="58" rx="7"></rect>
+            <text class="title" x="784" y="168" text-anchor="middle" style="fill:var(--reuse); font-size:10px">LMS Ops Agent</text>
+            <text class="sub" x="784" y="181" text-anchor="middle" style="font-size:8.5px">Phase 49 tools</text>
+            <text class="sub" x="784" y="193" text-anchor="middle" style="font-size:8px">likely no LLM</text>
+          </g>
+
+          <line class="edge reuse" x1="885" y1="116" x2="936" y2="148" marker-end="url(#a1)"></line>
+          <g class="lyr reuse">
+            <rect x="884" y="148" width="104" height="58" rx="7"></rect>
+            <text class="title" x="936" y="168" text-anchor="middle" style="fill:var(--reuse); font-size:10px">SQL DB Agent</text>
+            <text class="sub" x="936" y="181" text-anchor="middle" style="font-size:8.5px">Postgres, real</text>
+            <text class="sub" x="936" y="193" text-anchor="middle" style="font-size:8px">likely no LLM</text>
+          </g>
+
+          <line class="edge" x1="910" y1="116" x2="1088" y2="148" marker-end="url(#a2)" style="stroke:var(--new)"></line>
           <g class="lyr new">
-            <rect x="580" y="204" width="180" height="46" rx="8"></rect>
-            <text class="title" x="670" y="223" text-anchor="middle">Synthesizer</text>
-            <text class="sub" x="670" y="237" text-anchor="middle">synthesizer.py</text>
+            <rect x="1036" y="148" width="104" height="58" rx="7"></rect>
+            <text class="title" x="1088" y="168" text-anchor="middle" style="fill:var(--new); font-size:10px">LMS Analytics Agent</text>
+            <text class="sub" x="1088" y="181" text-anchor="middle" style="font-size:8px">NL2SQL, real LLM</text>
+            <text class="sub" x="1088" y="193" text-anchor="middle" style="font-size:8px">Phase 52, unstarted</text>
           </g>
 
-          <text class="band-label" x="560" y="284">shared foundation - every consumer above calls into this, unmodified</text>
-          <g class="lyr reuse">
-            <rect x="20" y="294" width="270" height="56" rx="9"></rect>
-            <text class="title" x="155" y="316" text-anchor="middle" style="fill:var(--reuse)">Retrieval</text>
-            <text class="sub" x="155" y="332" text-anchor="middle">retriever.py :: retrieve_chunks()</text>
-          </g>
-          <g class="lyr reuse">
-            <rect x="310" y="294" width="270" height="56" rx="9"></rect>
-            <text class="title" x="445" y="316" text-anchor="middle" style="fill:var(--reuse)">Tools</text>
-            <text class="sub" x="445" y="332" text-anchor="middle">agentic_tools.py (3 existing tools)</text>
-          </g>
-          <g class="lyr reuse">
-            <rect x="600" y="294" width="270" height="56" rx="9"></rect>
-            <text class="title" x="735" y="316" text-anchor="middle" style="fill:var(--reuse)">Conversation Memory</text>
-            <text class="sub" x="735" y="332" text-anchor="middle">conversation_memory.py (Phase 58)</text>
-          </g>
-          <g class="lyr reuse">
-            <rect x="890" y="294" width="270" height="56" rx="9"></rect>
-            <text class="title" x="1025" y="316" text-anchor="middle" style="fill:var(--reuse)">Identity + Rate Limit</text>
-            <text class="sub" x="1025" y="332" text-anchor="middle">require_role() / rate_limiter.py</text>
-          </g>
-          <g class="lyr reuse">
-            <rect x="20" y="368" width="400" height="50" rx="9"></rect>
-            <text class="title" x="220" y="388" text-anchor="middle" style="fill:var(--reuse)">Input/Output Guardrails</text>
-            <text class="sub" x="220" y="402" text-anchor="middle">guardrails_input.py / guardrails_output/ (genai-rag only today)</text>
+          <text class="edge-label" x="875" y="226" text-anchor="middle">results return to Orchestration, then to Reviewer</text>
+          <line class="edge" x1="632" y1="206" x2="700" y2="248" marker-end="url(#a2)"></line>
+          <line class="edge" x1="784" y1="206" x2="750" y2="248" marker-end="url(#a2)"></line>
+          <line class="edge" x1="936" y1="206" x2="810" y2="248" marker-end="url(#a2)"></line>
+          <line class="edge" x1="1088" y1="206" x2="860" y2="248" marker-end="url(#a2)" style="stroke:var(--new)"></line>
+          <g class="lyr new">
+            <rect x="670" y="248" width="220" height="40" rx="8"></rect>
+            <text class="title" x="780" y="264" text-anchor="middle">Reviewer Agent</text>
+            <text class="sub" x="780" y="278" text-anchor="middle" style="font-size:8px">synthesize + rank; evals scope - see table below</text>
           </g>
 
-          <line class="edge reuse" x1="135" y1="90" x2="155" y2="292" marker-end="url(#a1)"></line>
-          <line class="edge reuse" x1="385" y1="90" x2="445" y2="292" marker-end="url(#a1)"></line>
+          <text class="band-label" x="560" y="316" style="display:none"></text>
+          <text class="band-label" x="20" y="316">shared foundation - every consumer above calls into this, unmodified</text>
+          <g class="lyr reuse">
+            <rect x="20" y="326" width="270" height="56" rx="9"></rect>
+            <text class="title" x="155" y="348" text-anchor="middle" style="fill:var(--reuse)">Retrieval</text>
+            <text class="sub" x="155" y="364" text-anchor="middle">retriever.py :: retrieve_chunks()</text>
+          </g>
+          <g class="lyr reuse">
+            <rect x="310" y="326" width="270" height="56" rx="9"></rect>
+            <text class="title" x="445" y="348" text-anchor="middle" style="fill:var(--reuse)">Tools</text>
+            <text class="sub" x="445" y="364" text-anchor="middle">agentic_tools.py (3 existing tools)</text>
+          </g>
+          <g class="lyr reuse">
+            <rect x="600" y="326" width="270" height="56" rx="9"></rect>
+            <text class="title" x="735" y="348" text-anchor="middle" style="fill:var(--reuse)">Conversation Memory</text>
+            <text class="sub" x="735" y="364" text-anchor="middle">conversation_memory.py (Phase 58)</text>
+          </g>
+          <g class="lyr reuse">
+            <rect x="890" y="326" width="270" height="56" rx="9"></rect>
+            <text class="title" x="1025" y="348" text-anchor="middle" style="fill:var(--reuse)">Identity + Rate Limit</text>
+            <text class="sub" x="1025" y="364" text-anchor="middle">require_role() / rate_limiter.py</text>
+          </g>
+          <g class="lyr reuse">
+            <rect x="20" y="400" width="400" height="50" rx="9"></rect>
+            <text class="title" x="220" y="420" text-anchor="middle" style="fill:var(--reuse)">Input/Output Guardrails</text>
+            <text class="sub" x="220" y="434" text-anchor="middle">guardrails_input.py / guardrails_output/ (genai-rag only today)</text>
+          </g>
+
+          <line class="edge reuse" x1="135" y1="90" x2="155" y2="324" marker-end="url(#a1)"></line>
+          <line class="edge reuse" x1="385" y1="90" x2="445" y2="324" marker-end="url(#a1)"></line>
 
           <defs>
             <marker id="a1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--reuse)"></path></marker>
@@ -269,11 +338,12 @@
           </defs>
         </svg>
         <div class="diagram-legend">
-          <span class="dleg"><span class="sw reuse-line"></span>reused as-is</span>
+          <span class="dleg"><span class="sw reuse-line"></span>reused backend, plausibly no LLM needed</span>
           <span class="dleg"><span class="sw new-line"></span>genuinely new code</span>
+          <span class="dleg"><span class="sw" style="background:var(--gap-bg); border:1px dashed var(--gap)"></span>no backend exists yet</span>
         </div>
         <figcaption>
-          Everything in the shared-foundation band is unmodified - genai-rag and single-agentic-rag never change, and multi-agentic-rag's worker step reuses all four boxes the same way single-agentic-rag already does (not drawn again to avoid crossing lines). The only piece that grows is <span class="mono">run_agent()</span> gaining two new <em>optional</em> parameters (a tool subset, a system-prompt override) - both default to today's exact behavior when omitted, so single-agentic-rag's own contract is untouched. One genuinely new reuse: the Router would be the first agentic endpoint to call the input guardrail (<span class="mono">check_input()</span>) - today only genai-rag does.
+          Updated 2026-10-04: workflow agents renamed to match your taxonomy - Planner Agent (was Router) classifies, Orchestration Agent (was Dispatch) fans out, Reviewer Agent (was Synthesizer) merges. Critic Agent dropped - see the Critic/Reviewer clarification table below for what Reviewer absorbs instead. Domain agents renamed: Vector KB Agent, LMS Ops Agent, SQL DB Agent wrap backends that already exist and are plausibly deterministic calls, not LLM loops. NoSQL Agent dropped from the design (your call, 2026-10-04) - may return once there's a clearer use case for it. LMS Analytics Agent is the one domain agent that actually needs an LLM - NL2SQL is a real generation task - and maps to Phase 52, planned but not started, needing 100+ historical records to demo against (see BACKLOG.md). One open naming question the diagram can't resolve on its own: "Orchestration Agent" is also the name of the real, already-shipped Phase 55 file (<span class="mono">orchestration_agent.py</span>) - confirm whether this new dispatcher is that same file extended, or a deliberately same-named but separate component. Everything in the shared-foundation band is still unmodified - genai-rag and single-agentic-rag never change.
         </figcaption>
       </figure>
     </div>
@@ -281,29 +351,305 @@
 
   <section class="card">
     <div class="card-head">
-      <h2>Open Decisions</h2>
-      <p>Two real forks worth a direct answer before writing the next spec &mdash; your call, not decided here</p>
+      <h2>Critic Agent Dropped — What Reviewer Agent Absorbs</h2>
+      <p>Your question, answered directly: these are two different things, and only one of them is free of conflict</p>
     </div>
     <div class="card-body">
       <div class="decisions">
-        <div class="decision">
-          <span class="tag">decision 1</span>
-          <h3>How workers actually run in parallel</h3>
-          <div class="opt"><b>Recommended:</b> plain <span class="mono">asyncio.gather()</span> over N calls to <span class="mono">run_agent()</span>. No new dependency, matches this project's existing "hand-written, no framework classes" style used everywhere else (retriever.py, orchestration_agent.py).</div>
-          <div class="opt"><b>Alternative:</b> adopt LangGraph's <span class="mono">StateGraph</span> + <span class="mono">Send()</span>, matching the course exactly. Real option: <span class="mono">langgraph==0.3.21</span> is already pinned (pulled in by <span class="mono">langchain</span>), so no new install - but it's a real framework adoption, current project convention is to avoid consolidating onto a new library without a recorded reason confirmed with you first.</div>
+        <div class="decision" style="border-left:3px solid var(--built); padding-left:13px;">
+          <span class="tag" style="color:var(--built)">Option A - evaluates each domain agent's raw result</span>
+          <h3>No conflict, nothing built does this today</h3>
+          <div class="opt">Reviewer Agent checks each domain agent's own output before using it - e.g. "did SQL DB Agent return usable rows, or an error/empty result?" This is a quality-filter over inputs to synthesis, a different target than anything this project's Gate 5 or Phase 62 evaluate. Your phrasing ("evals for the outputs coming from each domain agent") reads as this option.</div>
         </div>
-        <div class="decision">
-          <span class="tag">decision 2</span>
-          <h3>Named domain-agent files, or parameters at the call site</h3>
-          <div class="opt"><b>Option A:</b> call <span class="mono">run_agent(query, tool_subset=[...])</span> directly from the dispatch step - fewer files, less indirection.</div>
-          <div class="opt"><b>Option B:</b> give each domain its own thin file in <span class="mono">ai/agents/domain_agents/</span> (already an empty, reserved folder) - e.g. <span class="mono">benefits_search_agent.py</span>, <span class="mono">leave_agent.py</span> - each just calling <span class="mono">run_agent()</span> with its own fixed tool subset. Same underlying reuse either way; this is about discoverability, not a different mechanism.</div>
+        <div class="decision" style="border-left:3px solid var(--gap); padding-left:13px;">
+          <span class="tag" style="color:var(--gap)">Option B - evaluates the final synthesized answer</span>
+          <h3>Same conflict as before, just renamed</h3>
+          <div class="opt">Reviewer Agent runs a faithfulness/hallucination check on what the user actually receives. That is literally Gate 5's job (<span class="mono">rag-validation-gates.html</span>), which this project deliberately keeps offline, not live, specifically to avoid an extra LLM-judge call on every request. Moving it into Reviewer Agent doesn't resolve that tension, it just moves which file it lives in.</div>
+        </div>
+      </div>
+      <p style="font-size:12.5px; color:var(--text-muted); margin-top:14px;">Not decided here - confirm which one (or both, with the cost of Option B understood) before this becomes part of a real spec.</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Complete User Journey - Chat UI to Response</h2>
+      <p>Moved, not duplicated - see why below</p>
+    </div>
+    <div class="card-body">
+      <p style="font-size:13.5px; color:var(--text); line-height:1.6;">
+        This lived here as a top-to-bottom flow across two earlier attempts (2026-10-04). Both missed the mark for the same reason: your reference architecture image is <b>column-based</b> (Client &rarr; Edge &rarr; API+Preprocessing &rarr; Workflow Agents &rarr; Domain Agents &rarr; Tools+Knowledgebase, left to right), not a vertical stage list. Rather than force a third version of the wrong shape, the full user journey now lives in
+        <span class="mono">docs/dev-reference/rag-retrieval/rag-pipeline-current-state.html</span>,
+        rebuilt the same session to match your reference image's exact 6-column structure - including the new Query Intent + Decomposition + Embedding step you asked for in the API/Preprocessing column. One diagram, one shape, matching what you actually showed me - not two diverging ones.
+      </p>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Planned Implementation Steps</h2>
+      <p>Corrected 2026-10-04 - the earlier 6-step version only covered the 3 agent stubs and silently skipped the surrounding pipeline. 8 steps now, in build order; each one either closes a Phase 61 <span class="mono">NotImplementedError</span> stub or wires in a piece this endpoint needs that isn't optional</p>
+    </div>
+    <div class="card-body">
+      <div class="findings">
+        <div class="finding" style="border-color:var(--gap-border); background:var(--gap-bg);">
+          <span class="n" style="color:var(--gap)">1</span>
+          <div>
+            <h3>Input Guardrails + load session history <span class="llmbadge llmcall">llm</span></h3>
+            <p>Missing from the original plan entirely - flagged by direct question, not found by re-reading. Before the Planner sees anything: run <span class="mono">check_input()</span> (first agentic endpoint to call it - today only genai-rag does), and if <span class="mono">enable_conversation_memory</span> is set, <span class="mono">load_history()</span>. Neither step exists in the current stub.</p>
+          </div>
+        </div>
+        <div class="finding" style="border-color:var(--built-border); background:var(--built-bg);">
+          <span class="n" style="color:var(--built)">2</span>
+          <div>
+            <h3>Planner Agent - <span class="mono">orchestrator_router.py::route_query()</span> <span class="llmbadge llmcall">llm</span></h3>
+            <p>One structured-classification LLM call, mirroring <span class="mono">ClassificationResult</span> (<span class="mono">tasks</span> + <span class="mono">requires_synthesis</span>), returning <span class="mono">list[AgentTaskInfo]</span> - the type Phase 61's response contract already reserves. Needs an explicit fallback route for an off-topic/unparseable classification - Travel Planner's own router has no such path (gap #3 above); don't repeat it here. Open question (see current-state.html footer): does this overlap with the separate, API-layer Query Decomposition step?</p>
+          </div>
+        </div>
+        <div class="finding" style="border-color:var(--built-border); background:var(--built-bg);">
+          <span class="n" style="color:var(--built)">3</span>
+          <div>
+            <h3>Orchestration Agent - fan-out via <span class="mono">asyncio.gather()</span></h3>
+            <p>No model call itself. One <span class="mono">run_agent()</span> call per task, same concurrency Travel Planner's <span class="mono">Send()</span> gets, no new dependency. Each call passes the task's own <span class="mono">user_query</span> and a <span class="mono">tool_subset</span> derived from <span class="mono">task.source</span>.</p>
+          </div>
+        </div>
+        <div class="finding" style="border-color:var(--built-border); background:var(--built-bg);">
+          <span class="n" style="color:var(--built)">4</span>
+          <div>
+            <h3>Domain agents - four thin files, not four tool-loops</h3>
+            <p>One file per knowledgebase in <span class="mono">ai/agents/domain_agents/</span> - <span class="mono">vector_kb_agent.py</span>, <span class="mono">lms_ops_agent.py</span>, <span class="mono">sql_db_agent.py</span> (no badge - no model call, deterministic wrappers) each just call <span class="mono">run_agent()</span> or its underlying client directly with a fixed scope - no new tool-calling loop, since Phase 55 already built and iteration-capped that once. <span class="mono">lms_analytics_agent.py</span> <span class="llmbadge llmcall">llm</span> is the one file that's genuinely new logic - NL2SQL generation, one-shot for now not a loop (open), and depends on Phase 52's MCP server existing first.</p>
+          </div>
+        </div>
+        <div class="finding" style="border-color:var(--built-border); background:var(--built-bg);">
+          <span class="n" style="color:var(--built)">5</span>
+          <div>
+            <h3>Reviewer Agent - <span class="mono">synthesizer.py::synthesize_results()</span> <span class="llmbadge llmcall">llm</span></h3>
+            <p>Port <span class="mono">synthesizer_node()</span>'s three-way branch directly: zero results &rarr; safe fallback message, no model call. One result &rarr; pass through unchanged, no model call. Two or more &rarr; one merge call formatting each worker's output against its task's <span class="mono">focus</span>. This logic has nothing LangGraph-specific in it - a plain function, matching this project's existing style.</p>
+          </div>
+        </div>
+        <div class="finding" style="border-color:var(--gap-border); background:var(--gap-bg);">
+          <span class="n" style="color:var(--gap)">6</span>
+          <div>
+            <h3>Output Guardrails + save session turn <span class="llmbadge llmcall">llm</span></h3>
+            <p>Also missing from the original plan. After the Reviewer Agent produces a final answer: run <span class="mono">check_output()</span>, then - only here, only once - <span class="mono">save_turn()</span>. This is the single-writer design from the State &amp; Session diagram above, now stated as an actual build step instead of only shown in a diagram.</p>
+          </div>
+        </div>
+        <div class="finding" style="border-color:var(--built-border); background:var(--built-bg);">
+          <span class="n" style="color:var(--built)">7</span>
+          <div>
+            <h3>Wire into <span class="mono">multi_agent_pipeline.py::run_multi_agent()</span></h3>
+            <p>Replace the three <span class="mono">NotImplementedError</span> stubs (<span class="mono">route_query()</span>, <span class="mono">dispatch_to_agents()</span>, <span class="mono">synthesize_results()</span>) with steps 1-6 above, in sequence - the entry point and its contract (Phase 61) don't change.</p>
+          </div>
+        </div>
+        <div class="finding" style="border-color:var(--built-border); background:var(--built-bg);">
+          <span class="n" style="color:var(--built)">8</span>
+          <div>
+            <h3>Tests, then a real spec</h3>
+            <p>Mirror Phase 55/58's existing fake-LLM-client test pattern - guardrails, memory load/save, router classification, dispatch fan-out, and the reviewer's three branches each independently testable with no real API key, plus one end-to-end contract test matching the existing route tests. Once Decision 1 and Decision 2 below are actually confirmed, this whole plan becomes Phase 61's follow-up <span class="mono">**Spec:**</span> block in <span class="mono">RAG-ROADMAP.md</span>, per <span class="mono">spec_gate.py</span> - not before.</p>
+          </div>
         </div>
       </div>
     </div>
   </section>
 
+  <section class="card">
+    <div class="card-head">
+      <h2>Open Decisions</h2>
+      <p>One fork still open; one confirmed 2026-10-03 &mdash; and that confirmation created three new follow-on items, listed after it</p>
+    </div>
+    <div class="card-body">
+      <div class="decisions">
+        <div class="decision">
+          <span class="tag">decision 1 - still open</span>
+          <h3>How workers actually run in parallel</h3>
+          <div class="opt"><b>Recommended:</b> plain <span class="mono">asyncio.gather()</span> over N calls to <span class="mono">run_agent()</span>. No new dependency, matches this project's existing "hand-written, no framework classes" style used everywhere else (retriever.py, orchestration_agent.py).</div>
+          <div class="opt"><b>Alternative:</b> adopt LangGraph's <span class="mono">StateGraph</span> + <span class="mono">Send()</span>, matching the course exactly. Real option: <span class="mono">langgraph==0.3.21</span> is already pinned (pulled in by <span class="mono">langchain</span>), so no new install - but it's a real framework adoption, current project convention is to avoid consolidating onto a new library without a recorded reason confirmed with you first.</div>
+        </div>
+        <div class="decision" style="border-left:3px solid var(--built); padding-left:13px;">
+          <span class="tag" style="color:var(--built)">decision 2 - confirmed 2026-10-03</span>
+          <h3>Named domain-agent files, one per knowledgebase</h3>
+          <div class="opt"><b>Confirmed:</b> each domain gets its own thin file in <span class="mono">ai/agents/domain_agents/</span>, organized <b>by backend type</b>, not by business question - <span class="mono">vector_kb_agent.py</span>, <span class="mono">lms_ops_agent.py</span>, <span class="mono">sql_db_agent.py</span>, <span class="mono">lms_analytics_agent.py</span>. (A fifth, <span class="mono">nosql_agent.py</span>, was dropped 2026-10-04 - no backend, no clear use case yet - may return later.) Supersedes this card's earlier Option A/B framing and the business-domain naming (PolicyQuery/Eligibility/Calculator/LeaveOps) the target-state image used - deliberate, your call, made knowing the trade-off.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>What Decision 2 Opens Up - Not Decided, Flagged</h2>
+      <p>Confirming "one agent per knowledgebase" surfaced three real items this plan didn't have before</p>
+    </div>
+    <div class="card-body">
+      <div class="findings">
+        <div class="finding" style="border-color:var(--gap-border); background:var(--gap-bg);">
+          <span class="n">1</span>
+          <div>
+            <h3>Not all four agents need to be LLM agents</h3>
+            <p><span class="mono">vector_kb_agent.py</span> (wraps <span class="mono">retriever.py</span>), <span class="mono">lms_ops_agent.py</span> (wraps Phase 49's existing tools), and <span class="mono">sql_db_agent.py</span> (fixed queries) are plausibly deterministic function calls with no judgment to make - matching this project's own reliability stance (don't agent-ize a deterministic step). <span class="mono">lms_analytics_agent.py</span> is the one that genuinely needs an LLM - NL2SQL, translating a free-text trend question into a query, is an actual generation task. Worth deciding per-agent, not assuming all four need the same tool-calling-loop shape <span class="mono">run_agent()</span> already provides.</p>
+          </div>
+        </div>
+        <div class="finding" style="border-color:var(--gap-border); background:var(--gap-bg);">
+          <span class="n">2</span>
+          <div>
+            <h3>LMS Analytics Agent needs real historical data to demo against</h3>
+            <p>100+ historical records, maps to Phase 52 (planned, not started - <span class="mono">hrb_lms_analytics</span> exists in the DB design doc, not built) and its own MCP server. Captured as its own item in <span class="mono">docs/agent-reference/BACKLOG.md</span> rather than assumed here - needs a schema decision (benefits-cost trends? leave patterns by type? both?) before data generation makes sense.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Gaps Not Yet Addressed</h2>
+      <p>Checked against the live code, not assumed - timeouts, validation, persistence, logs, error handling, async, and whether this plan allows a worker to talk back to the Planner Agent</p>
+    </div>
+    <div class="card-body">
+      <div class="findings">
+        <div class="finding">
+          <span class="n">1</span>
+          <div>
+            <h3>Timeouts - none exist anywhere in this path</h3>
+            <p>Confirmed by direct search across <span class="mono">ai/agents/</span>, <span class="mono">query_retrieval/</span>, and <span class="mono">rag_pipeline/tools/</span> - zero timeout/<span class="mono">wait_for</span> references. <span class="mono">asyncio.gather()</span> waits for every task by default; one hung domain agent blocks the whole request. Needs <span class="mono">asyncio.wait_for()</span> per domain-agent call, with a per-knowledgebase budget decided before this is built (Vector KB and SQL DB should be fast; LMS Analytics' NL2SQL path may legitimately need longer).</p>
+          </div>
+        </div>
+        <div class="finding">
+          <span class="n">2</span>
+          <div>
+            <h3>Validation - Planner Agent's fallback is required but not specified; LMS Analytics Agent needs a safety rail of its own</h3>
+            <p>Step 1 above already requires a fallback route for an unparseable classification - no concrete mechanism chosen yet (Pydantic-validating <span class="mono">tasks[].source</span> against the real agent names is the direct fix). Separate, higher-stakes gap: if <span class="mono">lms_analytics_agent.py</span> executes LLM-generated SQL directly, that's a real injection risk even with no malicious user - a hallucinated query is enough. Needs a read-only DB role and/or a SELECT-only check before execution, not just a prompt instruction not to.</p>
+          </div>
+        </div>
+        <div class="finding">
+          <span class="n">3</span>
+          <div>
+            <h3>Persistence - who writes conversation memory, and when</h3>
+            <p><span class="mono">conversation_memory.py</span> is in-memory only today, unchanged by this plan. New question this plan introduces: should all 4 domain agents write to it, or only the Reviewer Agent once, after merging? Recommended: Reviewer Agent only, matching Phase 55's existing single-writer pattern (<span class="mono">run_agent()</span> calls <span class="mono">save_turn()</span> once, not per tool call) - avoids 4 concurrent writers racing on the same <span class="mono">conversation_id</span>. See the State &amp; Session Management diagram below for exactly where each read/write happens.</p>
+          </div>
+        </div>
+        <div class="finding">
+          <span class="n">4</span>
+          <div>
+            <h3>Logs - no request correlation, and it's about to matter a lot more</h3>
+            <p>Confirmed: zero <span class="mono">request_id</span>/<span class="mono">correlation_id</span> anywhere in this codebase. Already flagged in <span class="mono">docs/agent-reference/BACKLOG.md</span>'s Observability section as a gap worth closing "once this app sees real concurrent traffic" - multi-agentic-rag <em>is</em> that traffic. Five parallel domain-agent log lines with no shared id are unattributable to one request. Should move from "nice to have" to a prerequisite for this phase.</p>
+          </div>
+        </div>
+        <div class="finding">
+          <span class="n">5</span>
+          <div>
+            <h3>Error handling - one failing agent shouldn't fail the whole request</h3>
+            <p><span class="mono">asyncio.gather()</span> defaults to propagating the first exception and cancelling the rest - one domain agent's failure takes down all four, even the three that succeeded, without <span class="mono">return_exceptions=True</span> and per-result handling. The Reviewer Agent's existing 0/1/2+ branch already tolerates a missing result almost for free - a timed-out or failed agent can feed into that same path instead of needing new logic.</p>
+          </div>
+        </div>
+        <div class="finding">
+          <span class="n">6</span>
+          <div>
+            <h3>Async/parallel - verified partly good, partly unverified</h3>
+            <p>Checked, not assumed: <span class="mono">postgres_client.py</span> correctly wraps its sync driver (<span class="mono">psycopg</span>) in <span class="mono">asyncio.to_thread()</span> - genuinely non-blocking, SQL DB Agent is safe to build on it as-is. Not yet verified: whether every domain agent's full call chain (MCP client, vector store client) stays async all the way down. One accidentally-synchronous call inside any domain agent would stall the event loop for all four, silently defeating the whole point of <span class="mono">asyncio.gather()</span> - worth a direct check per agent before relying on it.</p>
+          </div>
+        </div>
+        <div class="finding">
+          <span class="n">7</span>
+          <div>
+            <h3>Feedback loop - not a hard limitation, just not built yet</h3>
+            <p>The Planner&rarr;Orchestration&rarr;domain agents&rarr;Reviewer shape is a single-pass pipeline today - no domain-agent result currently flows back to the Planner Agent for re-planning. This is a design choice, not a constraint of nodes/edges (see the direct answer above) - and it's exactly what your original target-state image's "Reviewer Agent... critique + revise (max N)" already named as wanted, not yet built anywhere. If wanted, the cheapest version: the Reviewer Agent, after seeing results, can call the Planner Agent again with a bounded retry count instead of returning immediately - plain Python recursion/looping, no graph required.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>State &amp; Session Management</h2>
+      <p>Where each piece of state is read, written, and by whom - the question Gap #3 above raised, answered in diagram form</p>
+    </div>
+    <div class="card-body diagram-wrap">
+      <figure>
+        <svg viewBox="0 0 1180 460" role="img" aria-label="A request arrives with an optional conversation_id. Identity and rate limiting are stateless checks with no session read. If conversation memory is enabled, a conversation_id is resolved - reused if given, newly generated if not - and load_history reads prior turns from the in-memory store, keyed by that id. The Planner Agent reads the new query plus that history to classify tasks. Orchestration Agent and all four domain agents read only the current turn's query and task - they do not read or write conversation history directly. The Reviewer Agent reads all domain agent results plus the original query and history, produces the final answer, and is the only component that writes a new turn back to conversation memory, once, avoiding four concurrent writers on the same conversation id. The response carries the conversation_id back to the caller for the next turn.">
+
+          <g class="lyr new">
+            <rect x="20" y="30" width="200" height="56" rx="9"></rect>
+            <text class="title" x="120" y="54" text-anchor="middle">Request</text>
+            <text class="sub" x="120" y="70" text-anchor="middle">query, user_profile, conversation_id?</text>
+          </g>
+          <line class="edge" x1="220" y1="58" x2="258" y2="58" marker-end="url(#a3)"></line>
+
+          <g class="lyr reuse">
+            <rect x="258" y="30" width="190" height="56" rx="9"></rect>
+            <text class="title" x="353" y="50" text-anchor="middle" style="fill:var(--reuse)">Identity + Rate Limit</text>
+            <text class="sub" x="353" y="65" text-anchor="middle" style="font-size:9px">stateless - no session read</text>
+            <text class="sub" x="353" y="76" text-anchor="middle" style="font-size:9px">require_role() / rate_limiter.py</text>
+          </g>
+          <line class="edge" x1="448" y1="58" x2="486" y2="58" marker-end="url(#a3)"></line>
+
+          <g class="lyr reuse">
+            <rect x="486" y="30" width="230" height="56" rx="9"></rect>
+            <text class="title" x="601" y="50" text-anchor="middle" style="fill:var(--reuse)">Resolve conversation_id</text>
+            <text class="sub" x="601" y="65" text-anchor="middle" style="font-size:9px">reuse if given, else new_conversation_id()</text>
+            <text class="sub" x="601" y="76" text-anchor="middle" style="font-size:9px">only when enable_conversation_memory=true</text>
+          </g>
+          <line class="edge" x1="601" y1="86" x2="601" y2="120" marker-end="url(#a3)"></line>
+
+          <g class="lyr reuse">
+            <rect x="486" y="120" width="230" height="50" rx="9"></rect>
+            <text class="title" x="601" y="140" text-anchor="middle" style="fill:var(--reuse)">load_history(conversation_id)</text>
+            <text class="sub" x="601" y="155" text-anchor="middle" style="font-size:9px">READ - in-memory store, Phase 58</text>
+          </g>
+          <line class="edge" x1="601" y1="170" x2="601" y2="204" marker-end="url(#a3)"></line>
+
+          <g class="lyr new">
+            <rect x="461" y="204" width="280" height="56" rx="9"></rect>
+            <text class="title" x="601" y="224" text-anchor="middle">Planner Agent</text>
+            <text class="sub" x="601" y="240" text-anchor="middle" style="font-size:9px">reads: new query + loaded history</text>
+            <text class="sub" x="601" y="251" text-anchor="middle" style="font-size:9px">writes: nothing - classification only</text>
+          </g>
+          <line class="edge" x1="601" y1="260" x2="601" y2="294" marker-end="url(#a3)"></line>
+
+          <g class="lyr new">
+            <rect x="461" y="294" width="280" height="40" rx="9"></rect>
+            <text class="title" x="601" y="312" text-anchor="middle">Orchestration Agent</text>
+            <text class="sub" x="601" y="326" text-anchor="middle" style="font-size:9px">per-task scope only, not full history</text>
+          </g>
+
+          <text class="band-label" x="20" y="344">domain agents - read only the current task, no session access</text>
+          <line class="edge" x1="541" y1="334" x2="130" y2="360" marker-end="url(#a2)"></line>
+          <line class="edge" x1="601" y1="334" x2="400" y2="360" marker-end="url(#a2)"></line>
+          <line class="edge" x1="700" y1="334" x2="940" y2="360" marker-end="url(#a2)" style="stroke:var(--new)"></line>
+          <g class="lyr reuse"><rect x="60" y="360" width="300" height="42" rx="7"></rect><text class="title" x="210" y="384" text-anchor="middle" style="fill:var(--reuse); font-size:10px">Vector KB / LMS Ops / SQL DB (3 of 4)</text></g>
+          <g class="lyr new"><rect x="870" y="360" width="140" height="42" rx="7"></rect><text class="title" x="940" y="384" text-anchor="middle" style="font-size:10.5px">LMS Analytics</text></g>
+
+          <line class="edge" x1="210" y1="402" x2="750" y2="440" marker-end="url(#a2)"></line>
+          <line class="edge" x1="940" y1="402" x2="810" y2="440" marker-end="url(#a2)" style="stroke:var(--new)"></line>
+          <g class="lyr new">
+            <rect x="750" y="30" width="400" height="90" rx="9"></rect>
+            <text class="title" x="950" y="52" text-anchor="middle">Reviewer Agent</text>
+            <text class="sub" x="950" y="68" text-anchor="middle" style="font-size:9px">reads: all domain agent results + original query + history</text>
+            <text class="sub" x="950" y="80" text-anchor="middle" style="font-size:9.5px; font-weight:700">writes: save_turn(conversation_id, query, answer) - ONCE</text>
+            <text class="sub" x="950" y="92" text-anchor="middle" style="font-size:9px">the only writer - avoids 4 concurrent writes to one session</text>
+            <text class="sub" x="950" y="104" text-anchor="middle" style="font-size:9px">(open: should also check return_exceptions=True results)</text>
+          </g>
+          <line class="edge" x1="780" y1="440" x2="780" y2="128" marker-end="url(#a3)"></line>
+          <text class="edge-label" x="700" y="440">results converge, feed Reviewer Agent above</text>
+
+          <defs>
+            <marker id="a3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"></path></marker>
+            <marker id="a2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"></path></marker>
+          </defs>
+        </svg>
+        <div class="diagram-legend">
+          <span class="dleg"><span class="sw reuse-line"></span>reads session state (memory, identity)</span>
+          <span class="dleg"><span class="sw new-line"></span>new for multi-agentic-rag, no session access</span>
+        </div>
+        <figcaption>
+          The key design choice this diagram makes explicit (Gap #3 above): domain agents never touch conversation memory directly - they only see the current task's query, not the full session history, and don't write anything back. Only the Synthesizer reads the full picture (results + original query + history) and is the single writer, once, at the end. This avoids five concurrent writers racing on one <span class="mono">conversation_id</span> and matches Phase 55's existing single-writer pattern exactly, rather than inventing a new one for this phase.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
   <footer>
-    Also true today, not new to this plan: single-agentic-rag itself doesn't call the input/output guardrails yet either (confirmed - <span class="mono">orchestration_agent.py</span> has no reference to <span class="mono">guardrails_input</span>) - wiring the Router through <span class="mono">check_input()</span> would be multi-agentic-rag's first use of that guardrail from an agentic endpoint, not just genai-rag's.
+    Also true today, not new to this plan: single-agentic-rag itself doesn't call the input/output guardrails yet either (confirmed - <span class="mono">orchestration_agent.py</span> has no reference to <span class="mono">guardrails_input</span>) - wiring the Planner Agent through <span class="mono">check_input()</span> would be multi-agentic-rag's first use of that guardrail from an agentic endpoint, not just genai-rag's. Updated 2026-10-03: Decision 2 confirmed (domain agents per knowledgebase, not per business domain), architecture and request-flow diagrams redrawn same session. Updated 2026-10-04: workflow agents renamed throughout to Planner/Orchestration/Reviewer Agent per your taxonomy, Critic Agent dropped with its scope clarified, domain agents renamed (Vector KB/LMS Ops/LMS Analytics/SQL DB, NoSQL still pending), and the simplified request-flow diagram replaced with a complete stagewise user journey from Chat Client through every layer to Response. Gaps across timeouts/validation/persistence/logs/error-handling/async remain recorded above, none fixed yet - this remains a planning document, zero source files under <span class="mono">src/</span> touched by any update so far.
   </footer>
 
 </div>

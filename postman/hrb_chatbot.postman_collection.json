@@ -993,13 +993,13 @@
     },
     {
       "name": "multi-agentic-rag",
-      "description": "Phase 61 scaffold - real contract, real gateway/RBAC/rate-limiting, stubbed pipeline (ai/agents/workflow_agents/multi_agent_pipeline.py raises NotImplementedError naming the next file to build). A well-formed request returns 501 today, same as this project's own Phase 3/5 stubs did.",
+      "description": "Phase 64 - real implementation. Planner Agent classifies/decomposes the query, Orchestration Agent dispatches tasks to domain agents in parallel via a real LangGraph StateGraph (Send() fan-out), Reviewer Agent merges results. vector_kb_agent and lms_ops_agent are real (reuse single-agentic-rag's existing tools); sql_db_agent and lms_analytics_agent are honest stubs - no structured HR database or historical analytics dataset exists yet, so they report that plainly instead of inventing a result.",
       "item": [
         {
           "name": "Query — POST /v1/multi-agentic-rag/query",
           "item": [
             {
-              "name": "Well-formed query (expect 501, scaffold only)",
+              "name": "Multi-part query (two domain agents, parallel dispatch)",
               "request": {
                 "method": "POST",
                 "url": {
@@ -1010,9 +1010,26 @@
                 "header": [{"key": "Content-Type", "value": "application/json"}],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"EMP052\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"What is my PTO balance and what does the parental leave policy say?\"\n}"
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"EMP052\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"What is the parental leave policy, and also what is my current leave balance?\"\n}"
                 },
-                "description": "Phase 61. Verified live 2026-09-27: 501, code NOT_IMPLEMENTED, error message names ai/agents/workflow_agents/orchestrator_router.py - not a generic error, same pattern as Phase 3/5's own stubs."
+                "description": "Phase 64. Verified live 2026-10-03: 200, tasks shows Planner split this into vector_kb_agent + lms_ops_agent, dispatched in parallel, merged by the Reviewer into one answer. With hrb_lms_mcp not running, lms_ops_agent failed gracefully and the Reviewer's merged answer honestly said the leave-balance lookup couldn't complete, rather than fabricating a number."
+              }
+            },
+            {
+              "name": "Single-domain query (one agent, no merge LLM call)",
+              "request": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{base_url}}/v1/multi-agentic-rag/query",
+                  "host": ["{{base_url}}"],
+                  "path": ["v1", "multi-agentic-rag", "query"]
+                },
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"EMP052\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"What is the parental leave policy?\"\n}"
+                },
+                "description": "Phase 64. Verified live 2026-10-03: 200, Planner routed to vector_kb_agent alone; the Reviewer returns that single result as-is (no merge LLM call spent) - the 1-result branch of its 0/1/2+ pattern."
               }
             },
             {

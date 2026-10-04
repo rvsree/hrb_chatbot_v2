@@ -135,6 +135,18 @@ reviewed before that phase's code starts.
 | 59 — User-directed: three new document-metadata fields (author, doc_date, doc_version) | Claude Code | ✅ Done, verified live, 2026-09-25 | ✅ Spec'd and implemented - see detail below |
 | 60 — User-directed: require_role() auth-composition helper + comment-length compliance sweep across all of src/ | Claude Code | ✅ Done, verified, 2026-09-25 | ✅ Spec'd and implemented - see detail below |
 | 61 — User-directed: multi-agentic-rag scaffolding (real contract + stubbed pipeline, no orchestration logic yet) | Claude Code | ✅ Done, verified, 2026-09-27 | ✅ Spec'd and implemented - see detail below |
+| 64 — User-directed: multi-agentic-rag real implementation (Planner/Orchestration/Reviewer Agents, 4 domain agents, real LangGraph StateGraph) | Claude Code | ✅ Done, verified, 2026-10-03 | ✅ Spec'd and implemented - see detail below |
+| 65 — User-directed: per-agent model tiering (Planner Agent gets its own overridable model setting) | Claude Code | ✅ Done, verified, 2026-10-04 | ✅ Spec'd and implemented - see detail below |
+| 66 — User-directed: cost/token logging + timeout on every agent LLM call | Claude Code | ✅ Done, verified, 2026-10-04 | ✅ Spec'd and implemented - see detail below |
+| 67 — User-directed: golden dataset gets multi-part questions, multi-agentic-rag validated against them | Claude Code | ✅ Done, verified, 2026-10-04 | ✅ Spec'd and implemented - see detail below |
+| 68 — User-directed: query decomposition (Phase 5.1) resolved empirically - no separate component needed | Claude Code | ✅ Done, verified, 2026-10-04 | ✅ Spec'd and implemented - see detail below |
+| 69 — User-directed: DeepEval's golden-dataset harness wired to single/multi-agentic-rag | Claude Code | ✅ Done, verified, 2026-10-04 | ✅ Spec'd and implemented - see detail below |
+| 70 — User-directed: Web Search Agent (Tavily), 5th domain agent | Claude Code | ✅ Done, verified, 2026-10-04 | ✅ Spec'd and implemented - see detail below |
+| 71 — User-directed: dedup shared LLM helper, migrate orchestration_agent's prompt, remove dead config | Claude Code | ✅ Done, verified, 2026-10-04 | ✅ Spec'd and implemented - see detail below |
+| 72 — User-directed: Context Builder, shared post-retrieval context assembly | Claude Code | ✅ Done, verified, 2026-10-04 | ✅ Spec'd and implemented - see detail below |
+| 73 — User-directed: golden dataset `call_type` column + free routing-type gate | Claude Code | ✅ Done, verified, 2026-10-04 | ✅ Spec'd and implemented - see detail below |
+| 74 — User-directed: contract/schema regression testing + chaos/failure-injection testing | Claude Code | ✅ Done, verified, 2026-10-04 | ✅ Spec'd and implemented - see detail below |
+| 75 — User-directed: multi-modal RAG ingestion, scoped to table extraction (table chunking made structural, not size-heuristic) | Claude Code | ✅ Done, verified, 2026-10-04 | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -4791,6 +4803,937 @@ Explicitly deferred to a later, separate wave - not part of the above:
   still on DeepEval, untouched. `test_ab_testing_demo.py`'s placeholder role
   is now superseded by `retrieval_ab_harness.py` - left in place, not
   deleted, since removing it is a separate call the user hasn't made.
+
+- [x] **Phase 63 (2026-10-02) — User-directed: standardize prompt patterns
+  into a reusable module, decoupled from the code that calls them.**
+
+  **Spec:**
+  - **Context:** every prompt in this codebase today lives inline inside
+    the function that uses it - `document_metadata_extractor.py`'s
+    `EXTRACTION_QUESTION`, `response_generator.py`'s
+    `SYSTEM_PROMPT_TEMPLATE`, `orchestration_agent.py`'s `SYSTEM_PROMPT`.
+    User asked for a standardized, reusable prompt-pattern module, not
+    intermixed with the code that calls it, ahead of LangGraph multi-agent
+    work, where shared, reusable prompt patterns matter more than in a
+    single-agent pipeline.
+  - **Correction made mid-phase, recorded not silently fixed:** the
+    initial implementation also added `notification_prompts.py`
+    (`build_benefits_lapse_warning_prompt()`), parameterized with the
+    exact field shape - `leave_type`, `benefit_plan_name`,
+    `monthly_premium`, `policy_expiration_date` - of the still-undecided
+    unpaid-leave benefits-notification use case (see BACKLOG.md). User
+    flagged this as implementing a piece of that use case under cover of
+    "just a prompt example," despite the explicit instruction not to
+    implement it. Correct - removed the same session.
+    `ai/prompts/notification_prompts.py` and its test file no longer
+    exist. Nothing from that discussion is implemented anywhere.
+  - **Design choice, flagged:** considered a class-based template
+    registry; rejected it as more machinery than this actually needs. A
+    prompt is a string with placeholders - this phase uses plain
+    functions (static prompts stay module-level constants; prompts
+    needing per-call values are a function returning a string), matching
+    this project's existing "simple Python, no advanced techniques"
+    convention. No new dependency (no Jinja2 - confirmed not already in
+    `requirements.txt` and not needed for plain f-string formatting).
+  - **New package:** `ai/prompts/` - a cross-cutting concern, not owned by
+    `doc_processing/`, `rag_pipeline/`, or `agents/`, matching this
+    project's existing pattern of pulling a shared concern into its own
+    place (gateways, enums) rather than leaving it duplicated per-caller.
+    - `extraction_prompts.py`: `DOCUMENT_METADATA_EXTRACTION_PROMPT`
+      (migrated verbatim from `document_metadata_extractor.py` - the one
+      prompt in this codebase that already existed and was actually
+      extracted, not just a fresh example) and
+      `build_entity_extraction_prompt(text)` (new) - pulls structured
+      entities an HR document ingestion might need (employee name,
+      department, plan/enrollment type, dates, dollar amounts, policy
+      numbers referenced), explicitly instructed never to output a full
+      SSN or account number, only whether one is present - consistent
+      with this project's existing PII-masking stance (Phase 7). Kept:
+      this is a generic document-ingestion pattern, not tied to any
+      undecided use case.
+  - **Migration:** `document_metadata_extractor.py` now imports
+    `DOCUMENT_METADATA_EXTRACTION_PROMPT` from `ai/prompts/
+    extraction_prompts.py` instead of defining `EXTRACTION_QUESTION`
+    inline - behavior unchanged, same string, proving the "don't
+    intermix" goal for real on an already-live, already-tested code path,
+    not just in a fresh example nothing else uses.
+  - **Explicitly out of scope, flagged not silently dropped:**
+    `response_generator.py`'s `SYSTEM_PROMPT_TEMPLATE` and
+    `orchestration_agent.py`'s `SYSTEM_PROMPT` are the two other real
+    scattered-prompt locations. Both sit on every live query's hot path;
+    migrating them deserves its own focused review and test pass, not
+    bundled into this phase alongside a new, less risky package. A
+    generic (not use-case-specific) employee-email prompt pattern is also
+    not built - open, pending the user's call on whether it's still
+    wanted now that the use-case-specific version was reversed.
+  - **User-visible behavior:** none - `document_metadata_extractor.py`'s
+    output is byte-for-byte the same prompt text as before. The new
+    example template is not called from any route or pipeline.
+  - **Failure modes:** N/A - pure string-building function, nothing that
+    can fail at runtime beyond a missing/empty argument, which raises
+    immediately (`ValueError` - not caught or hidden).
+  - **Out of scope:** the unpaid-leave benefits-notification use case
+    itself (sample employee/enrollment datasets, a notification workflow,
+    real email sending, and - corrected mid-phase - any prompt
+    parameterized to that use case's specific fields). Captured instead
+    in `docs/agent-reference/BACKLOG.md`.
+  - **Open questions:** whether a generic employee-notification email
+    prompt pattern (no business-process-specific fields) is still wanted
+    as a standalone example - not decided, not built.
+
+  **Verified:** full default suite: 234 passed (230 + 4 new, all for
+  `build_entity_extraction_prompt()` - text-is-included, PII-safety
+  instruction present, empty/whitespace-only input raises).
+  `document_metadata_extractor.py`'s own existing tests re-ran unchanged
+  and still pass, confirming the migration didn't alter its behavior.
+  `bandit -ll` on both remaining changed/new files: 0 findings at any
+  severity.
+
+- [x] **Phase 64 (2026-10-03) — User-directed: multi-agentic-rag real
+  implementation - Planner Agent, Orchestration Agent dispatch, 4 domain
+  agents, Reviewer Agent, via a real LangGraph `StateGraph`.**
+
+  **Spec:**
+  - **Context:** fills in Phase 61's stub (`route_query()`/
+    `dispatch_to_agents()`/`synthesize_results()` all raised
+    `NotImplementedError`). User explicitly confirmed, after reviewing
+    LangChain/LangGraph/Azure reference material across many turns, the
+    **Hierarchical (LangGraph supervisor) pattern** - a Planner Agent that
+    classifies/decomposes the query, an Orchestration Agent that dispatches
+    the resulting tasks to domain agents in parallel via LangGraph's real
+    `Send()` API (not hand-rolled `asyncio.gather()`), and a Reviewer Agent
+    that merges the results - explicitly rejecting Azure's flatter
+    single-agent-many-tools pattern. This is final, not open for
+    reconsideration in this or a future phase.
+  - **Naming correction to Phase 61's own placeholders:** Phase 61 reserved
+    `ai/agents/workflow_agents/orchestrator_router.py` and `synthesizer.py`
+    as the routing/fan-in step names. The user's actual, confirmed naming
+    is **Planner Agent** (classify/decompose) / **Orchestration Agent**
+    (dispatch) / **Reviewer Agent** (merge) - both placeholder files are
+    deleted this phase, replaced by `ai/agents/workflow_agents/
+    planner_agent.py` and `reviewer_agent.py`. The Orchestration Agent has
+    no file of its own: its dispatch logic is the `dispatch_to_agents()`
+    conditional-edge function inside `multi_agent_pipeline.py` itself - a
+    new file literally named `orchestration_agent.py` would collide with
+    the one that already exists (Phase 55's single-agentic-rag tool-calling
+    loop, which this phase does not touch).
+  - **Data/API contracts:** unchanged from Phase 61 -
+    `models/multi_agentic_rag.py`'s `MultiAgenticRagRequest`/
+    `AgentTaskInfo`/`MultiAgenticRagResponse` are already finalized.
+    `AgentTaskInfo` carries only `agent`/`focus` (no per-task query text in
+    the public response) - the LangGraph graph's internal state carries the
+    actual sub-query text (`focus`) separately per task; the response
+    model is unaffected.
+  - **Graph shape** (`ai/agents/workflow_agents/multi_agent_pipeline.py`,
+    real `langgraph.graph.StateGraph`, confirmed installed at
+    `langgraph==0.3.21`): `START -> planner -> (Send fan-out) ->
+    {vector_kb_agent, lms_ops_agent, sql_db_agent, lms_analytics_agent} ->
+    reviewer -> END`. State is a `TypedDict` (`query`, `employee_id`,
+    `tasks`, `agent_results: Annotated[list, operator.add]`, `answer`) -
+    the `operator.add` reducer is what lets the 4 parallel domain-agent
+    branches each return one result without overwriting each other,
+    matching the Travel Planner reference notebook's own reducer pattern.
+  - **Planner Agent** (`planner_agent.py`): one structured-output LLM call
+    (`ChatOpenAI(...).with_structured_output(PlannerOutput)`, same
+    `_build_llm()` pattern as `orchestration_agent.py`'s own - `ChatOpenAI`
+    directly, not `GatewayChatModel`, matching that established precedent
+    for agent-layer code specifically) returning a list of `{agent, focus}`
+    tasks, `agent` constrained to a `Literal` of the 4 real node names so
+    an invalid agent name is a schema-validation failure, not a silent
+    routing bug. Falls back to a single `vector_kb_agent` task if the LLM
+    returns zero tasks. System prompt lives in the new `ai/prompts/
+    agent_prompts.py` (`PLANNER_SYSTEM_PROMPT`), per Phase 63's
+    standardized-prompt-pattern convention adopted specifically to prepare
+    for this phase.
+  - **Domain agents** (`ai/agents/domain_agents/`, 4 new thin files, one
+    per knowledgebase, each exposing a plain `async def run(...)` the
+    graph node wraps):
+    - `vector_kb_agent.py` - real, wraps the existing
+      `agentic_tools.search_knowledge_base()` unchanged.
+    - `lms_ops_agent.py` - real, wraps the existing
+      `get_leave_balance_tool()`/`get_leave_history_tool()`, routed by the
+      task's own `focus` text using `mcp_tools.is_leave_history_query()`
+      (already exists, reused directly) - balance is the default when
+      neither keyword matches.
+    - `sql_db_agent.py` / `lms_analytics_agent.py` - **flagged, not
+      silently decided:** no real structured HR operational database or
+      analytics historical dataset exists yet (both are tracked,
+      sequenced, not-yet-started BACKLOG.md items). Rather than invent
+      fake SQL/analytics logic to make these "do something," both return a
+      plain, honest "not available yet" string - same spirit as
+      `agentic_tools.py`'s own established `"Error: ..."` string
+      convention, not a raised exception, because raising would fail the
+      *entire* parallel graph invocation (including whatever
+      `vector_kb_agent`/`lms_ops_agent` already answered correctly) for
+      any query the Planner happens to route there. This keeps a
+      multi-task query's other, real answers intact and reports the gap
+      plainly in the final merged answer instead.
+  - **Reviewer Agent** (`reviewer_agent.py`): 0/1/2+ branching matching the
+    Travel Planner reference notebook's own `synthesizer_node()` pattern -
+    0 results: a plain "couldn't find an answer" message; 1 result: that
+    domain agent's result returned as-is, no LLM call spent on a merge
+    that isn't needed; 2+ results: one LLM call merging every domain
+    agent's result into one non-redundant answer, naming any domain agent
+    that reported "not available yet" rather than silently dropping it.
+    System prompt: `ai/prompts/agent_prompts.py`'s `REVIEWER_SYSTEM_PROMPT`.
+  - **Guardrails + conversation memory wiring** (the real gap Phase 61 left
+    - `enable_conversation_memory`/`conversation_id` were accepted by the
+    request model but never threaded anywhere): `check_input()`/
+    `check_output()` are called inside `run_multi_agent()` itself (the
+    pipeline layer) - verified this is genai-rag's own actual pattern
+    before writing it (`ai/rag_pipeline/pipeline.py::answer_query()` calls
+    both; `api/rag/retrieve_document.py` only catches the resulting
+    `GuardrailBlockedError`), not the reverse as first assumed.
+    `api/multi_agentic_rag/query_agent.py` mirrors that exactly: it calls
+    `run_multi_agent()` inside a `try`/`except GuardrailBlockedError` that
+    returns `422`/`INPUT_GUARDRAIL_BLOCKED`, same existing code, and does
+    not call either guardrail function itself. `run_multi_agent()` also
+    handles conversation-memory load/save
+    (`conversation_memory.new_conversation_id()`/`save_turn()`, same
+    pattern `orchestration_agent.run_agent()` already uses) and invokes the
+    compiled graph - the graph does not yet thread prior-turn history into
+    its own state (each call still reasons fresh), matching single-
+    agentic-rag's own current scope; only the final answer is saved.
+  - **`tools_used`/`iterations` in the response:** populated honestly from
+    `agent_results` (one `ToolCallInfo` per domain agent actually
+    dispatched, `tool_name` = agent name, `tool_input` = its `focus`;
+    `iterations` = count of domain agents dispatched) rather than left
+    always-empty like Phase 61's stub returned - this is real data the
+    graph already has, not invented.
+  - **User-visible behavior:** `POST /v1/multi-agentic-rag/query` with a
+    well-formed request now returns a real `200` with a synthesized
+    answer, the dispatched tasks, and which domain agents were used - no
+    more `501`. Gateway/RBAC/rate-limiting/guardrail behavior (`401`/
+    `403`/`422`) is unchanged from Phase 61, since none of that layer was
+    touched.
+  - **Failure modes:** a domain agent's own internal error (e.g. the MCP
+    call inside `lms_ops_agent` failing) is caught at the tool-wrapper
+    level exactly like today (`agentic_tools.py` already returns an
+    `"Error: ..."` string, never raises) so one domain agent failing does
+    not crash the graph or the other parallel branches - the Reviewer
+    sees it as just another agent result to merge/report.
+  - **Retrieval quality criteria:** N/A beyond what `search_knowledge_base`
+    already does (Phase 4.5's relevance threshold) - no new retrieval
+    logic in this phase.
+  - **Out of scope:** real SQL DB Agent / LMS Analytics Agent logic (needs
+    the not-yet-built Ops DB sample dataset and Analytics DB historical
+    dataset, both sequenced in BACKLOG.md, explicitly after this phase);
+    threading conversation history into the graph's own state; per-domain-
+    agent evals (the "Reviewer Agent also does evals" option discussed in
+    `multi-agentic-rag-fit-plan.html` - not built here, this phase's
+    Reviewer only merges); DeepAgents adoption (scoped to a future Leave
+    Ops/HITL agent, not these 4).
+  - **Open questions:** none blocking this phase - the SQL DB Agent/LMS
+    Analytics Agent stub-vs-real judgment call above is flagged for the
+    user's review, not a blocker to implementing the other 3 agents and
+    the graph wiring around them.
+
+  **Verified:** full default suite: 250 passed (234 + 16 new - 4 domain-
+  agent unit tests, 3 Planner Agent tests, 3 Reviewer Agent tests, 5 graph-
+  level tests on `multi_agent_pipeline.py` covering single-task/multi-task/
+  stub-agent/memory/guardrail-blocked cases, 2 route tests replacing
+  Phase 61's now-obsolete 501 assertion). `bandit -ll` on all new/changed
+  files: 0 findings at any severity. `langgraph.get_graph().draw_mermaid()`
+  confirmed the compiled graph's actual edges match the spec'd shape
+  exactly (`planner` fanning out via dashed Send edges to all 4 domain
+  agents, each converging on `reviewer`). Live, real LLM calls (no
+  mocking) via a local dev server on two cases: (1) a single-domain
+  question ("what is the parental leave policy?") - Planner routed to
+  `vector_kb_agent` alone, Reviewer returned its result as-is (no merge
+  LLM call spent, confirming the 1-result branch); (2) a two-domain
+  question (parental leave policy + "what is my current leave balance?")
+  - Planner split it into both `vector_kb_agent` and `lms_ops_agent`
+  tasks, dispatched in parallel, confirming `Send()` fan-out; `lms_ops_agent`
+  failed gracefully (hrb_lms_mcp wasn't running locally) and the Reviewer's
+  merge LLM call still produced one coherent answer that honestly reported
+  the leave-balance lookup couldn't complete, rather than fabricating a
+  number - confirming a real domain-agent failure doesn't crash the graph
+  or silently drop from the final answer.
+
+- [x] **Phase 65 (2026-10-04) — User-directed: per-agent model tiering -
+  Planner Agent gets its own, overridable model setting.**
+
+  **Spec:**
+  - **Context:** BACKLOG.md gap #1 (Phase 64 follow-ups) - `planner_agent.py`,
+    `reviewer_agent.py`, and the existing `orchestration_agent.py` all read
+    the exact same `OPENAI_CHAT_MODEL` setting via three near-identical
+    `_build_llm()` functions. The "cheaper model for simpler agents" idea
+    discussed earlier was never built.
+  - **Scope, deliberately minimal:** only the Planner gets its own setting
+    this phase - classification (pick 1-4 known agent names + a short focus
+    string) is the simplest of the three LLM calls, the one most likely to
+    work fine on a cheaper model. Reviewer and orchestration_agent are
+    unchanged - widening this to every agent without evidence it's needed
+    would be speculative, not requested.
+  - **Implementation:** `planner_agent._build_llm()` reads a new
+    `OPENAI_PLANNER_MODEL` setting, falling back to the existing
+    `OPENAI_CHAT_MODEL` (itself defaulting to `gpt-4.1-mini`) when unset -
+    so this phase changes nothing by default until the new `.env` var is
+    actually set. `.env` gets the new var, commented out
+    (`# OPENAI_PLANNER_MODEL=`) under the existing OpenAI section, not set
+    to a real cheaper model name - picking a specific cheaper model is a
+    cost/quality tradeoff for the user to make, not this phase's call.
+  - **Flagged, not fixed:** `.env` already has an unused `OPENAI_RAG_MODEL=
+    gpt-3.5-turbo` (confirmed via grep - zero references anywhere in
+    `src/`). Not reused for the Planner - its name specifically says
+    "RAG", reusing it for an unrelated agent would be misleading. Left
+    alone; a separate, genuinely dead-config cleanup if the user wants it.
+  - **User-visible behavior:** none by default (no `.env` value set yet).
+    Setting `OPENAI_PLANNER_MODEL` changes only the Planner's model.
+  - **Failure modes:** none new - same `read_setting()` fallback mechanism
+    every other per-call override in this project already uses.
+  - **Out of scope:** Reviewer/orchestration_agent model tiering (no
+    evidence yet they need it); actually picking a specific cheaper model.
+  - **Open questions:** none.
+
+  **Verified:** full default suite still green after the change (see
+  Phase 66-70's combined verification below - all six phases were
+  implemented and tested together in one sitting per explicit user
+  direction, "start impl 1 to 6 and 9 items as per given order").
+  `planner_agent.py` unit tests re-ran unchanged and pass (the fallback
+  means existing tests, which never set the new var, see identical
+  behavior).
+
+- [x] **Phase 66 (2026-10-04) — User-directed: cost/token logging and a
+  timeout on every agent LLM call (BACKLOG.md gaps #2 and #3, combined -
+  same three call sites, so done together rather than editing the same
+  lines twice for two separate phases).**
+
+  **Spec:**
+  - **Context:** confirmed by grep before writing this spec - zero hits
+    for `call_logger`/`log_backend_call` and zero hits for
+    `asyncio.wait_for`/any timeout anywhere under `ai/agents/`.
+    `planner_agent.py`/`reviewer_agent.py`/`orchestration_agent.py` all
+    call `langchain_openai.ChatOpenAI.ainvoke()` directly, bypassing this
+    project's own `common/clients/llm_client/*.py` client layer (and its
+    already-built logging) entirely.
+  - **Cost/token logging:** wrap each `ainvoke()` call in the existing
+    `log_backend_call()` context manager (duration/status - same pattern
+    `openai_client.py` already uses for its own `ask()`), then log token
+    counts from the response, verified live this session:
+    `response.usage_metadata` is LangChain's real, standardized field
+    (`{"input_tokens", "output_tokens", "total_tokens"}`) - not guessed,
+    confirmed by an actual call before writing this. Mirrors
+    `openai_client.py`'s own `if response.usage: logger.info(...)` line
+    exactly, adapted to the `usage_metadata` key names.
+  - **Timeout:** wrap the same `ainvoke()` call in
+    `asyncio.wait_for(..., timeout=AGENT_LLM_TIMEOUT_SECONDS)`. New
+    constant, `AGENT_LLM_TIMEOUT_SECONDS = 30`, defined in each of the
+    three files (matching `DEFAULT_MAX_ITERATIONS`'s existing per-file
+    constant style in `orchestration_agent.py`, not a new shared config
+    module for a single number). A timeout raises `asyncio.TimeoutError`,
+    deliberately left uncaught at this layer - becomes a real `500` at the
+    route today (no specific error code yet), same as any other
+    unexpected pipeline failure; a dedicated `AGENT_TIMEOUT` error code is
+    a follow-up if timeouts turn out to happen often in practice, not
+    assumed necessary yet.
+  - **User-visible behavior:** none on the happy path. A hung LLM call now
+    fails after 30s instead of hanging the request indefinitely.
+  - **Failure modes:** `asyncio.TimeoutError` on a slow/hung call,
+    uncaught (see above).
+  - **Out of scope:** a dedicated timeout error code; making the timeout
+    configurable via `.env` (fixed constant for now, no evidence yet of
+    needing to tune it); request-level correlation ids across the log
+    lines these calls add (separate, already-tracked Observability gap).
+  - **Open questions:** none.
+
+  **Verified:** confirmed live (not just by reading the code) -
+  `response.usage_metadata` is a real field, read directly off a real
+  `ChatOpenAI.ainvoke()` response before writing any of this phase's code,
+  not assumed. A live Planner call logged
+  `[planner_agent] plan succeeded in 1200.8ms - {}` followed by
+  `[planner_agent] tokens used: 274 prompt + 19 completion` - both lines
+  present, confirming the `log_backend_call()` wrap and the token line
+  both fire. All 25 agent unit tests pass (test fakes updated to carry
+  `usage_metadata` so `if response.usage_metadata:` doesn't crash on a
+  fake missing the attribute). `asyncio.wait_for()` wraps all three call
+  sites (`planner_agent.py`, `reviewer_agent.py`,
+  `orchestration_agent.py`'s loop) - not separately live-tested with an
+  actual 30s hang (would need an artificial slow endpoint), but the
+  wrapping itself is confirmed present and doesn't change behavior on a
+  normal-speed call (all live Phase 67/69/70 runs below completed well
+  under 30s with this wrapper in place).
+
+- [x] **Phase 67 (2026-10-04) — User-directed: golden dataset gets
+  multi-part questions; multi-agentic-rag validated against them
+  (BACKLOG.md gap #4).**
+
+  **Spec:**
+  - **Context:** all 23 existing cases in `resources/golden_dataset/
+    golden_dataset.json` are single-part. None exercise the Planner
+    splitting a question into multiple tasks - the only evidence that
+    worked came from two ad-hoc live checks during Phase 64, not a
+    repeatable golden case.
+  - **Two new cases, deliberately different shapes, both added to
+    `golden_dataset.json`:**
+    - **Same-domain compound** (new category `happy_multi_topic_single_domain`):
+      one question spanning two different KB documents/topics (e.g. 401k
+      match + tuition reimbursement) - fully deterministic, gradeable the
+      same way every existing case already is (`expected_source_document`,
+      `expected_answer`, `expected_keywords`). Tests whether the Planner
+      splits a same-domain compound question into two focused
+      `vector_kb_agent` tasks (LangGraph's `Send()` allows dispatching to
+      the same node twice with different input - confirmed by reading
+      `dispatch_to_agents()`) or answers it in one task - either is
+      acceptable as long as the final answer covers both topics; this
+      case is what Phase 68 (query decomposition) actually inspects.
+    - **Cross-domain** (new category `happy_multi_domain_agent`): one KB
+      question + one live-data question (leave balance). **Flagged, not
+      silently forced into the deterministic format:** a live MCP-backed
+      balance isn't stable/known ahead of time, so this case has
+      `expected_source_document`/`expected_answer` for its KB half only,
+      and is scored for routing/coherence (did the Planner dispatch to
+      both agents, did the Reviewer produce one coherent answer), not
+      graded by the harness's exact-match retrieval metrics the same way
+      the other 24 cases are.
+  - **Validation, not just data:** both new cases run live (real LLM
+    calls, no mocking) through `multi_agent_pipeline.run_multi_agent()` as
+    part of this phase's own test file (`@pytest.mark.eval`, same
+    exclusion pattern as the existing golden-dataset eval tests) -
+    confirms Planner routing and Reviewer merge behavior on cases that
+    will keep being run on every future `pytest -m eval`, not just once by
+    hand.
+  - **User-visible behavior:** none - test/data only, no `src/` pipeline
+    change in this phase.
+  - **Failure modes:** N/A - this phase adds data and a test, not runtime
+    code.
+  - **Out of scope:** the harness's quantitative scoring
+    (`score_case()`/`evaluate_groundedness()`/etc.) is Phase 69's concern,
+    not this one - this phase only confirms the Planner/Reviewer *behave*
+    correctly on multi-part cases.
+  - **Open questions:** whether the same-domain case reveals the Planner
+    under- or over-splitting - answered empirically when this phase runs,
+    feeds directly into Phase 68's decision.
+
+  **Verified:** both new cases run live and pass. **Unplanned finding,
+  investigated and resolved, not routed around:** the first live run of
+  `multi-agent-same-domain-01` failed - the Reviewer's merged answer said
+  the 401(k) match rate "is not specified in the available information."
+  Traced this down, not assumed: isolated the retrieval call for the
+  401k-focused sub-query alone, confirmed it returned the wrong document
+  (`JPMC Healthcare Benefits.pdf`); then re-ran the *original, already-
+  verified* golden case 401k-01's exact query through genai-rag's own
+  `pipeline.answer_query()` directly (no agents involved at all) and got
+  the same wrong result - proving this had nothing to do with the Planner,
+  multi-agentic-rag, or anything built in this session. Checked the local
+  metadata store directly: only 3 of the 6 KB PDFs the golden dataset
+  assumes were actually indexed locally (`JPMC Guild Tuition
+  Assistance.pdf`, `JPMC Paid TimeOff.pdf`, `JPMC Healthcare
+  Benefits.pdf`) - `401k.pdf`/`unpaid_leave.pdf`/`disability.pdf` were
+  missing from this local dev index even though all 6 source files exist
+  on disk under `resources/kb_docs/`. A local indexing gap, not a code
+  regression. Fixed by re-uploading the 3 missing PDFs through the real
+  `POST /v1/genai-rag/ingest-document/documents` endpoint (normal dev
+  workflow, not a code change) - re-verified 401k-01 then answers
+  correctly, and both this phase's new cases pass. One test assertion was
+  also corrected after this (checking for "16" + "week" instead of the
+  literal substring "16 weeks" - the real answer said "16 continuous
+  weeks," a wording difference, not a defect). Full default suite still
+  254 passed after these fixes.
+
+- [x] **Phase 68 (2026-10-04) — User-directed: query decomposition
+  (Phase 5.1) - resolved empirically using Phase 67's new case, not built
+  as a separate component unless the evidence says it's needed (BACKLOG.md
+  gap #5).**
+
+  **Spec:**
+  - **Context:** `ai/pre_processing/query_decompose.py` has been a 0-byte
+    placeholder since Phase 5. BACKLOG.md's own gap #5 explicitly said to
+    pick up #4 (Phase 67) first and let the result show "whether this is
+    still needed or whether the Planner's own splitting already covers
+    the real cases" - this phase is that check, not a decision made in
+    advance of it.
+  - **Decision procedure, not a predetermined outcome:** run Phase 67's
+    same-domain compound case live. If the Planner's existing
+    classification step already splits it into two focused
+    `vector_kb_agent` tasks (or answers both topics well in one task) with
+    no prompt changes, Phase 5.1's separate decomposition component is
+    not needed - closed here, with the live evidence recorded, not
+    reconstructed as a guess later. If it does not split/cover both topics
+    well, this phase tunes `PLANNER_SYSTEM_PROMPT` (in `ai/prompts/
+    agent_prompts.py`) to explicitly instruct same-domain splitting before
+    concluding a separate component is actually required - a prompt
+    change is a smaller, more consistent fix than a new parallel
+    decomposition module, given the Planner already owns this exact
+    decision for cross-domain questions.
+  - **Still explicitly out of scope regardless of outcome:** building
+    query decomposition for genai-rag's own non-agentic pipeline
+    (`ai/rag_pipeline/pipeline.py`) - that pipeline has no Planner/agent
+    step to extend, so if a gap is found there it is a separate, new
+    decision, not resolved by anything in this phase.
+  - **User-visible behavior:** possibly a changed/clarified
+    `PLANNER_SYSTEM_PROMPT` (see decision procedure); no contract change.
+  - **Failure modes:** N/A.
+  - **Out of scope:** genai-rag decomposition (see above); any new file
+    under `ai/pre_processing/` - this phase's outcome is recorded here and
+    in `query_decompose.py`'s own docstring-as-placeholder update, not a
+    real implementation there, unless the live test shows one is actually
+    needed.
+  - **Open questions:** resolved by this phase's own live test - see
+    Verified below for the actual outcome and reasoning.
+
+  **Verified:** outcome: **no change needed** - Phase 5.1's separate
+  decomposition component is not built, by evidence not by default. Once
+  Phase 67's indexing gap was fixed (see Phase 67's own Verified block),
+  the Planner split `multi-agent-same-domain-01`'s same-domain compound
+  question into two correctly-focused `vector_kb_agent` tasks
+  (`"JPMorgan Chase 401(k) match percentage policy"` and
+  `"tuition assistance amount per year for a master's degree in the Guild
+  catalog"`) with **zero changes to `PLANNER_SYSTEM_PROMPT`** - the prompt
+  already written in Phase 64 was enough. Both sub-queries then retrieved
+  correctly and the Reviewer's merged answer covered both facts (`100%`/
+  `5%` match, `$7,500`/year tuition). Recorded the decision and the
+  evidence directly in `ai/pre_processing/query_decompose.py`'s docstring
+  rather than leaving the file at 0 bytes with no explanation. Still
+  explicitly open, as scoped: genai-rag's own non-agentic pipeline has no
+  equivalent splitting mechanism - untouched, unassessed, a separate
+  question.
+
+- [x] **Phase 69 (2026-10-04) — User-directed: DeepEval's golden-dataset
+  harness pointed at single-agentic-rag and multi-agentic-rag, not just
+  genai-rag (BACKLOG.md gap #6).**
+
+  **Spec:**
+  - **Context:** `golden_dataset_harness.py::score_case(case, ask)` was
+    already built generic (Phase 62/8) - `ask` is any callable returning
+    `{"answer", "retrieved_texts", "retrieved_ids"}` - but every actual
+    caller today (`tests/.../test_golden_dataset_harness.py`) only passes
+    an adapter over genai-rag's `pipeline.answer_query()`. Nothing calls
+    it with `run_agent()` or `run_multi_agent()`.
+  - **Real blocker found and fixed, not routed around:** neither
+    `run_agent()` nor `run_multi_agent()` exposes the raw text its tools/
+    domain agents actually produced - `run_agent()`'s `tools_used` only
+    records `{tool_name, tool_input}` (never the tool's output text,
+    discarded once appended to the LLM's message history), and
+    `run_multi_agent()`'s return dict never surfaces `agent_results`'
+    `result` text either. Without that, a groundedness check has no real
+    context to check the answer against, which would silently produce a
+    meaningless score, not a genuinely lower one. Fixed by adding one
+    field to each function's existing return dict (additive, no existing
+    field removed or renamed): `run_agent()` gains `tool_outputs: list[str]`
+    (the same strings already being put in each `ToolMessage`, just also
+    collected into a plain list); `run_multi_agent()` gains
+    `agent_result_texts: list[str]` (`[r["result"] for r in
+    final_state["agent_results"]]`). Neither existing route's response
+    model changes - `AgenticRagResponse`/`MultiAgenticRagResponse` don't
+    expose these new fields, so this is invisible to API callers; only
+    the harness adapters (test-local, matching the existing
+    `ask_genai_rag()` pattern - defined inside the test file, not a new
+    `src/` module) read them.
+  - **Retrieval-id extraction:** both adapters parse
+    `"--- Source N (filename) ---"` out of the raw tool-output text with a
+    regex - the exact header `agentic_tools.search_knowledge_base()`
+    already writes, not an invented id scheme. Non-KB agent results (leave
+    balance/history, or the two honest stub messages) simply contribute no
+    filenames, which is correct, not a bug to fix.
+  - **Test shape:** two new test files, same light-smoke-test pattern as
+    the existing `test_golden_dataset_cases_score_above_zero()` - confirms
+    real (non-error, non-None) scores come back on a small sample, marked
+    `@pytest.mark.eval`, excluded from the default suite.
+  - **User-visible behavior:** none via the public API (additive internal
+    fields only, see above).
+  - **Failure modes:** N/A beyond what `score_case()` already handles
+    (judge-call failures already degrade to a neutral 0.5 score, not a
+    crash).
+  - **Out of scope:** a CI release-gate wired to these new eval runs
+    (`get_release_decision()` already exists generically, not invoked
+    here against agentic scores); scoring every one of the 25 golden
+    cases through both agentic pipelines (cost - a small sample, same as
+    the existing genai-rag smoke test, not an exhaustive run).
+  - **Open questions:** none.
+
+  **Verified:** both new test files pass live (real LLM calls):
+  `test_single_agentic_rag_golden_dataset.py` (3 `happy` cases via
+  `run_agent()`) and `test_multi_agentic_rag_golden_dataset.py` (2 `happy`
+  cases + both Phase 67 multi-part cases via `run_multi_agent()`) - every
+  case returned real, non-`None` precision/recall/f1/groundedness/
+  completeness scores, confirming `tool_outputs`/`agent_result_texts` give
+  the harness real context to score against, not empty lists that would
+  have produced a meaningless (not just lower) groundedness check. Full
+  eval suite (`pytest -m eval -v`, all 6 files including the 2 pre-
+  existing ones): 6 passed. Default suite unaffected by the two additive
+  return-dict fields (`tool_outputs` on `run_agent()`,
+  `agent_result_texts` on `run_multi_agent()`) - no existing test does an
+  exact-dict-equality assertion that the new keys would break; confirmed
+  by grep before relying on it, not assumed.
+
+- [x] **Phase 70 (2026-10-04) — User-directed: Web Search Agent (Tavily) -
+  5th domain agent, wired into the Planner's routing (BACKLOG.md gap #9).**
+
+  **Spec:**
+  - **Context:** `common/clients/web_client/tavily_client.py` and its
+    gateway accessor (`get_client_gateway().tavily()`) already exist -
+    confirmed by reading both - but grep for `web_search`/`websearch`
+    anywhere under `src/` returns nothing. No domain agent wraps it, and
+    the Planner has no routing option for it.
+  - **New file `ai/agents/domain_agents/web_search_agent.py`:** thin
+    wrapper, same shape as the other real domain agents - calls
+    `get_client_gateway().tavily()`'s search method (reading its real
+    method name/signature from the client file before writing this,
+    rather than guessing), returns a plain string summarizing results
+    (title + snippet per result, same "never raises, returns an Error:
+    string" convention `agentic_tools.py` already established) or an
+    `"Error: ..."` string on failure/missing API key - never raises,
+    matching every other domain agent.
+  - **Planner wiring:** add `"web_search_agent"` as a 5th `Literal` value
+    in `planner_agent.AgentName`, add it to `multi_agent_pipeline
+    .DOMAIN_AGENT_NODES` and the graph's node/edge wiring
+    (`web_search_agent -> reviewer`, same pattern as the other 4), and
+    describe it in `PLANNER_SYSTEM_PROMPT` - for questions about current
+    events/external information the internal KB and HR systems can't
+    answer (e.g. "what's the current federal mileage reimbursement rate"),
+    explicitly distinct from `vector_kb_agent`'s internal-policy-document
+    scope.
+  - **User-visible behavior:** a question the Planner judges to need
+    external/current information now gets routed to a real web search
+    instead of either being forced into `vector_kb_agent` (wrong tool) or
+    going unanswered.
+  - **Failure modes:** missing `TAVILY_API_KEY` or a failed request -
+    both become an honest `"Error: ..."` string result, same as every
+    other domain agent's failure handling, not a crashed graph.
+  - **Out of scope:** result re-ranking/filtering beyond what Tavily's
+    own API returns; citing web sources distinctly from KB sources in the
+    final answer (the Reviewer's existing merge prompt already names
+    which agent each result came from - good enough for now, not enhanced
+    further in this phase).
+  - **Open questions:** none.
+
+  **Verified:** graph now has 5 domain-agent nodes -
+  `get_graph().get_graph().draw_mermaid()` confirmed `planner` fans out to
+  all 5 (including `web_search_agent`) and all 5 converge on `reviewer`.
+  Unit tests (3 new, `test_web_search_agent.py`) cover the success/empty/
+  error-string shapes with a faked Tavily client. Live, real Tavily call
+  (API key configured) through the full graph: "What is the current IRS
+  standard mileage reimbursement rate for 2026?" - Planner routed to
+  `web_search_agent` alone (focus: "Find the current IRS standard mileage
+  reimbursement rate for 2026"), a real web search ran, and the Reviewer
+  returned that single result as-is (the 1-result branch, no merge LLM
+  call spent) with 5 real web sources cited by title/URL. Full default
+  suite: 254 passed. `bandit -ll` on all Phase 65-70 changed/new files: 0
+  findings at any severity (ran once across the full batch, reported at
+  the end of this phase rather than once per phase).
+
+- [x] **Phase 71 (2026-10-04) — User-directed: clean up the duplication/dead
+  code flagged after Phase 70 - shared LLM helper, migrate
+  orchestration_agent's prompt, remove dead config.**
+
+  **Spec:**
+  - **Context:** a status review after Phase 70 surfaced concrete
+    duplication across the 3 agent-LLM files this session's own phases
+    built, plus one pre-existing dead setting.
+  - **Shared LLM helper:** new `ai/agents/_llm_helpers.py` -
+    `build_agent_llm(model_setting_name: str | None = None) -> ChatOpenAI`
+    (the identical 4-line body from all 3 `_build_llm()` functions, with
+    an optional per-agent setting name - `planner_agent.py` passes
+    `"OPENAI_PLANNER_MODEL"`, the other two call it with no argument) and
+    `AGENT_LLM_TIMEOUT_SECONDS = 30` (was defined identically 3 times).
+    `planner_agent.py`/`reviewer_agent.py`/`orchestration_agent.py` import
+    both instead of defining their own.
+  - **Prompt migration:** `orchestration_agent.py`'s own `SYSTEM_PROMPT`
+    moves into `ai/prompts/agent_prompts.py` as
+    `ORCHESTRATION_SYSTEM_PROMPT` - this was explicitly flagged as
+    out-of-scope-for-now in Phase 63's own spec ("sits on every live
+    query's hot path, deserves its own focused review") and is picked up
+    here now that it's a confirmed, not just anticipated, gap.
+  - **Dead config removed:** `.env`'s `OPENAI_RAG_MODEL=gpt-3.5-turbo` -
+    confirmed by grep (again, not trusted from the earlier finding alone)
+    to have zero references anywhere in `src/` - deleted, not just
+    flagged this time, since it's genuinely unused rather than a
+    judgment call.
+  - **Test duplication:** the `_SOURCE_FILENAME_PATTERN`/
+    `_extract_filenames()` pair, identical in
+    `test_single_agentic_rag_golden_dataset.py` and
+    `test_multi_agentic_rag_golden_dataset.py`, moves into a new shared
+    `tests/hrb_chatbot/ai/rag_pipeline/evaluations/_eval_helpers.py`,
+    imported by both.
+  - **User-visible behavior:** none - pure refactor, same models/prompts/
+    timeouts, same `.env` behavior for every setting still read.
+  - **Failure modes:** N/A.
+  - **Out of scope:** any further prompt-pattern consolidation; auditing
+    the rest of `src/` for duplication beyond what this session's own
+    phases introduced.
+  - **Open questions:** none.
+
+  **Verified:** all 3 agent test files' existing monkeypatches
+  (`monkeypatch.setattr(planner_agent, "_build_llm", ...)` etc.) still
+  work unchanged - each file keeps a thin `_build_llm()` wrapper calling
+  the shared `build_agent_llm()`, so the monkeypatch surface didn't move,
+  only the duplicated body did. `test_orchestration_agent.py`'s own
+  assertion on `orchestration_agent.SYSTEM_PROMPT`'s exact text still
+  passes - confirms the migrated prompt is byte-for-byte the same string.
+  Full default suite: 254 passed, unchanged count (pure refactor, no new
+  or removed tests). Grep re-confirmed `OPENAI_RAG_MODEL` has zero
+  references in `src/` before deleting it from `.env`.
+
+- [x] **Phase 72 (2026-10-04) — User-directed: Context Builder - shared
+  post-retrieval context assembly, reused by genai-rag and the Reviewer
+  Agent. Query decomposition is explicitly NOT folded into this.**
+
+  **Spec:**
+  - **Context:** the target-state architecture diagram (user-provided)
+    names a "Context Builder" box ("query rewrite + history + memory +
+    metadata") that nothing in this codebase implements as a named
+    component - the logic it covers is scattered: `response_generator
+    .py`'s own `_build_context(chunks)` (genai-rag) and `reviewer_agent
+    .py`'s own inline `"\n\n".join(...)` (multi-agentic-rag) do the same
+    *kind* of job - turning retrieved material into one prompt-ready
+    block - with separate, slightly different code.
+  - **Decomposition question, answered directly:** decomposition and
+    context-building are different pipeline stages, not the same
+    feature, and are not merged here. Decomposition (splitting one
+    question into sub-queries) has to run *before* retrieval, to decide
+    what to retrieve. Context Builder's job is assembling what retrieval
+    already returned, which only makes sense *after* retrieval. Phase 68
+    already resolved decomposition itself as "not needed as a separate
+    component" for multi-agentic-rag (the Planner's own splitting
+    covers it); genai-rag's own pipeline still has no decomposition step
+    at all, which stays open and unbuilt - a real gap, but a different
+    one, not addressed by adding Context Builder.
+  - **New module `ai/pre_processing/context_builder.py`:** two plain
+    functions, not a class (matches this project's own "simple Python"
+    convention) - `build_context_from_chunks(chunks: list[dict]) -> str`
+    (genai-rag's exact existing block format, moved verbatim, not
+    rewritten, from `response_generator.py::_build_context()`) and
+    `build_context_from_agent_results(agent_results: list[dict]) -> str`
+    (multi-agentic-rag's exact existing format, moved verbatim from
+    `reviewer_agent.py`). Both are pure string assembly - no new
+    behavior, so this phase is a dedup/relocation, not new logic.
+  - **Explicitly not built this phase, flagged not silently skipped:**
+    metadata enrichment (confidentiality level, effective date, etc.)
+    beyond the filename already included - chunk dicts from
+    `retrieve_chunks()` don't carry that today, and fetching it would be
+    new per-chunk DB calls, a real feature addition deserving its own
+    confirmation, not bundled into a rename/relocation phase. A plain-text
+    history formatter is also not added - `response_generator.py` already
+    passes history as real LangChain messages via `MessagesPlaceholder`,
+    the correct LangChain-native approach; a redundant string-based
+    formatter nothing would call is not built just because the diagram
+    names "history" as part of the box.
+  - **Wiring:** `response_generator.py::_build_context()` and `reviewer_agent
+    .py`'s inline join are both replaced with calls into the shared
+    module - proves the dedup is real on two already-live code paths, not
+    just a new unused module.
+  - **User-visible behavior:** none - byte-for-byte the same assembled
+    context strings as before.
+  - **Failure modes:** N/A - pure string assembly.
+  - **Out of scope:** metadata enrichment, history formatting (see
+    above); genai-rag's own decomposition step (separate, still open).
+  - **Open questions:** none.
+
+  **Verified:** both wired call sites produce byte-for-byte the same
+  output as before - confirmed live for genai-rag (re-ran the 401k golden
+  question through `pipeline.answer_query()`, same cited answer as every
+  prior live check this session). 2 new unit tests on the module itself.
+  Full default suite: 256 passed (254 + 2 new).
+
+- [x] **Phase 73 (2026-10-04) — User-directed: golden dataset gets a
+  `call_type` column (`agent_call`/`llm_call`), plus a free, default-suite
+  test that confirms genai-rag's routing actually matches it per case -
+  the "CI-wired eval gate" for routing correctness.**
+
+  **Spec:**
+  - **Context:** genai-rag's `pipeline.answer_query()` already has a real
+    deterministic bypass (`try_route_to_mcp()`, Phase 49) - a query
+    matching leave-balance/leave-history keywords skips retrieval and
+    generation entirely, `model_used` comes back as `"mcp:<tool>"`. No
+    golden case exercises it: confirmed by grep, none of the 25 existing
+    queries contain any of `LEAVE_BALANCE_KEYWORDS`/
+    `LEAVE_HISTORY_KEYWORDS`, and the one existing eval adapter
+    (`ask_genai_rag()`) never even passes an `employee_id` (required for
+    the bypass to trigger at all).
+  - **Dataset change:** every case in `golden_dataset.json` gets a new
+    `call_type` field - `"llm_call"` for all 25 existing cases (verified,
+    not assumed, that none match the MCP keyword lists), plus one new
+    case, `agent-call-leave-balance-01` (category `happy`, `call_type`
+    `"agent_call"`, query using the real `"leave balance"` keyword
+    phrase) - `expected_source_document`/`expected_answer` are `null`
+    for this one, since a live MCP balance isn't a fixed gradable value;
+    its whole purpose is exercising the bypass, not answer-quality
+    scoring.
+  - **New test, default suite (not `@pytest.mark.eval`), zero cost:**
+    `test_routing_type_golden_cases.py` - fakes only the MCP network call
+    (`mcp_tools.get_leave_balance`, matching this project's existing
+    no-real-network-call test convention), then runs the real,
+    unfaked keyword-matching logic. Two checks: every `agent_call` case
+    produces `model_used` starting with `"mcp:"` (confirms the bypass
+    really fires); every `llm_call` case's query does NOT match
+    `is_leave_balance_query()`/`is_leave_history_query()` (confirms none
+    of them would *accidentally* bypass - pure string-matching, no LLM
+    call needed for this half either). This is the real, run-every-time
+    gate the earlier "CI-wired eval gate" gap named - not a build of
+    `get_release_decision()` into CI (still separate, still not done).
+  - **User-visible behavior:** none - data/test only.
+  - **Failure modes:** N/A.
+  - **Out of scope:** wiring `get_release_decision()`'s pass/review/block
+    verdict into actual CI; adding `call_type` to the NFR dataset (a
+    different file, different purpose).
+  - **Open questions:** none.
+
+  **Verified:** every case's `call_type` was set programmatically against
+  the real `is_leave_balance_query()`/`is_leave_history_query()`
+  functions, not guessed - confirmed exactly one pre-existing case
+  (`multi-agent-cross-domain-01`) already matched, due to containing the
+  literal phrase "leave balance"; noted in its own `notes` field as a
+  real, flagged (not fixed) limitation of keyword-only bypass routing on
+  compound questions - run through genai-rag directly, that query would
+  lose its KB half entirely to the MCP bypass. One new dedicated case
+  (`agent-call-leave-balance-01`) added for a clean routing-only check.
+  **Correction made before finishing, not after:** the test was first
+  written assuming it would be free; live-checked the guardrails config
+  (`config.yml`) and found `check_input()` itself calls NeMo's "self
+  check input" rail, a real LLM call - fixed by faking `pipeline
+  .check_input` too, so the test genuinely costs nothing, not just
+  mostly nothing. Runs in 3.43s standalone. Full default suite: 258
+  passed (256 + 2 new).
+
+- [x] **Phase 74 (2026-10-04) — User-directed, prioritized: contract/
+  schema regression testing and chaos/failure-injection testing. General
+  "regression testing" is addressed by naming what already serves that
+  role, not a third parallel test suite.**
+
+  **Spec:**
+  - **"Regression testing," scoped:** the existing 254-test default suite
+    already *is* this project's regression suite in the standard sense -
+    it reruns on every change and catches logic regressions. Building a
+    separate, generically-named "regression tests" bucket next to it
+    would duplicate that job under a new label, not add real coverage.
+    What was actually missing is the two specific kinds named below -
+    this phase builds those, not a third bucket.
+  - **Contract/schema regression testing (new):** the unit/route tests
+    already catch a response *value* being wrong; nothing catches a
+    response *shape* silently drifting (a field quietly renamed or
+    retyped still passes every existing test if nothing asserts the
+    exact shape). New `tests/hrb_chatbot/contract_snapshots/` - one
+    committed JSON file per locked model (`RagQueryResponse.json`,
+    `AgenticRagResponse.json`, `MultiAgenticRagResponse.json` - the 3
+    query-response contracts, not every model in `models/` -
+    ingestion/document models are a flagged follow-up, not bundled in),
+    each holding that Pydantic model's own `model_json_schema()` output.
+    New `test_response_schema_contracts.py` compares each model's live
+    schema against its committed file and fails on any difference - a
+    deliberate contract change updates the committed file in the same
+    PR, not silently. **No new library** - `syrupy` is present in this
+    environment only as some other package's transitive dependency
+    (confirmed via grep - not in `requirements-dev.txt`), not something
+    to build on without the explicit review this project's own
+    conventions require; plain `model_json_schema()` + a committed JSON
+    file needs nothing new.
+  - **Chaos/failure-injection testing (new):** `agentic_tools.py` and the
+    domain agents already catch real failures defensively (an MCP/Tavily/
+    retrieval exception already becomes an `"Error: ..."` string, not a
+    crash) - confirmed live by accident during Phase 64/67/70's own
+    testing (MCP genuinely down locally) but never exercised by a
+    deliberate, repeatable test. New tests, each faking one specific
+    failure: `search_knowledge_base()` when `retrieve_chunks()` raises
+    (gap - no test covered this exact path before); `get_leave_balance_tool
+    ()` when the MCP call raises (existing coverage was history-only, not
+    balance); and the real new case - `multi_agent_pipeline
+    .run_multi_agent()` with one domain agent's result forced to an
+    error string, confirming the *other* dispatched agents' real results
+    still reach the Reviewer and the final answer stays coherent, not
+    that the whole graph fails closed.
+  - **User-visible behavior:** none - test-only.
+  - **Failure modes:** N/A.
+  - **Out of scope:** load/performance testing (separate, bigger,
+    unaddressed by this phase); locking ingestion/document model schemas
+    (flagged above).
+  - **Open questions:** none.
+
+  **Verified:** proved the schema-contract test actually catches drift,
+  not just passes trivially - deliberately tampered one committed
+  snapshot's `title` field, reran, confirmed a real failure with a clear
+  diff, then restored the real snapshot and reran green. The "domain
+  agent fails" chaos test confirms both directions: an agent returning
+  its own `"Error: ..."` string (the documented, intended failure mode)
+  lets the other agent's real result and the Reviewer's merge proceed
+  normally; a domain agent raising outright (breaking its own never-raise
+  contract) propagates as a real exception rather than being silently
+  swallowed - confirmed both paths, not just the happy one. Full default
+  suite: 265 passed (258 + 7 new - 3 contract tests, 2 agentic_tools
+  failure-path tests, 2 graph-level chaos tests). Full eval suite
+  re-confirmed green after this phase too (6 passed) - nothing in this
+  phase touched runtime behavior, only added tests. `bandit -ll`: 0
+  findings at any severity.
+
+- [x] **Phase 75 (2026-10-04) — User-directed: multi-modal RAG ingestion,
+  scoped to table extraction only (user's explicit choice between 3
+  options) - make table chunking a structural guarantee, not a size
+  heuristic. Scaffolding for future documents, not a response to a
+  problem in the 6 current KB PDFs (also the user's explicit choice).**
+
+  **Spec:**
+  - **Context:** user was offered 3 scope levels for "multi-modal RAG
+    ingestion" (table extraction only / add OCR for scanned pages / full
+    vision-model pipeline matching the target-state diagram) and picked
+    the smallest - no new library, no vision model, no cost. Confirmed
+    before scoping this: `extract_tables_from_pdf()` (pdfplumber,
+    existing) already runs on every ingested PDF via `extract_text_from_pdf
+    ()` - tables aren't unextracted, they're appended as `[TABLE]...
+    [/TABLE]` markdown blocks after all page text, already indexed today.
+    Also confirmed table extraction output is never used anywhere else
+    (no table-specific retrieval/filtering) - this phase doesn't touch
+    retrieval, only how an already-extracted table survives chunking.
+  - **Real defect found, not assumed:** chunking today has no awareness of
+    `[TABLE]` markers - `decide_chunk_size()`'s only defense is inflating
+    the chunk_size for the *entire document* to be at least as large as
+    the single largest table, a heuristic that happens to work on all 6
+    current KB PDFs (verified live - 0 broken/split tables found across
+    every PDF that has one) but isn't a structural guarantee: a future
+    document with an unusually large or irregularly-placed table could
+    still have the splitter cut `[TABLE]...[/TABLE]` across two chunks,
+    corrupting it (e.g. a header row stranded from its data rows). The
+    global inflation also unnecessarily enlarges every other chunk in a
+    document just because of one big table, hurting retrieval precision
+    for everything that isn't the table.
+  - **Fix:** `text_chunker.py` gets a new `_split_out_tables(text) ->
+    (text_without_tables, table_blocks)` helper. `decide_chunking_strategy()`
+    and `decide_chunk_size()` both run against the table-free text now -
+    table markdown no longer influences either decision.
+    `decide_chunk_size()`'s table-inflation branch is removed entirely,
+    not just bypassed - it has no remaining purpose once tables are
+    structurally pulled out before any size-based splitting happens.
+    `chunk_text()` splits only the table-free prose through the chosen
+    strategy, then appends each table block as its own whole chunk,
+    unconditionally, regardless of size - a table can no longer be cut,
+    full stop, not "usually isn't." A document with no tables behaves
+    exactly as before (empty `table_blocks` list, no-op).
+  - **Deliberate behavior change, flagged:** a short document (strategy
+    `"none"`, previously one single chunk with its table's text baked in)
+    now produces one prose chunk plus one chunk per table, when it has
+    any - more chunks than before for that one case, but each one
+    structurally intact rather than one chunk that happened to work by
+    luck.
+  - **User-visible behavior:** ingestion responses may report a different
+    `chunks_indexed` count for documents containing tables (now table-
+    aware, not table-size-inflated) - the underlying indexed content is
+    the same text, reorganized into safer chunk boundaries.
+  - **Failure modes:** none new - `_split_out_tables()` is pure regex/string
+    work, same `TABLE_BLOCK_PATTERN` already in the file.
+  - **Out of scope (per the user's own explicit scope choice):** OCR for
+    scanned/image pages, any vision model, image/scan handling, S3 object
+    storage (still design-only per `docs/agent-reference/S3-ASYNC-UPLOAD-DESIGN.md`) -
+    none of this phase.
+  - **Open questions:** none.
+
+  **Verified:** empirically re-confirmed on all 4 current KB PDFs that
+  have tables - every table now maps to exactly one chunk (table_chunks
+  count equals the number of tables `extract_tables_from_pdf()` found, for
+  all 4), zero broken/split chunks, same as before this phase (the
+  heuristic already worked on today's documents) but now a structural
+  guarantee rather than luck. 22 unit tests pass (18 unchanged + 4 new/
+  rewritten, replacing the 3 tests for the removed table-size-inflation
+  behavior). Live, real end-to-end re-ingestion (not just unit tests) -
+  deleted and fresh-uploaded the 401k PDF through the real `POST
+  /v1/genai-rag/ingest-document/documents` endpoint: chunk count changed
+  from 38 (old, inflated chunk_size) to 41 (new, table-aware) with 3 of
+  those being exactly the document's 3 real tables; pulled one table
+  chunk's actual content and confirmed it's a clean, complete markdown
+  table (`| Age Category | 2025 Annual Limit |` header through every data
+  row, both markers present); re-ran the 401k golden question through the
+  real query endpoint afterward and got the same correct, grounded answer
+  as every prior live check this session. Full default suite: 265 passed
+  (same count - 4 old tests replaced by 4 new ones, not added on top).
+  `bandit -ll`: 0 findings at any severity.
 
 ## Verification checklist (Phases 1-3)
 

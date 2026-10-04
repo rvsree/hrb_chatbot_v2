@@ -1,0 +1,147 @@
+{
+  "$defs": {
+    "AnswerInfo": {
+      "properties": {
+        "answer": {
+          "description": "The generated, grounded answer.",
+          "title": "Answer",
+          "type": "string"
+        },
+        "model_used": {
+          "description": "Which chat model actually generated this answer.",
+          "title": "Model Used",
+          "type": "string"
+        }
+      },
+      "required": [
+        "answer",
+        "model_used"
+      ],
+      "title": "AnswerInfo",
+      "type": "object"
+    },
+    "RetrievalInfo": {
+      "properties": {
+        "applied_filter": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The metadata filter Self-Query actually parsed out of the question, if any.",
+          "title": "Applied Filter"
+        },
+        "search_strategy": {
+          "description": "Which retrieval technique actually ran: 'similarity' or 'mmr'.",
+          "title": "Search Strategy",
+          "type": "string"
+        },
+        "sources": {
+          "description": "The chunks the answer was actually grounded in.",
+          "items": {
+            "$ref": "#/$defs/RetrievedChunk"
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "vector_db": {
+          "description": "Which vector store this query actually ran against.",
+          "title": "Vector Db",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vector_db",
+        "search_strategy",
+        "sources"
+      ],
+      "title": "RetrievalInfo",
+      "type": "object"
+    },
+    "RetrievedChunk": {
+      "description": "One chunk the retrieval step considered relevant to the query.",
+      "properties": {
+        "chunk_index": {
+          "description": "This chunk's position within that document.",
+          "title": "Chunk Index",
+          "type": "integer"
+        },
+        "document_id": {
+          "description": "Which uploaded document this chunk came from.",
+          "title": "Document Id",
+          "type": "string"
+        },
+        "filename": {
+          "description": "That document's original filename.",
+          "title": "Filename",
+          "type": "string"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The vector store's own similarity score, null for MMR results.",
+          "title": "Score"
+        },
+        "text": {
+          "description": "The chunk's text, as stored at index time.",
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "document_id",
+        "filename",
+        "chunk_index",
+        "text"
+      ],
+      "title": "RetrievedChunk",
+      "type": "object"
+    }
+  },
+  "description": "What POST /query returns.",
+  "properties": {
+    "answer_info": {
+      "$ref": "#/$defs/AnswerInfo"
+    },
+    "conversation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Echoed/generated when enable_conversation_memory was true - pass it back on the next call to continue this conversation. Null when memory wasn't enabled.",
+      "title": "Conversation Id"
+    },
+    "query": {
+      "description": "The question that was asked.",
+      "title": "Query",
+      "type": "string"
+    },
+    "retrieval_info": {
+      "$ref": "#/$defs/RetrievalInfo"
+    }
+  },
+  "required": [
+    "query",
+    "answer_info",
+    "retrieval_info"
+  ],
+  "title": "RagQueryResponse",
+  "type": "object"
+}

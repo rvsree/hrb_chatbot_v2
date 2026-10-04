@@ -11,8 +11,10 @@
       "disability.pdf": "JPMC Sedgwick Unpaid Timeoff.pdf"
     },
     "generated": "2026-09-08",
-    "case_count": 23,
-    "_case_count_corrected_2026_09_21": "was 22, file actually has 23 cases - fixed, not just the number: category breakdown is 18 happy, 1 happy_multi_document, 2 unhappy_out_of_scope, 1 unhappy_unanswerable, 1 unhappy_adversarial"
+    "case_count": 26,
+    "_case_count_corrected_2026_09_21": "was 22, file actually has 23 cases - fixed, not just the number: category breakdown is 18 happy, 1 happy_multi_document, 2 unhappy_out_of_scope, 1 unhappy_unanswerable, 1 unhappy_adversarial",
+    "_multi_agent_cases_added_2026_10_04": "Phase 67 - 2 new cases for multi-agentic-rag (not genai-rag): happy_multi_topic_single_domain (same-domain compound, tests Planner splitting within vector_kb_agent) and happy_multi_domain_agent (cross-domain, KB + live leave-balance data). Both also checked by a dedicated live multi-agent test, not just this file's own exact-match scoring - see each case's own notes field.",
+    "_call_type_added_2026_10_04": "Phase 73 - every case now carries call_type (\"agent_call\" or \"llm_call\"), reflecting whether genai-rag's own try_route_to_mcp() bypass (Phase 49) would fire for that query's text, verified programmatically against the real is_leave_balance_query()/is_leave_history_query() functions, not eyeballed. Checked by tests/hrb_chatbot/ai/rag_pipeline/evaluations/test_routing_type_golden_cases.py, which runs in the default suite (not -m eval) since confirming the bypass needs no LLM call."
   },
   "cases": [
     {
@@ -26,7 +28,8 @@
         "dollar-for-dollar",
         "5%",
         "one year of service"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "401k-02",
@@ -39,7 +42,8 @@
         "auto-escalation",
         "1% each year",
         "10%"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "401k-03",
@@ -51,7 +55,8 @@
         "100% immediately vested",
         "no waiting period",
         "no forfeiture"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "healthcare-01",
@@ -63,7 +68,8 @@
         "26",
         "end of the calendar year",
         "disabled dependent"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "healthcare-02",
@@ -76,7 +82,8 @@
         "Cigna",
         "UnitedHealthcare",
         "Centivo"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "healthcare-03",
@@ -88,7 +95,8 @@
         "30 days",
         "retroactive",
         "date of birth"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "tuition-01",
@@ -100,7 +108,8 @@
         "$7,500",
         "per year",
         "master's"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "tuition-02",
@@ -112,7 +121,8 @@
         "no service commitment",
         "no repayment",
         "resigns or is terminated"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "tuition-03",
@@ -125,7 +135,8 @@
         "Section 127",
         "tax-free",
         "taxable"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "paid_leave-01",
@@ -137,7 +148,8 @@
         "16 weeks",
         "gender-neutral",
         "100% of base salary"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "paid_leave-02",
@@ -150,7 +162,8 @@
         "80 hours",
         "does not carry over",
         "no payout"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "paid_leave-03",
@@ -163,7 +176,8 @@
         "spouse",
         "five consecutive workdays",
         "sibling"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "unpaid_leave-01",
@@ -176,7 +190,8 @@
         "12 months",
         "1,250 hours",
         "50 employees within 75 miles"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "unpaid_leave-02",
@@ -189,7 +204,8 @@
         "4 weeks",
         "job-protected",
         "discretionary"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "unpaid_leave-03",
@@ -202,7 +218,8 @@
         "physical therapy",
         "medical certification",
         "not available for birth/adoption bonding"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "disability-01",
@@ -214,7 +231,8 @@
         "14-calendar-day",
         "elimination period",
         "sick time"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "disability-02",
@@ -228,7 +246,8 @@
         "100%",
         "16 weeks",
         "60%"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "disability-03",
@@ -241,7 +260,8 @@
         "SSDI",
         "dollar-for-dollar",
         "offset"
-      ]
+      ],
+      "call_type": "llm_call"
     },
     {
       "id": "cross-doc-01",
@@ -256,7 +276,8 @@
         "Personal Leave",
         "not covered by other policies"
       ],
-      "notes": "Tests whether retrieval pulls from both unpaid_leave.pdf and disability.pdf and synthesizes correctly, since the two documents cross-reference each other's policies."
+      "notes": "Tests whether retrieval pulls from both unpaid_leave.pdf and disability.pdf and synthesizes correctly, since the two documents cross-reference each other's policies.",
+      "call_type": "llm_call"
     },
     {
       "id": "edge-out-of-scope-01",
@@ -265,7 +286,8 @@
       "expected_source_document": null,
       "expected_answer": null,
       "expected_keywords": [],
-      "notes": "Not answerable from the knowledge base at all. A grounded system should decline or say it doesn't have this information - NOT fabricate a weather report. Fail condition: any confident-sounding answer with a temperature or forecast."
+      "notes": "Not answerable from the knowledge base at all. A grounded system should decline or say it doesn't have this information - NOT fabricate a weather report. Fail condition: any confident-sounding answer with a temperature or forecast.",
+      "call_type": "llm_call"
     },
     {
       "id": "edge-out-of-scope-02",
@@ -274,7 +296,8 @@
       "expected_source_document": null,
       "expected_answer": null,
       "expected_keywords": [],
-      "notes": "Plausible-sounding but entirely outside the HR benefits knowledge base (financial/investor content, not a benefits policy). Should decline, not hallucinate a number - this is the classic case that separates a grounded RAG system from a bare LLM."
+      "notes": "Plausible-sounding but entirely outside the HR benefits knowledge base (financial/investor content, not a benefits policy). Should decline, not hallucinate a number - this is the classic case that separates a grounded RAG system from a bare LLM.",
+      "call_type": "llm_call"
     },
     {
       "id": "edge-unanswerable-specific-01",
@@ -283,7 +306,8 @@
       "expected_source_document": "healthcare.pdf",
       "expected_answer": null,
       "expected_keywords": [],
-      "notes": "The real document explicitly says the wellness incentive amount is 'determined annually' without stating a dollar figure - this is a real gap in the source document itself, not a retrieval failure. A grounded answer should say the specific amount isn't stated in this policy rather than inventing a number. Good test of whether the system distinguishes 'not in my sources' from 'not in this specific chunk.'"
+      "notes": "The real document explicitly says the wellness incentive amount is 'determined annually' without stating a dollar figure - this is a real gap in the source document itself, not a retrieval failure. A grounded answer should say the specific amount isn't stated in this policy rather than inventing a number. Good test of whether the system distinguishes 'not in my sources' from 'not in this specific chunk.'",
+      "call_type": "llm_call"
     },
     {
       "id": "edge-adversarial-numeric-01",
@@ -294,7 +318,45 @@
       "expected_keywords": [
         "16 weeks"
       ],
-      "notes": "A leading/false-premise question. Tests whether the model echoes the user's incorrect number (a common failure mode) instead of grounding strictly in retrieved text. The real answer is 16, and the 20-day figure in the KB belongs to a DIFFERENT benefit (bereavement leave for immediate family), which is a plausible source of confusion worth specifically testing."
+      "notes": "A leading/false-premise question. Tests whether the model echoes the user's incorrect number (a common failure mode) instead of grounding strictly in retrieved text. The real answer is 16, and the 20-day figure in the KB belongs to a DIFFERENT benefit (bereavement leave for immediate family), which is a plausible source of confusion worth specifically testing.",
+      "call_type": "llm_call"
+    },
+    {
+      "id": "multi-agent-same-domain-01",
+      "category": "happy_multi_topic_single_domain",
+      "query": "What is the JPMorgan Chase 401(k) match percentage, and how much tuition assistance is available per year for a master's degree in the Guild catalog?",
+      "expected_source_document": "401k.pdf",
+      "expected_answer": "JPMorgan Chase matches 100% of employee contributions (dollar-for-dollar) up to 5% of Eligible Compensation. Separately, tuition assistance covers up to $7,500 per year for master's degree programs in the Guild catalog.",
+      "expected_keywords": [
+        "100%",
+        "5%",
+        "$7,500"
+      ],
+      "notes": "Phase 67 (multi-agentic-rag) - one question spanning two different KB documents/topics (401k.pdf + tuition.pdf, both already covered individually by 401k-01/tuition-01). expected_source_document names only the first topic (401k.pdf) because score_case()'s retrieval metrics compare against a single id, not a list - this case's real purpose is testing whether the Planner splits a same-domain compound question into two focused vector_kb_agent tasks (or covers both well in one), which is checked directly by tests/hrb_chatbot/ai/agents/workflow_agents/test_multi_agent_pipeline_golden_cases.py, not by this file's own exact-match scoring.",
+      "call_type": "llm_call"
+    },
+    {
+      "id": "multi-agent-cross-domain-01",
+      "category": "happy_multi_domain_agent",
+      "query": "What is the JPMorgan Chase parental leave policy, and what is my current leave balance?",
+      "expected_source_document": "paid_leave.pdf",
+      "expected_answer": "JPMorgan Chase provides 16 weeks of fully paid parental leave to all eligible employees for the birth, adoption, or surrogacy placement of a child.",
+      "expected_keywords": [
+        "16 weeks",
+        "paid"
+      ],
+      "notes": "Phase 67 (multi-agentic-rag) - one KB question (gradeable) + one live-data question (the caller's own leave balance, via lms_ops_agent/MCP - not stable/known ahead of time, so not reduced to a fixed expected value). expected_answer/expected_keywords cover only the KB half; this case is scored by this file's harness for that half only. The live-balance half is checked for routing/coherence (did the Planner dispatch both agents, did the Reviewer produce one answer covering both) by tests/hrb_chatbot/ai/agents/workflow_agents/test_multi_agent_pipeline_golden_cases.py, not by exact-match scoring here. Phase 73 finding: this query's text also matches genai-rag's own try_route_to_mcp() keyword bypass ('leave balance') - if run through genai-rag's pipeline.answer_query() directly (not multi-agentic-rag), the whole compound question would be hijacked to the MCP-only answer, losing the parental-leave-policy half entirely. Flagged, not fixed - a real limitation of keyword-only bypass routing on compound questions.",
+      "call_type": "agent_call"
+    },
+    {
+      "id": "agent-call-leave-balance-01",
+      "category": "happy",
+      "call_type": "agent_call",
+      "query": "What is my current leave balance?",
+      "expected_source_document": null,
+      "expected_answer": null,
+      "expected_keywords": [],
+      "notes": "Phase 73 - dedicated case for the routing-type check (test_routing_type_golden_cases.py), not for answer-quality scoring. Exercises genai-rag's try_route_to_mcp() deterministic bypass (Phase 49) - a real MCP call, not retrieval+generation, so no fixed expected_answer/expected_source_document is meaningful here."
     }
   ]
 }

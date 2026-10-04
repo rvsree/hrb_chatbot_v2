@@ -11,6 +11,7 @@ class FakeResponse:
     def __init__(self, content="", tool_calls=None):
         self.content = content
         self.tool_calls = tool_calls or []
+        self.usage_metadata = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
 
 
 class FakeBoundLlm:

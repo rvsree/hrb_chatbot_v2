@@ -2,6 +2,7 @@
 
 import json
 
+from src.hrb_chatbot.ai.prompts.extraction_prompts import DOCUMENT_METADATA_EXTRACTION_PROMPT
 from src.hrb_chatbot.common.clients.llm_client.client_gateway import get_client_gateway
 from src.hrb_chatbot.common.config.settings import read_setting
 from src.hrb_chatbot.common.logging.logger import get_logger
@@ -28,29 +29,9 @@ EMPTY_RESULT = {
     "doc_version": None,
 }
 
-EXTRACTION_QUESTION = (
-    "Read the document text above and answer with ONLY a JSON object, no other "
-    "text, in exactly this shape:\n"
-    '{"owner": "<person or role who owns this document, or null>", '
-    '"department": "<department/team, or null>", '
-    '"doc_category": "<one of: policy, regulatory, investment, benefits, other>", '
-    '"purpose": "<one sentence describing the document\'s scope/purpose, or null>", '
-    '"doc_description": "<the specific topic this document covers, in the '
-    "document's own terms, e.g. '401k', 'health benefits', 'leave policy' - "
-    'not a fixed list, or null>", '
-    '"effective_date": "<when the document says it takes effect, in its own '
-    'words, or null>", '
-    '"audience": "<which employee group this document applies to, or null>", '
-    '"confidentiality_level": "<the document\'s own stated sensitivity, e.g. '
-    '\'Internal\'/\'Confidential\', or null>", '
-    '"author": "<the person or organization credited as the document\'s '
-    'author, or null>", '
-    '"doc_date": "<the document\'s own stated creation/publish date, '
-    "distinct from effective_date, or null>\", "
-    '"doc_version": "<the document\'s own stated version, e.g. \'1.0\', '
-    'or null>"}\n'
-    "Use null (not a guess) for any field the text doesn't actually support."
-)
+# Prompt text now lives in ai/prompts/extraction_prompts.py (Phase 63) - kept as
+# a local alias so nothing else in this file has to change.
+EXTRACTION_QUESTION = DOCUMENT_METADATA_EXTRACTION_PROMPT
 
 
 def extract_document_metadata(text: str) -> dict:

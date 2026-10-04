@@ -1,0 +1,100 @@
+{
+  "$defs": {
+    "AgentTaskInfo": {
+      "properties": {
+        "agent": {
+          "description": "Which sub-agent handled this task.",
+          "title": "Agent",
+          "type": "string"
+        },
+        "focus": {
+          "description": "What the router asked this sub-agent to do.",
+          "title": "Focus",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent",
+        "focus"
+      ],
+      "title": "AgentTaskInfo",
+      "type": "object"
+    },
+    "ToolCallInfo": {
+      "properties": {
+        "tool_input": {
+          "description": "What the agent passed to it.",
+          "title": "Tool Input",
+          "type": "string"
+        },
+        "tool_name": {
+          "description": "Which tool the agent called.",
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_name",
+        "tool_input"
+      ],
+      "title": "ToolCallInfo",
+      "type": "object"
+    }
+  },
+  "description": "What POST /query returns.",
+  "properties": {
+    "answer": {
+      "description": "The final, synthesized answer.",
+      "title": "Answer",
+      "type": "string"
+    },
+    "conversation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Echoed/generated when enable_conversation_memory was true - pass it back on the next call to continue this conversation. Null when memory wasn't enabled.",
+      "title": "Conversation Id"
+    },
+    "iterations": {
+      "description": "Total reasoning rounds across every sub-agent.",
+      "title": "Iterations",
+      "type": "integer"
+    },
+    "query": {
+      "description": "The question that was asked.",
+      "title": "Query",
+      "type": "string"
+    },
+    "tasks": {
+      "description": "Which sub-agent(s) the router dispatched to, and why.",
+      "items": {
+        "$ref": "#/$defs/AgentTaskInfo"
+      },
+      "title": "Tasks",
+      "type": "array"
+    },
+    "tools_used": {
+      "description": "Every tool call any sub-agent made, in order, aggregated across all of them.",
+      "items": {
+        "$ref": "#/$defs/ToolCallInfo"
+      },
+      "title": "Tools Used",
+      "type": "array"
+    }
+  },
+  "required": [
+    "query",
+    "answer",
+    "tasks",
+    "tools_used",
+    "iterations"
+  ],
+  "title": "MultiAgenticRagResponse",
+  "type": "object"
+}

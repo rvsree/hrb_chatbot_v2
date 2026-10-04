@@ -41,47 +41,49 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans', -apple-system, sans-serif; padding-inline: 16px; padding-block: 24px 48px; }
   .display { font-family: 'Archivo', sans-serif; } .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
-  .wrap { max-width: 1360px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+  .wrap { max-width: 1680px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
 
   .titlebar { background: var(--header-bg); color: var(--header-text); border-radius: 14px; padding: 18px 24px; box-shadow: var(--shadow); }
   .titlebar h1 { margin: 0 0 4px; font-family: 'Archivo', sans-serif; font-weight: 900; font-size: clamp(20px, 3vw, 26px); }
-  .titlebar p { margin: 0; font-size: 12.5px; opacity: 0.82; max-width: 90ch; line-height: 1.5; }
+  .titlebar p { margin: 0; font-size: 12.5px; opacity: 0.82; max-width: 100ch; line-height: 1.5; }
 
   .legend { display: flex; flex-wrap: wrap; gap: 10px; }
   .legend-item { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-muted); background: var(--page); border: 1px solid var(--border); padding: 5px 10px 5px 8px; border-radius: 999px; }
   .swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; }
   .swatch.done { background: var(--done-bg); border: 1px solid var(--done-border); }
   .swatch.wf { background: var(--wf-bg); border: 1px solid var(--wf-border); }
+  .swatch.stub { background: var(--ctx-bg); border: 1px solid var(--ctx-border); }
   .swatch.tool { background: var(--tool-bg); }
   .swatch.future { background: var(--future-bg); border: 1px dashed var(--future-border); }
 
-  .lanes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; align-items: start; }
-  @media (max-width: 1100px) { .lanes { grid-template-columns: 1fr 1fr; } }
-  @media (max-width: 640px) { .lanes { grid-template-columns: 1fr; } }
+  .lanes { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; align-items: start; }
+  @media (max-width: 1500px) { .lanes { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 760px) { .lanes { grid-template-columns: 1fr; } }
 
-  .lane { border: 2px dashed var(--lane-border); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 10px; background: var(--page); min-height: 100%; }
-  .lane-title { font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 14.5px; }
-  .sublane { border: 1.5px dashed var(--lane-border); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
-  .sublane-title { font-family: 'Archivo', sans-serif; font-weight: 700; font-size: 12px; color: var(--text-muted); }
+  .lane { border: 2px dashed var(--lane-border); border-radius: 14px; padding: 13px; display: flex; flex-direction: column; gap: 9px; background: var(--page); min-height: 100%; }
+  .lane-title { font-family: 'Archivo', sans-serif; font-weight: 800; font-size: 14px; }
+  .sublane { border: 1.5px dashed var(--lane-border); border-radius: 10px; padding: 9px; display: flex; flex-direction: column; gap: 7px; margin-top: 3px; }
+  .sublane-title { font-family: 'Archivo', sans-serif; font-weight: 700; font-size: 11.5px; color: var(--text-muted); }
 
-  .box { border-radius: 9px; padding: 9px 11px; font-size: 12px; font-weight: 600; line-height: 1.35; box-shadow: var(--shadow); }
-  .box .b-sub { display: block; font-weight: 500; font-size: 10.5px; margin-top: 3px; opacity: 0.85; }
-  .box .b-mono { display: block; font-family: 'IBM Plex Mono', monospace; font-weight: 500; font-size: 9.5px; margin-top: 3px; opacity: 0.75; }
+  .box { border-radius: 9px; padding: 8px 10px; font-size: 11.5px; font-weight: 600; line-height: 1.35; box-shadow: var(--shadow); }
+  .box .b-sub { display: block; font-weight: 500; font-size: 10px; margin-top: 3px; opacity: 0.85; }
+  .box .b-mono { display: block; font-family: 'IBM Plex Mono', monospace; font-weight: 500; font-size: 9px; margin-top: 3px; opacity: 0.75; }
   .box.done { background: var(--done-bg); border: 1px solid var(--done-border); color: var(--done-text); }
   .box.wf { background: var(--wf-bg); border: 1px solid var(--wf-border); color: var(--wf-text); }
   .box.tool { background: var(--tool-bg); color: var(--tool-text); }
   .box.ctx { background: var(--ctx-bg); border: 1px solid var(--ctx-border); color: var(--ctx-text); }
+  .box.stub { background: var(--ctx-bg); border: 1.5px dashed var(--ctx-border); color: var(--ctx-text); }
   .box.future { background: var(--future-bg); border: 1.5px dashed var(--future-border); color: var(--future-text); }
 
   .tool-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  .tool-grid .box { font-size: 10.5px; padding: 7px 8px; text-align: center; }
+  .tool-grid .box { font-size: 10px; padding: 6px 7px; text-align: center; }
 
-  .arrow-row { display: flex; align-items: center; justify-content: center; color: var(--text-faint); }
-  .arrow-row svg { width: 20px; height: 20px; }
+  .llmbadge { display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 8px; font-weight: 700; letter-spacing: 0.03em; padding: 1px 6px; border-radius: 999px; margin-left: 5px; vertical-align: middle; text-transform: uppercase; }
+  .llmbadge.react { background: #2a1660; color: #e8e0ff; }
+  .llmbadge.llmcall { background: #1c3f8f; color: #dbe6fb; }
+  .llmbadge.embed { background: #0d6e5c; color: #d4f5ed; }
 
-  .stores-row { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
-
-  .callout { display: flex; align-items: flex-start; gap: 8px; font-size: 11.5px; border-radius: 9px; padding: 9px 11px; line-height: 1.5; background: var(--future-bg); border: 1px solid var(--future-border); color: var(--text-muted); }
+  .callout { display: flex; align-items: flex-start; gap: 8px; font-size: 11px; border-radius: 9px; padding: 9px 11px; line-height: 1.5; background: var(--future-bg); border: 1px solid var(--future-border); color: var(--text-muted); }
   .callout svg { flex: none; width: 14px; height: 14px; margin-top: 1px; color: var(--text-faint); }
 
   footer { border-top: 1px solid var(--border); padding-top: 14px; font-size: 12px; color: var(--text-faint); line-height: 1.6; }
@@ -91,90 +93,109 @@
 
   <div class="titlebar">
     <h1 class="display">HRB Chatbot V2: RAG Pipeline Architecture — Current State</h1>
-    <p>Same 5-lane skeleton as the target-state diagram (Client → Edge → API → Workflow → Agents), filled in with what's actually built and verified live as of 2026-09-23, not the target. Solid boxes are real; dashed/gray boxes are the target-state future scope, kept visible so the gap is honest, not hidden.</p>
+    <p>Same 6-column skeleton as your target-state reference (Client &rarr; Edge &rarr; API Layer/Preprocessing &rarr; Workflow Agents &rarr; Domain Agents &rarr; Tools and Knowledgebase), filled in with what's actually built and verified live as of 2026-10-04. Solid boxes are real; dashed/gray boxes are target-state future scope, kept visible so the gap is honest, not hidden.</p>
   </div>
 
   <div class="legend">
     <span class="legend-item"><span class="swatch done"></span>Built &amp; live-verified</span>
     <span class="legend-item"><span class="swatch wf"></span>Built, LLM-involving step</span>
+    <span class="legend-item"><span class="swatch stub"></span>Scaffolded - real contract/route, logic stubbed</span>
     <span class="legend-item"><span class="swatch tool"></span>External tool/MCP server</span>
     <span class="legend-item"><span class="swatch future"></span>Future scope - target-state only, not built</span>
+  </div>
+  <div class="legend">
+    <span class="legend-item"><span class="llmbadge react">react</span>multi-step agent - calls tools in a loop</span>
+    <span class="legend-item"><span class="llmbadge llmcall">llm</span>one-shot model call - no loop</span>
+    <span class="legend-item"><span class="llmbadge embed">embed</span>embedding model - not a chat call</span>
+    <span class="legend-item">no badge = fully deterministic, no model involved</span>
   </div>
 
   <div class="lanes">
 
     <div class="lane">
-      <div class="lane-title display">Client Layer</div>
+      <div class="lane-title display">Client</div>
       <div class="box done">Postman / direct HTTP client<span class="b-sub">the only real client today</span></div>
-      <div class="box future">Chat Client (employee / HR staff)<span class="b-sub">no frontend exists yet</span></div>
+      <div class="box future">Chat Client (employee / HR staff)<span class="b-sub">no frontend exists yet; streaming not built</span></div>
+      <div class="box future">HR Specialist console<span class="b-sub">approvals/escalations/reviews - no HITL UI exists anywhere yet</span></div>
     </div>
 
     <div class="lane">
-      <div class="lane-title display">Edge Layer</div>
-      <div class="box done">Rate Limiting<span class="b-sub">in-memory, per-IP (not per-identity yet)</span><span class="b-mono">rate_limiting/rate_limiter.py</span></div>
+      <div class="lane-title display">Edge</div>
+      <div class="box future">WAF + DDoS protection<span class="b-sub">rate-based blocking - not built</span></div>
       <div class="box future">API Gateway (single entry)<span class="b-sub">no dedicated gateway tier - FastAPI is the entry point directly</span></div>
-      <div class="box future">DDoS Protection</div>
+      <div class="box done">Rate Limiting<span class="b-sub">in-memory, per-IP (not per-identity/per-key yet)</span><span class="b-mono">rate_limiting/rate_limiter.py</span></div>
 
       <div class="sublane">
-        <div class="sublane-title">Security Layer</div>
-        <div class="box done">Authorization (RBAC)<span class="b-sub">role check: employee/manager/hr_support</span><span class="b-mono">gateway/rbac.py :: check_role()</span></div>
+        <div class="sublane-title">Security (at the gateway)</div>
+        <div class="box done">Identity + Authorization (RBAC)<span class="b-sub">role check: employee/manager/hr_support - identity resolution collapsed into this same call (Phase 60)</span><span class="b-mono">gateway/rbac.py :: require_role()</span></div>
         <div class="box future">Authentication (real OAuth2, human-to-app)<span class="b-sub">designed, not built - today's identity is an unsigned JSON body (Phase 45)</span></div>
         <div class="box done">App-to-app OAuth2<span class="b-sub">client_credentials, live-verified (Phase 53)</span></div>
       </div>
     </div>
 
     <div class="lane">
-      <div class="lane-title display">API Layer</div>
+      <div class="lane-title display">API Layer &middot; Preprocessing</div>
       <div class="box done">Route match + schema validation<span class="b-mono">FastAPI + Pydantic v2</span></div>
-      <div class="box wf">Guardrails: Input (6-gate)<span class="b-sub">injection detection, PII masking/blocking</span><span class="b-mono">nemoguardrails + presidio</span></div>
-      <div class="box future">NLP / intent layer<span class="b-sub">today's "routing" is a keyword list, not NLU</span></div>
-      <div class="box future">Session + Memory<span class="b-sub">no conversation history stored anywhere yet</span></div>
-
-      <div class="box ctx">Context Builder<span class="b-sub">query + retrieved chunks, assembled inline in the LCEL chain - not a separate reusable step yet</span></div>
+      <div class="box wf">Input Guardrails<span class="llmbadge llmcall">llm</span><span class="b-sub">2 separate rails, not one mechanism: self-check-input IS an LLM call (asks the model to judge safety); mask-sensitive-data is Presidio, rule/NER-based, NOT an LLM call. "Six guards" grid like your reference - not built; this project's own "six-gate" name means something broader (see footer)</span><span class="b-mono">pre_processing/guardrails_input.py</span></div>
+      <div class="box done">Session + Memory<span class="b-sub">no model involved - plain read/write (load_history/save_turn), keyed by conversation_id (Phase 58), in-memory only</span><span class="b-mono">ai/pre_processing/conversation_memory.py</span></div>
+      <div class="box ctx">Context Builder<span class="b-sub">no model involved - deterministic string assembly (query + retrieved chunks into one prompt), inline in the LCEL chain today</span></div>
+      <div class="box future">Query Intent + Decomposition + Embedding<span class="llmbadge llmcall">llm</span><span class="llmbadge embed">embed</span><span class="b-sub">two different model calls, not one: intent/decomposition is a single structured LLM call (recommended - splitting a question doesn't need a tool-calling loop, so likely NOT a ReAct agent, open to confirm); embedding each sub-question is a separate, non-chat embedding-model call. Maps to Phase 5.1, still the next open roadmap phase - not built. Distinct from Workflow's Planner Agent below, which classifies for ROUTING, not splitting - open question: do these overlap? See footer.</span><span class="b-mono">pre_processing/query_decompose.py - 0 bytes today</span></div>
+      <div class="box future">Answer / Embedding Cache<span class="b-sub">no model involved - deterministic cache lookup. Tiered (exact + similar), from your latest target image - nothing cached anywhere in this project today, confirmed by direct search</span></div>
     </div>
 
     <div class="lane">
-      <div class="lane-title display">Workflow</div>
-      <div class="box wf">Keyword Routing (Phase 49)<span class="b-sub">rule-based, not LLM-routed - the honest stand-in for a Planner Agent</span><span class="b-mono">tools/mcp_tools/ :: try_route_to_mcp()</span></div>
-      <div class="box done">Retrieval<span class="b-sub">similarity / MMR / Multi-Query / Self-Query</span><span class="b-mono">query_retrieval/retriever.py</span></div>
-      <div class="box wf">Generation<span class="b-sub">LCEL stuff-chain, grounded answer</span><span class="b-mono">response_generator.py</span></div>
-      <div class="box wf">Guardrails: Output<span class="b-sub">validates before response returns - skipped on MCP-routed answers, deliberately (Phase 49)</span></div>
-      <div class="box future">Reviewer Agent (self-reflection, confidence)</div>
-      <div class="box future">Personalization Agent</div>
+      <div class="lane-title display">Workflow Agents</div>
+      <div class="box done">Keyword Routing (Phase 49)<span class="b-sub">no model involved - plain string matching. Today's honest stand-in for Planner Agent</span><span class="b-mono">tools/mcp_tools/ :: try_route_to_mcp()</span></div>
+      <div class="box future">Planner Agent<span class="llmbadge llmcall">llm</span><span class="b-sub">one-shot structured classification call, not a loop - classifies intent for ROUTING to domain agents. Not built, planned in multi-agentic-rag-fit-plan.html</span><span class="b-mono">orchestrator_router.py</span></div>
+      <div class="box future">Orchestration Agent<span class="b-sub">no model involved itself - plain asyncio.gather() fan-out. The LLM calls happen inside whichever domain agents it dispatches to. Name collision, unresolved: the real Phase 55 file below is also called this.</span></div>
+      <div class="box wf">Generation<span class="llmbadge llmcall">llm</span><span class="b-sub">LCEL stuff-chain, grounded answer - today's single-pass generation, not yet domain-agent-based</span><span class="b-mono">response_generator.py</span></div>
+      <div class="box wf">Output Guardrails<span class="llmbadge llmcall">llm</span><span class="b-sub">same split as Input Guardrails - self-check-output IS an LLM call, mask-sensitive-data is not. Skipped on MCP-routed answers, deliberately (Phase 49)</span></div>
+      <div class="box future">Reviewer Agent<span class="llmbadge llmcall">llm</span><span class="b-sub">conditional - 0/1 results: no model call at all, just pass-through or fallback. 2+ results: one merge LLM call. Evals scope still open (Option A/B, see fit-plan.html)</span><span class="b-mono">synthesizer.py</span></div>
+      <div class="box future">Personalization Agent<span class="llmbadge llmcall">llm</span><span class="b-sub">mini-LLM summaries per your reference image - writes STM/LTM async, not built</span></div>
     </div>
 
     <div class="lane">
-      <div class="lane-title display">Agents</div>
-      <div class="box done">Orchestration Agent (single-agentic-rag)<span class="b-sub">Phase 55, live - hand-written tool-calling loop, max 5 iterations</span><span class="b-mono">ai/agents/workflow_agents/orchestration_agent.py</span></div>
-      <div class="box future">Agent Registry<span class="b-sub">a different registry from Phase 50's MCP registry below - tracks agents, not tools</span></div>
-
+      <div class="lane-title display">Domain Agents</div>
+      <div class="box done">"Orchestration Agent" (single-agentic-rag, Phase 55)<span class="llmbadge react">react</span><span class="b-sub">live, confirmed - a real multi-step tool-calling loop, max 5 iterations, conversation-memory-aware. The only genuine ReAct agent in this project today. Functions as today's one real domain-agent-like component. Same name-collision note as Workflow's planned dispatcher, left column.</span><span class="b-mono">ai/agents/workflow_agents/orchestration_agent.py</span></div>
+      <div class="box stub">Multi-Agentic-RAG (Phase 61 scaffold)<span class="b-sub">real contract + route + RBAC, pipeline raises NotImplementedError by name - router/dispatch/synthesizer not built</span><span class="b-mono">api/multi_agentic_rag/query_agent.py</span></div>
+      <div class="box future">Agent Registry<span class="b-sub">different from the MCP registry below - tracks agents, not tools</span></div>
       <div class="box done" style="margin-top:2px;">MCP Gateway equivalent<span class="b-sub">discovery (Phase 50) + OAuth2 (Phase 53), live</span><span class="b-mono">common/observability/mcp_registry_startup.py</span></div>
-
       <div class="tool-grid">
         <div class="box done">SearchKnowledgeBase</div>
         <div class="box done">GetLeaveBalance</div>
         <div class="box done">GetLeaveHistory</div>
-        <div class="box future">(3 more MCP tools registered, not wired to any agent yet)</div>
+        <div class="box future">(3 more MCP tools registered, unwired)</div>
       </div>
-      <div class="box future" style="text-align:center; font-size:10.5px;">Full multi-agent system - PolicyQuery/Eligibility/Calculator/LeaveOps as SEPARATE specialized agents<span class="b-sub">target state only - single-agentic-rag is one agent, 3 tools, not this</span></div>
+      <div class="box future" style="font-size:10px;">Named per knowledgebase (your taxonomy, 2026-10-04):</div>
+      <div class="tool-grid">
+        <div class="box future">Vector KB Agent</div>
+        <div class="box future">LMS Ops Agent</div>
+        <div class="box future">SQL DB Agent</div>
+      </div>
+      <div class="box stub" style="text-align:center;">LMS Analytics Agent<span class="llmbadge llmcall">llm</span><span class="b-sub">NL2SQL - the one domain agent needing real LLM reasoning. Open: single-shot generation (question &rarr; SQL &rarr; execute) or a ReAct loop (retry on query error) - not decided, marked as a one-shot call for now, not a loop. Maps to Phase 52 (planned, not started). Needs 100+ historical records - see BACKLOG.md</span></div>
+      <div class="callout">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+        <span>A fifth agent, NoSQL Agent, was dropped 2026-10-04 - no backend, no use case yet. May return later.</span>
+      </div>
+    </div>
+
+    <div class="lane">
+      <div class="lane-title display">Tools and Knowledgebase</div>
+      <div class="box done">Vector Store<span class="b-sub">ChromaDB (active) / Pinecone (alt)</span></div>
+      <div class="box future">Web Search<span class="b-sub">Tavily - KB-miss fallback, not built</span></div>
+      <div class="box done">Postgres &mdash; hr_chatbot<span class="b-sub">shared DB: hrb_chatbot_v2_core (OAuth2), MCP registry, hrb_emp_lms (external, MCP-only)</span></div>
+      <div class="box tool">hrb_lms_mcp_v2<span class="b-sub">OAuth 2.0, 2 of 6 tools wired (get_leave_balance, get_leave_history)</span></div>
+      <div class="box future">Redis<span class="b-sub">your target image's answer/embedding cache store - no Redis anywhere in this project today</span></div>
+      <div class="callout">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+        <span>Document metadata (upload/index bookkeeping) isn't in this lane view - it's ingestion-side. See <span class="mono">docs/dev-reference/db-model-overview.html</span> for every schema this project touches.</span>
+      </div>
     </div>
 
   </div>
 
-  <div class="lanes" style="grid-template-columns: repeat(4, 1fr);">
-    <div class="box done">Vector Store<span class="b-sub">ChromaDB (active) / Pinecone (alt)</span></div>
-    <div class="box done">Postgres — hr_chatbot<span class="b-sub">shared DB: hrb_chatbot_v2_core (OAuth2), MCP registry, hrb_emp_lms (external, MCP-only)</span></div>
-    <div class="box future">Web Search<span class="b-sub">Tavily - KB miss fallback, not built</span></div>
-    <div class="box tool">hrb_lms_mcp_v2<span class="b-sub">OAuth 2.0, 2 of 6 tools wired (get_leave_balance, get_leave_history)</span></div>
-  </div>
-
-  <div class="callout">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
-    <span>Document metadata (upload/index bookkeeping) isn't in this lane view - it's ingestion-side, not part of the query path. See <span class="mono">docs/dev-reference/db-model-overview.html</span> for that store and every schema this project touches.</span>
-  </div>
-
   <footer>
-    Snapshot: 2026-09-24. This is the "current state" companion to the target-state diagram you shared (full multi-agent ReAct system, Planner/Reviewer/Personalization agents, Session+Memory, NLP layer, Agent Registry, dedicated API Gateway/DDoS tier) - none of those exist yet, kept here as explicit future scope rather than removed, so the two diagrams stay comparable lane-for-lane. Phase 55 landed one real agent (single-agentic-rag, 3 tools) - a genuine step toward the target state, not the full multi-agent picture yet. Related: <code class="mono">docs/dev-reference/rag-architecture-layers.html</code> (this same query path, sequential not lane-based), <code class="mono">docs/dev-reference/mcp-integration-overview.html</code> (the Agents lane's MCP-registry detail), <code class="mono">docs/dev-reference/oauth2-auth-architecture.html</code> (the Security Layer's real detail), <code class="mono">docs/agent-reference/RAG-ROADMAP.md</code> Phases 49/50/53/54/55.
+    Snapshot: 2026-10-04 - restructured from 5 lanes to 6, matching your reference image's exact column grouping (Client / Edge / API+Preprocessing / Workflow Agents / Domain Agents / Tools+Knowledgebase) instead of the prior looser "API" and combined "Agents" lanes. Added: Query Intent + Decomposition + Embedding as a new API-layer box, and a <span class="mono">react</span>/<span class="mono">llm</span>/<span class="mono">embed</span> badge on every box that involves a model call, unmarked = deterministic (your request this turn, applied across every lane, not just the new box). Only one real ReAct agent exists in this project today - single-agentic-rag's <span class="mono">orchestration_agent.py</span>; everything else that touches a model is a one-shot call, not a loop. Open question surfaced by adding the badges, not resolved: Query Intent + Decomposition (API layer) and Planner Agent (Workflow layer) may overlap - both effectively break a request into parts, one for sub-questions, one for routing tasks. Worth deciding whether they're genuinely separate concerns or the same job done twice, before either gets built. "Six-gate" in the Input Guardrails box refers to this project's own whole-request-lifecycle review framework (<span class="mono">rag-validation-gates.html</span>) - schema validation, RBAC, rate limiting, retrieval strategy, context grading, faithfulness checking, output guardrails - not a literal six-guard grid like your reference shows; this project has 2 real NeMo input rails today, not six. Caching (answer/embedding/prompt/KV), LLM Gateway with model routing, a Judge Agent, and human-in-the-loop review UI are all real pieces of your target image with nothing built against them yet - kept visible as future scope, not invented as done. Related: <code class="mono">docs/dev-reference/react_agents/multi-agentic-rag-fit-plan.html</code> (Domain Agents lane detail, open decisions, implementation plan), <code class="mono">docs/dev-reference/rag-retrieval/rag-validation-gates.html</code> (the real six-gate breakdown), <code class="mono">docs/agent-reference/RAG-ROADMAP.md</code> Phases 49-63, <code class="mono">docs/agent-reference/BACKLOG.md</code> (Analytics Agent data requirement).
   </footer>
 
 </div>

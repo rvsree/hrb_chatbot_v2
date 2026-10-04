@@ -1,27 +1,29 @@
 """Single-agentic-rag's tool-calling loop - uses ChatOpenAI directly, not GatewayChatModel (see RAG-ROADMAP.md Phase 55)."""
 
+import asyncio
+
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
+from src.hrb_chatbot.ai.agents._llm_helpers import AGENT_LLM_TIMEOUT_SECONDS, build_agent_llm
 from src.hrb_chatbot.ai.pre_processing import conversation_memory
+from src.hrb_chatbot.ai.prompts.agent_prompts import ORCHESTRATION_SYSTEM_PROMPT
 from src.hrb_chatbot.ai.rag_pipeline.tools.agentic_tools import (
     AGENTIC_TOOL_DEFINITIONS,
     get_leave_balance_tool,
     get_leave_history_tool,
     search_knowledge_base,
 )
-from src.hrb_chatbot.common.config.settings import read_setting, read_url_setting
+from src.hrb_chatbot.common.logging.call_logger import log_backend_call
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("agents.orchestration_agent")
 
 DEFAULT_MAX_ITERATIONS = 5
 
-SYSTEM_PROMPT = """You are the HR benefits assistant for JPMorgan Chase employees.
-You have access to tools - use them to answer the question, don't guess.
-For policy/benefits questions, use SearchKnowledgeBase.
-For the caller's own leave balance or leave history, use GetLeaveBalance/GetLeaveHistory.
-Only answer from what the tools return - never invent a policy detail or a balance number."""
+# Phase 71: moved into ai/prompts/agent_prompts.py - kept as a module-level
+# name here too, since this is the agent's own public prompt constant.
+SYSTEM_PROMPT = ORCHESTRATION_SYSTEM_PROMPT
 
 TOOL_FUNCTIONS = {
     # SearchKnowledgeBase also takes the tool call's own search_strategy arg (the agent's own choice).
@@ -34,10 +36,7 @@ TOOL_FUNCTIONS = {
 
 
 def _build_llm() -> ChatOpenAI:
-    api_key = read_setting(None, "OPENAI_API_KEY")
-    base_url = read_url_setting(None, "OPENAI_BASE_URL", "https://api.openai.com/v1")
-    model = read_setting(None, "OPENAI_CHAT_MODEL", "gpt-4.1-mini")
-    return ChatOpenAI(model=model, api_key=api_key, base_url=base_url, temperature=0)
+    return build_agent_llm()
 
 
 async def run_agent(
@@ -59,9 +58,19 @@ async def run_agent(
 
     messages = [SystemMessage(content=SYSTEM_PROMPT), *history, HumanMessage(content=query)]
     tools_used = []
+    tool_outputs = []  # raw tool output text, kept alongside tools_used - needed to eval groundedness (Phase 69)
 
     for i in range(resolved_max_iterations):
-        response = await llm.ainvoke(messages)
+        with log_backend_call(logger, "orchestration_agent", "ainvoke", iteration=i + 1):
+            response = await asyncio.wait_for(llm.ainvoke(messages), timeout=AGENT_LLM_TIMEOUT_SECONDS)
+
+        if response.usage_metadata:
+            logger.info(
+                "[orchestration_agent] tokens used: %s prompt + %s completion",
+                response.usage_metadata["input_tokens"],
+                response.usage_metadata["output_tokens"],
+            )
+
         messages.append(response)
 
         if not response.tool_calls:
@@ -70,6 +79,7 @@ async def run_agent(
             return {
                 "answer": response.content,
                 "tools_used": tools_used,
+                "tool_outputs": tool_outputs,
                 "iterations": i + 1,
                 "conversation_id": resolved_conversation_id,
             }
@@ -86,6 +96,7 @@ async def run_agent(
             else:
                 tool_output = await tool_function(tool_args, employee_id)
 
+            tool_outputs.append(tool_output)
             logger.info("Agent called tool=%s input=%r args=%r", tool_name, tool_input[:80], tool_args)
             messages.append(ToolMessage(content=tool_output, tool_call_id=tool_call["id"]))
 
@@ -94,6 +105,7 @@ async def run_agent(
     return {
         "answer": "I wasn't able to finish reasoning about this within the allowed number of steps. Please rephrase or ask a more specific question.",
         "tools_used": tools_used,
+        "tool_outputs": tool_outputs,
         "iterations": resolved_max_iterations,
         "conversation_id": resolved_conversation_id,
     }

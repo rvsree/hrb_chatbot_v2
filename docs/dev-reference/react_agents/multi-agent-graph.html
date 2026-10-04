@@ -1,0 +1,248 @@
+<title>Multi-Agent Graph</title>
+<style>
+  /* Layout: top-down flow (mermaid graph) + state/notes panels below, technical-reference treatment */
+  :root {
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --border: #ddd9d0;
+    --ink: #1f1d1a;
+    --muted: #6b665d;
+    --accent: #6b5bd6;
+    --llm: #6b5bd6;
+    --deterministic: #2f7d5f;
+    --llm-bg: #efecfb;
+    --deterministic-bg: #e7f3ed;
+    --code-bg: #f1efe9;
+    --warn-bg: #fdf3e3;
+    --warn-border: #e8c97a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17161a;
+      --surface: #201f24;
+      --border: #38353d;
+      --ink: #ece9e4;
+      --muted: #a39d92;
+      --accent: #a596f0;
+      --llm: #a596f0;
+      --deterministic: #6fcf9e;
+      --llm-bg: #2a2440;
+      --deterministic-bg: #1d332a;
+      --code-bg: #272530;
+      --warn-bg: #352c1a;
+      --warn-border: #7a6428;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17161a;
+    --surface: #201f24;
+    --border: #38353d;
+    --ink: #ece9e4;
+    --muted: #a39d92;
+    --accent: #a596f0;
+    --llm: #a596f0;
+    --deterministic: #6fcf9e;
+    --llm-bg: #2a2440;
+    --deterministic-bg: #1d332a;
+    --code-bg: #272530;
+    --warn-bg: #352c1a;
+    --warn-border: #7a6428;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding-inline: 16px;
+    padding-block: 28px;
+    max-width: 980px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 1.5rem;
+    margin: 0 0 4px;
+    letter-spacing: -0.01em;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin: 0 0 24px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .card h2 {
+    font-size: 1rem;
+    margin: 0 0 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  pre.mermaid {
+    background: transparent;
+    margin: 0;
+    overflow-x: auto;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+    margin-top: 14px;
+    font-size: 0.85rem;
+  }
+  .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .dot.llm { background: var(--llm); }
+  .dot.det { background: var(--deterministic); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  td.node { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.8rem; white-space: nowrap; }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+  .pill.llm { background: var(--llm-bg); color: var(--llm); }
+  .pill.det { background: var(--deterministic-bg); color: var(--deterministic); }
+
+  code {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.85em;
+  }
+  pre.state {
+    background: var(--code-bg);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    margin: 0;
+  }
+  .note {
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-size: 0.85rem;
+    line-height: 1.55;
+  }
+  .note b { display: block; margin-bottom: 4px; }
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 640px) {
+    .two-col { grid-template-columns: 1fr; }
+  }
+  .foot {
+    color: var(--muted);
+    font-size: 0.78rem;
+    text-align: center;
+    margin-top: 8px;
+  }
+</style>
+
+<h1>Multi-Agent Graph</h1>
+<p class="subtitle">hrb_chatbot_v2 · the real, compiled LangGraph <code>StateGraph</code> behind <code>POST /v1/multi-agentic-rag/query</code> (Phase 64–70) · generated from <code>get_graph().get_graph().draw_mermaid()</code>, not hand-drawn</p>
+
+<div class="card">
+  <h2>Nodes &amp; edges</h2>
+  <pre class="mermaid">
+graph TD
+  START((START)) --> planner[Planner Agent]
+  planner -.Send fan-out.-> vector_kb_agent[vector_kb_agent]
+  planner -.Send fan-out.-> lms_ops_agent[lms_ops_agent]
+  planner -.Send fan-out.-> sql_db_agent[sql_db_agent]
+  planner -.Send fan-out.-> lms_analytics_agent[lms_analytics_agent]
+  planner -.Send fan-out.-> web_search_agent[web_search_agent]
+  vector_kb_agent --> reviewer[Reviewer Agent]
+  lms_ops_agent --> reviewer
+  sql_db_agent --> reviewer
+  lms_analytics_agent --> reviewer
+  web_search_agent --> reviewer
+  reviewer --> END((END))
+
+  classDef llmNode fill:#6b5bd6,color:#fff,stroke:none
+  classDef detNode fill:#2f7d5f,color:#fff,stroke:none
+  classDef endpoint fill:none,stroke:#999,color:#888
+  class planner,reviewer llmNode
+  class vector_kb_agent,web_search_agent detNode
+  class lms_ops_agent,sql_db_agent,lms_analytics_agent detNode
+  class START,END endpoint
+  </pre>
+  <div class="legend">
+    <span><span class="dot llm"></span> makes a real LLM call</span>
+    <span><span class="dot det"></span> deterministic (tool call / fixed string, no LLM of its own)</span>
+    <span>⇢ dashed = conditional edge via LangGraph <code>Send()</code>, parallel fan-out</span>
+  </div>
+</div>
+
+<div class="card">
+  <h2>What each node actually does</h2>
+  <table>
+    <tr><th>Node</th><th>Type</th><th>Real logic</th></tr>
+    <tr><td class="node">planner</td><td><span class="pill llm">LLM</span></td><td>One structured-output call, classifies the query into 1+ <code>{agent, focus}</code> tasks. Falls back to a single <code>vector_kb_agent</code> task if the LLM returns none or fails to parse.</td></tr>
+    <tr><td class="node">vector_kb_agent</td><td><span class="pill det">deterministic</span></td><td>Calls <code>search_knowledge_base()</code> — vector retrieval against the KB. No LLM call inside this node itself.</td></tr>
+    <tr><td class="node">lms_ops_agent</td><td><span class="pill det">deterministic</span></td><td>Keyword-routes to <code>get_leave_balance_tool()</code> / <code>get_leave_history_tool()</code> — live MCP call, no LLM.</td></tr>
+    <tr><td class="node">sql_db_agent</td><td><span class="pill det">deterministic</span></td><td>Honest stub — no HR operational DB exists yet, returns a fixed "not available" string.</td></tr>
+    <tr><td class="node">lms_analytics_agent</td><td><span class="pill det">deterministic</span></td><td>Honest stub — no historical analytics dataset exists yet, same pattern.</td></tr>
+    <tr><td class="node">web_search_agent</td><td><span class="pill det">deterministic</span></td><td>Calls the Tavily client directly. No LLM call inside this node itself.</td></tr>
+    <tr><td class="node">reviewer</td><td><span class="pill llm">LLM (conditional)</span></td><td>0 results → fixed fallback string. 1 result → returned as-is, <b>no LLM call spent</b>. 2+ results → one LLM call merges them.</td></tr>
+  </table>
+</div>
+
+<div class="two-col">
+  <div class="card">
+    <h2>Graph state (TypedDict)</h2>
+    <pre class="state">class MultiAgentState(TypedDict):
+    query: str
+    employee_id: str | None
+    tasks: list[dict]
+    agent_results: Annotated[
+        list[dict], operator.add
+    ]
+    answer: str</pre>
+  </div>
+  <div class="card">
+    <h2>State management today</h2>
+    <div class="note">
+      <b>In-memory, per-request only.</b>
+      No LangGraph checkpointer is configured (<code>graph.compile()</code> takes no <code>checkpointer</code> argument) — state exists only for the duration of one <code>graph.ainvoke()</code> call, then is discarded. Nothing about the graph's own run is persisted anywhere.
+      <br><br>
+      <b>Conversation memory (STM) is separate</b> — a plain in-memory Python dict in <code>conversation_memory.py</code>, outside the graph entirely. The route saves only the final answer after the graph finishes; prior turns are never fed back into the Planner's reasoning yet (tracked, on hold).
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>System prompts</h2>
+  <table>
+    <tr><th>Agent</th><th>Has its own system prompt?</th><th>Where</th></tr>
+    <tr><td class="node">planner</td><td><span class="pill llm">Yes</span></td><td><code>ai/prompts/agent_prompts.py</code> → <code>PLANNER_SYSTEM_PROMPT</code></td></tr>
+    <tr><td class="node">reviewer</td><td><span class="pill llm">Yes</span></td><td><code>ai/prompts/agent_prompts.py</code> → <code>REVIEWER_SYSTEM_PROMPT</code></td></tr>
+    <tr><td class="node">orchestration_agent <span style="color:var(--muted); font-weight:400;">(single-agentic-rag's separate ReAct loop)</span></td><td><span class="pill llm">Yes, but not migrated</span></td><td>Still inline as <code>SYSTEM_PROMPT</code> in <code>orchestration_agent.py</code> itself, not moved into the shared prompts module — a flagged, not-yet-done cleanup.</td></tr>
+    <tr><td class="node">the 5 domain agents</td><td>No — not applicable</td><td>None make an LLM call of their own, so none carry a system prompt. They're tool wrappers, not reasoning agents.</td></tr>
+  </table>
+</div>
+
+<p class="foot">Source of truth: <code>ai/agents/workflow_agents/multi_agent_pipeline.py</code>, <code>planner_agent.py</code>, <code>reviewer_agent.py</code>, <code>ai/agents/domain_agents/*.py</code></p>
