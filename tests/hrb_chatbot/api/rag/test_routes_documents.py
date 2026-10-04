@@ -23,6 +23,21 @@ client = TestClient(app)
 HR_SUPPORT_USER_PROFILE = {"employee_id": "EMP051", "full_name": "Hana Support", "role": "hr_support"}
 
 
+@pytest.fixture(autouse=True)
+def _no_op_answer_cache_invalidation(monkeypatch):
+    """This file's own metadata_store/vector_store are real-but-local (test-isolated
+    SQLite, local-persistent Chroma - no network call either way). Phase 78's answer
+    cache is Postgres, a genuine network service - no-op it here so this file keeps
+    its existing no-real-network-call property, matching every other test in this
+    suite (documents_service._clear_answer_cache_best_effort already swallows a real
+    failure in production; this just skips the real connection attempt in tests)."""
+
+    async def _noop():
+        return None
+
+    monkeypatch.setattr(documents_service, "_clear_answer_cache_best_effort", _noop)
+
+
 def _payload(user_profile=None, chunk_info=None, document_metadata=None) -> dict:
     """Build the `data={"payload": ...}` kwarg for a multipart upload request."""
     body = {"user_profile": HR_SUPPORT_USER_PROFILE if user_profile is None else user_profile}

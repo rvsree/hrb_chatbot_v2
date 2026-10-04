@@ -54,7 +54,7 @@ async def run_agent(
     history = []
     if enable_conversation_memory:
         resolved_conversation_id = conversation_id or conversation_memory.new_conversation_id()
-        history = conversation_memory.load_history(resolved_conversation_id)
+        history = await conversation_memory.load_history(resolved_conversation_id)
 
     messages = [SystemMessage(content=SYSTEM_PROMPT), *history, HumanMessage(content=query)]
     tools_used = []
@@ -75,7 +75,7 @@ async def run_agent(
 
         if not response.tool_calls:
             if resolved_conversation_id:
-                conversation_memory.save_turn(resolved_conversation_id, query, response.content)
+                await conversation_memory.save_turn(resolved_conversation_id, employee_id, query, response.content)
             return {
                 "answer": response.content,
                 "tools_used": tools_used,

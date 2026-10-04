@@ -344,17 +344,113 @@ class FakeMetadataStore(BaseMetadataClient):
         return {"provider": self.PROVIDER_NAME, "status": "healthy"}
 
 
-class FakeDBGateway:
-    """Stands in for DBGateway - returns the one FakeVectorStore/FakeMetadataStore
-    given to it regardless of provider name. A test needing two distinct
-    providers should use two FakeDBGateway instances instead."""
+class FakeConversationStore:
+    """Stands in for ConversationStore (Phase 76) - plain in-memory dict,
+    same async interface as the real Postgres-backed one, never touches a
+    real database."""
 
-    def __init__(self, vector_store: FakeVectorStore | None = None, metadata_store: FakeMetadataStore | None = None):
+    def __init__(self):
+        self._turns: dict[str, list[dict]] = {}
+
+    async def load_turns(self, conversation_id):
+        return list(self._turns.get(conversation_id, []))
+
+    async def save_turn(self, conversation_id, employee_id, role, content):
+        turns = self._turns.setdefault(conversation_id, [])
+        turns.append({"employee_id": employee_id, "role": role, "content": content})
+
+    async def delete_conversation(self, conversation_id, employee_id):
+        turns = self._turns.get(conversation_id, [])
+        matching = [turn for turn in turns if turn["employee_id"] == employee_id]
+        if len(matching) != len(turns):
+            return 0  # some turns belong to someone else - matches the real store's all-or-nothing scoping
+        deleted_count = len(turns)
+        self._turns.pop(conversation_id, None)
+        return deleted_count
+
+    def health_check(self):
+        return {"provider": "postgres", "status": "healthy"}
+
+
+class FakeEmbeddingCache:
+    """Stands in for EmbeddingCache (Phase 77) - plain in-memory dict keyed
+    by (content_hash, embedding_model), same async interface as the real
+    Postgres-backed one, never touches a real database."""
+
+    def __init__(self):
+        self._entries: dict[tuple[str, str], list[float]] = {}
+
+    async def get_many(self, content_hashes, embedding_model):
+        return {
+            content_hash: self._entries[(content_hash, embedding_model)]
+            for content_hash in content_hashes
+            if (content_hash, embedding_model) in self._entries
+        }
+
+    async def set_many(self, entries, embedding_model):
+        for content_hash, embedding in entries:
+            self._entries[(content_hash, embedding_model)] = embedding
+
+    def health_check(self):
+        return {"provider": "postgres", "status": "healthy"}
+
+
+class FakeAnswerCache:
+    """Stands in for AnswerCache (Phase 78) - plain in-memory dict keyed by
+    cache_key, same async interface as the real Postgres-backed one, never
+    touches a real database."""
+
+    def __init__(self):
+        self._entries: dict[str, dict] = {}
+        self.clear_all_call_count = 0
+
+    async def get(self, cache_key):
+        return self._entries.get(cache_key)
+
+    async def set(self, cache_key, query, answer):
+        self._entries[cache_key] = answer
+
+    async def clear_all(self):
+        count = len(self._entries)
+        self._entries.clear()
+        self.clear_all_call_count += 1
+        return count
+
+    def health_check(self):
+        return {"provider": "postgres", "status": "healthy"}
+
+
+class FakeDBGateway:
+    """Stands in for DBGateway - returns the one FakeVectorStore/FakeMetadataStore/
+    FakeConversationStore/FakeEmbeddingCache/FakeAnswerCache given to it regardless
+    of provider name. A test needing two distinct providers should use two
+    FakeDBGateway instances instead."""
+
+    def __init__(
+        self,
+        vector_store: FakeVectorStore | None = None,
+        metadata_store: FakeMetadataStore | None = None,
+        conversation_store: FakeConversationStore | None = None,
+        embedding_cache: FakeEmbeddingCache | None = None,
+        answer_cache: FakeAnswerCache | None = None,
+    ):
         self._vector_store = vector_store or FakeVectorStore()
         self._metadata_store = metadata_store or FakeMetadataStore()
+        self._conversation_store = conversation_store or FakeConversationStore()
+        self._embedding_cache = embedding_cache or FakeEmbeddingCache()
+        self._answer_cache = answer_cache or FakeAnswerCache()
 
     def vector_store(self, provider=None):
         return self._vector_store
 
     def metadata_store(self, provider=None):
         return self._metadata_store
+
+    def conversation_store(self):
+        return self._conversation_store
+
+    def embedding_cache(self):
+        return self._embedding_cache
+
+    def answer_cache(self):
+        return self._answer_cache

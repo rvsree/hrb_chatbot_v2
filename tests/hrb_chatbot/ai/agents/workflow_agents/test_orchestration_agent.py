@@ -5,6 +5,13 @@ drive the loop's branching."""
 
 from src.hrb_chatbot.ai.agents.workflow_agents import orchestration_agent
 from src.hrb_chatbot.ai.pre_processing import conversation_memory
+from tests.conftest import FakeConversationStore, FakeDBGateway
+
+
+def _patch_conversation_store(monkeypatch, conversation_store=None):
+    gateway = FakeDBGateway(conversation_store=conversation_store or FakeConversationStore())
+    monkeypatch.setattr(conversation_memory, "get_db_gateway", lambda: gateway)
+    return gateway
 
 
 class FakeResponse:
@@ -125,7 +132,7 @@ async def test_conversation_memory_disabled_by_default_no_conversation_id_return
 
 
 async def test_enabling_memory_without_an_id_generates_one_and_saves_the_turn(monkeypatch):
-    conversation_memory._CONVERSATIONS.clear()
+    _patch_conversation_store(monkeypatch)
     _patch_llm(monkeypatch, [FakeResponse(content="The match is 100% up to 5%.")])
 
     result = await orchestration_agent.run_agent(
@@ -133,13 +140,15 @@ async def test_enabling_memory_without_an_id_generates_one_and_saves_the_turn(mo
     )
 
     assert result["conversation_id"] is not None
-    saved = conversation_memory.load_history(result["conversation_id"])
+    saved = await conversation_memory.load_history(result["conversation_id"])
     assert [m.content for m in saved] == ["What's the 401k match?", "The match is 100% up to 5%."]
 
 
 async def test_an_existing_conversation_id_seeds_prior_history_into_the_messages(monkeypatch):
-    conversation_memory._CONVERSATIONS.clear()
-    conversation_memory.save_turn("conv-1", "what database issues have we had?", "Two timeout tickets.")
+    _patch_conversation_store(monkeypatch)
+    await conversation_memory.save_turn(
+        "conv-1", "EMP052", "what database issues have we had?", "Two timeout tickets."
+    )
 
     captured_messages = {}
 

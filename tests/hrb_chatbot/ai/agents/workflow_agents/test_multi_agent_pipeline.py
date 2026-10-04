@@ -4,6 +4,7 @@ guardrail call is faked; only the graph wiring itself is real."""
 
 from src.hrb_chatbot.ai.agents.workflow_agents import multi_agent_pipeline
 from src.hrb_chatbot.ai.pre_processing import conversation_memory
+from tests.conftest import FakeConversationStore, FakeDBGateway
 
 
 def _patch_guardrails(monkeypatch):
@@ -15,6 +16,12 @@ def _patch_guardrails(monkeypatch):
 
     monkeypatch.setattr(multi_agent_pipeline, "check_input", _passthrough_check_input)
     monkeypatch.setattr(multi_agent_pipeline, "check_output", _passthrough_check_output)
+
+
+def _patch_conversation_store(monkeypatch, conversation_store=None):
+    gateway = FakeDBGateway(conversation_store=conversation_store or FakeConversationStore())
+    monkeypatch.setattr(conversation_memory, "get_db_gateway", lambda: gateway)
+    return gateway
 
 
 async def test_single_task_query_runs_one_domain_agent_and_skips_the_reviewer_llm(monkeypatch):
@@ -93,7 +100,7 @@ async def test_sql_db_and_analytics_agents_report_not_available_without_crashing
 
 async def test_enabling_memory_without_an_id_generates_one_and_saves_the_turn(monkeypatch):
     _patch_guardrails(monkeypatch)
-    conversation_memory._CONVERSATIONS.clear()
+    _patch_conversation_store(monkeypatch)
 
     async def _fake_plan(query):
         return [{"agent": "vector_kb_agent", "focus": query}]
@@ -109,7 +116,7 @@ async def test_enabling_memory_without_an_id_generates_one_and_saves_the_turn(mo
     )
 
     assert result["conversation_id"] is not None
-    saved = conversation_memory.load_history(result["conversation_id"])
+    saved = await conversation_memory.load_history(result["conversation_id"])
     assert [m.content for m in saved] == ["parental leave policy?", "8 weeks paid."]
 
 

@@ -812,22 +812,31 @@ other grouped together), not by how they were raised in conversation.
    domain-agent output text needed for a meaningful groundedness check -
    added `tool_outputs`/`agent_result_texts` to each function's return
    dict (additive, no public API contract change).
-7. **Multi-turn conversation only saves the final answer - prior turns are
-   never read back into reasoning.** Confirmed in `multi_agent_pipeline
-   .run_multi_agent()`: `enable_conversation_memory`/`conversation_id`
-   load/save the turn, but the Planner and domain agents never see prior
-   history - every call reasons fresh, so "what about last year's number"
-   won't resolve correctly. (Same real gap exists in single-agentic-rag's
-   one already-tested memory case - not new to multi-agentic-rag.) Fix:
+7. **Multi-agentic-rag's Planner still never reads prior turns back into
+   reasoning - still open.** `multi_agent_pipeline.run_multi_agent()`
+   saves a turn (now durably, see #8) but never calls `load_history()` -
+   every call reasons fresh, so "what about last year's number" won't
+   resolve correctly for multi-agentic-rag specifically. Single-agentic-rag
+   does NOT have this gap - `orchestration_agent.run_agent()` already
+   loads and seeds history into its own messages, unchanged by Phase 76.
+   **Sequencing note:** this item's own text originally said #8 (storage)
+   should wait until after this one was fixed ("no point persisting
+   history that reasoning doesn't use yet") - the user explicitly directed
+   the opposite order on 2026-10-05, and #8 is now done. Fix still needed:
    thread `conversation_memory.load_history()`'s result into the Planner's
-   prompt (and optionally the Reviewer's).
-8. **Conversation storage is in-memory only (STM), no LTM, no metadata.**
-   `ai/pre_processing/conversation_memory.py`'s `_CONVERSATIONS` is a plain
-   Python dict - wiped on every restart, single-process only (same
-   limitation already called out for the rate limiter, see
-   "Observability" above). No metadata beyond a timestamp is recorded (no
-   which-agent-answered, no token/cost, no latency). Worth doing after #7,
-   not before - no point persisting history that reasoning doesn't use yet.
+   prompt (and optionally the Reviewer's) in `multi_agent_pipeline.py`.
+8. ~~**Conversation storage is in-memory only (STM), no LTM, no
+   metadata.**~~ Done, Phase 76 (2026-10-05). `conversation_memory.py` is
+   now backed by a real Postgres table (`conversation_turns`, via the new
+   `ConversationStore` client) - survives restarts, STM and LTM are the
+   same durable store (a fast/durable two-tier split is deferred to a
+   future Redis migration, user's explicit choice - Postgres now, Redis
+   later, not built as a fake two-tier system today). `employee_id` is
+   now recorded per turn (wasn't before) - found needed this while
+   designing the delete-my-conversation NFR endpoint (also shipped this
+   phase), so deletion can be scoped to the caller's own data. No richer
+   metadata (which-agent-answered, token/cost, latency) added - still a
+   real gap if that level of detail is wanted later.
 9. ~~**Web-search agent (Tavily) was never built as an agent, only as a raw
    client.**~~ Done, Phase 70 (2026-10-04). New `ai/agents/domain_agents/
    web_search_agent.py` wraps the existing `get_client_gateway().tavily()`
@@ -846,3 +855,93 @@ domain-agent evals / "Reviewer Agent also does evals" (Option A from
 merges; SQL DB Agent / LMS Analytics Agent real logic - blocked on the Ops
 DB / Analytics DB datasets in the section above this one, already
 sequenced.
+
+## Caching follow-ups (confirmed gaps after Phase 77/78, 2026-10-05)
+
+**Query-time embedding caching was not built, flagged not silently
+dropped.** Phase 77 caches ingestion-side embeddings only
+(`embedding_generator.generate_embeddings()`) - query embeddings happen
+inside LangChain's own `OpenAIEmbeddings` object (`langchain_vector_store
+.py::get_embeddings()`), called internally by `Chroma`/`PineconeVectorStore
+`'s own `similarity_search()`. There's no explicit "embed the query" step
+in `retriever.py` to wrap directly - closing this gap needs a small
+`CachingEmbeddings` class subclassing LangChain's `Embeddings` interface
+(`embed_query()`/`embed_documents()`, plus their async variants
+`aembed_query()`/`aembed_documents()` - both need covering, not just one,
+since LangChain's own default async implementations just thread-wrap the
+sync ones unless overridden), reusing the same `EmbeddingCache` client
+Phase 77 already built (same table, same `hash_text()` key). Real,
+same-size effort as Phase 77 itself - not done opportunistically inside
+that phase to avoid introducing a subtle sync/async bug in a path every
+live query already depends on.
+
+**Answer cache (Phase 78) has 3 confirmed, explicitly-scoped-out
+follow-ups:**
+- **Tier-2 semantic/similarity matching** - today's cache is exact-match
+  only (the user's own confirmed starting scope). Two differently-worded
+  questions with the same real answer currently miss the cache entirely.
+- **Single/multi-agentic-rag answers aren't cached at all** - Phase 78
+  only wired genai-rag's `pipeline.answer_query()` (the one pipeline with
+  a plain, deterministic retrieve-then-generate path). Caching "the final
+  answer" for an iterative tool-calling loop or a multi-agent dispatch is
+  a different, bigger question - what's actually safe to treat as a pure
+  function of the input - not resolved, not assumed answerable the same
+  way.
+- **Invalidation is blunt (clears the whole table on any document
+  change), not per-document** - correct and safe, but more aggressive
+  than necessary once there are many documents and most changes don't
+  actually affect most cached answers. A real refinement if the blunt
+  version turns out too costly in practice (frequent re-indexing against
+  a large cache) - not a problem yet at this project's current scale.
+
+## Observability gap: genai-rag's own generation calls are invisible (confirmed Phase 79, 2026-10-05)
+
+**`response_generator.py` has zero token/cost/latency telemetry, unlike
+the 3 agent files Phase 66 covered.** Confirmed live: `response
+.usage_metadata` is `None` on every call through `GatewayChatModel` -
+`GatewayChatModel._generate()` calls `OpenAIChatClient.ask()`, which only
+ever returns the plain answer string, discarding the real OpenAI response
+object (and its `usage` field) before `GatewayChatModel` ever sees it.
+Also confirmed not picked up by LangSmith either - `OpenAIChatClient`
+calls the raw `openai` SDK directly, never wrapped with `langsmith
+.wrappers.wrap_openai()`, so `LANGCHAIN_TRACING_V2` doesn't see these
+calls regardless of whether tracing is on. This means genai-rag's own
+query endpoint - the most heavily used one in this project - has **no**
+token/cost visibility anywhere, a real hole Phase 66 didn't close since
+it only touched `planner_agent.py`/`reviewer_agent.py`/
+`orchestration_agent.py`. Fix needs either exposing `ask()`'s underlying
+response object (a larger change - `ask()` is called from several places
+expecting a plain string today) or wrapping `OpenAIChatClient`'s real
+`openai.OpenAI` client with `wrap_openai()` for LangSmith visibility
+without changing `ask()`'s own return type. Not started.
+
+## Release gate follow-up (confirmed scope after Phase 80, 2026-10-05)
+
+**`eval-gate.yml`/`scripts/run_release_gate.py` cover genai-rag only.**
+Single/multi-agentic-rag each already have their own real eval adapters
+(Phase 69's `ask_single_agentic_rag()`/`ask_multi_agentic_rag()`) and
+could get their own release-gate pass using the exact same pattern Phase
+80 just proved out - same `GATE_METRICS` reasoning would apply too (their
+own retrieved-context shape differs from genai-rag's chunk list, so the
+same precision@k structural-ceiling question would need re-checking, not
+assumed to carry over automatically). Not started - a natural, same-shape
+follow-up, not bundled into Phase 80 to keep it reviewable as one real,
+already-complex CI job.
+
+**`calculate_retrieval_metrics()`'s `k=3` default vs. this project's real
+`top_k` is a standing mismatch worth a permanent decision, not just a
+one-script workaround.** Phase 80's own script passes the real `k`
+explicitly and then excludes precision/f1 from gating entirely (confirmed
+with the user) - but `golden_dataset_harness.py`'s shared `score_case()`
+still hardcodes `k=3` for every *other* caller
+(`test_golden_dataset_harness.py`, `test_single_agentic_rag_golden_dataset
+.py`, `test_multi_agentic_rag_golden_dataset.py`), all of which are
+light smoke tests today ("confirms real scores come back, not a quality
+gate") and don't fail on a low precision score - so this hasn't broken
+anything yet, but the same structural ceiling applies there too, silently.
+Worth a real decision later: expose `k` as a `score_case()` parameter
+(default `3`, course-faithful, opt-in override), or reconsider whether
+precision@k belongs in this project's own metric set at all given its
+deliberately broad multi-chunk retrieval design. Not decided, not touched
+in Phase 80 - that phase's own user instruction was explicitly to leave
+`golden_dataset_harness.py` itself untouched.

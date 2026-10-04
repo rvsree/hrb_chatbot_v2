@@ -29,6 +29,17 @@ logger = get_logger("documents_service")
 UPLOAD_DIRECTORY = Path("data/uploads")
 
 
+async def _clear_answer_cache_best_effort() -> None:
+    """Phase 78: a document change invalidates every cached answer - best-effort,
+    since a down answer cache must never block an otherwise-successful
+    upload/delete (unlike the cache's own get/set calls on the live query path,
+    which do propagate - see pipeline.py)."""
+    try:
+        await get_db_gateway().answer_cache().clear_all()
+    except Exception as error:
+        logger.warning("Answer cache invalidation failed: %s: %s", type(error).__name__, error)
+
+
 def validate_file(upload: UploadFile, size: int) -> tuple[str, str] | None:
     """Return (message, error_code) for why this file is rejected, or None."""
     filename = upload.filename or ""
@@ -206,7 +217,7 @@ async def _index_now(
         else None
     )
     try:
-        return await pipeline.index_document(
+        result = await pipeline.index_document(
             document_id,
             str(file_path),
             chunking_strategy=chunking_strategy,
@@ -214,6 +225,8 @@ async def _index_now(
             chunk_overlap=chunk_overlap,
             document_metadata_override=override_dict,
         )
+        await _clear_answer_cache_best_effort()
+        return result
     except Exception as error:
         logger.error("Indexing failed for document %s: %s: %s", document_id, type(error).__name__, error)
         await get_db_gateway().metadata_store().update_status(document_id, "failed", str(error))
@@ -295,6 +308,8 @@ async def delete_document(document_id: str, deleted_by: str | None = None) -> di
 
     document_directory = UPLOAD_DIRECTORY / document_id
     shutil.rmtree(document_directory, ignore_errors=True)
+
+    await _clear_answer_cache_best_effort()
 
     logger.info("Deleted document %s (%r) - %d chunk(s) removed", document_id, document["filename"], len(chunk_ids))
     return {

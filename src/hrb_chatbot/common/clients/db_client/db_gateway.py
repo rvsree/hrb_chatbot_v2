@@ -1,8 +1,11 @@
 """One place that hands out every database client the project uses."""
 
+from src.hrb_chatbot.common.clients.db_client.answer_cache import AnswerCache
 from src.hrb_chatbot.common.clients.db_client.base_metadata_client import BaseMetadataClient
 from src.hrb_chatbot.common.clients.db_client.base_vector_db_client import BaseVectorDBClient
 from src.hrb_chatbot.common.clients.db_client.chroma_client import ChromaDBClient
+from src.hrb_chatbot.common.clients.db_client.conversation_store import ConversationStore
+from src.hrb_chatbot.common.clients.db_client.embedding_cache import EmbeddingCache
 from src.hrb_chatbot.common.clients.db_client.pinecone_client import PineconeClient
 from src.hrb_chatbot.common.clients.db_client.postgres_client import PostgresClient
 from src.hrb_chatbot.common.clients.db_client.sqlite_client import SQLiteClient
@@ -18,6 +21,9 @@ class DBGateway:
         self.pinecone_client = None
         self.sqlite_client = None
         self.postgres_client = None
+        self.conversation_store_client = None
+        self.embedding_cache_client = None
+        self.answer_cache_client = None
 
     def chroma(self) -> ChromaDBClient:
         # Return the shared ChromaDB client, building it on first use.
@@ -53,6 +59,24 @@ class DBGateway:
         if self.postgres_client is None:
             self.postgres_client = PostgresClient()
         return self.postgres_client
+
+    def conversation_store(self) -> ConversationStore:
+        """Return the shared conversation-history store, building it on first use (Phase 76)."""
+        if self.conversation_store_client is None:
+            self.conversation_store_client = ConversationStore()
+        return self.conversation_store_client
+
+    def embedding_cache(self) -> EmbeddingCache:
+        """Return the shared embedding cache, building it on first use (Phase 77)."""
+        if self.embedding_cache_client is None:
+            self.embedding_cache_client = EmbeddingCache()
+        return self.embedding_cache_client
+
+    def answer_cache(self) -> AnswerCache:
+        """Return the shared answer cache, building it on first use (Phase 78)."""
+        if self.answer_cache_client is None:
+            self.answer_cache_client = AnswerCache()
+        return self.answer_cache_client
 
     def metadata_store(self, provider: str | None = None) -> BaseMetadataClient:
         # Return whichever document-metadata store is selected.

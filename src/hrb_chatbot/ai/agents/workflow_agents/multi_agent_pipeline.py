@@ -136,7 +136,7 @@ async def run_multi_agent(
 
     answer = await check_output(checked_query, final_state["answer"])
     if resolved_conversation_id:
-        conversation_memory.save_turn(resolved_conversation_id, checked_query, answer)
+        await conversation_memory.save_turn(resolved_conversation_id, employee_id, checked_query, answer)
 
     agent_results = final_state["agent_results"]
     tools_used = [{"tool_name": result["agent"], "tool_input": result["focus"]} for result in agent_results]

@@ -93,7 +93,7 @@ async def index_document(
     )
     # Module 1's own explicit step (Phase 44) - embeddings are computed here,
     # not inside write_chunks(), and attached directly to each chunk's node.
-    embeddings = generate_embeddings(chunks, embedding_model=resolved_embedding_model)
+    embeddings = await generate_embeddings(chunks, embedding_model=resolved_embedding_model)
     result = await write_chunks(
         document_id,
         chunks,

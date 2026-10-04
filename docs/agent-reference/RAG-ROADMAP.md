@@ -147,6 +147,11 @@ reviewed before that phase's code starts.
 | 73 — User-directed: golden dataset `call_type` column + free routing-type gate | Claude Code | ✅ Done, verified, 2026-10-04 | ✅ Spec'd and implemented - see detail below |
 | 74 — User-directed: contract/schema regression testing + chaos/failure-injection testing | Claude Code | ✅ Done, verified, 2026-10-04 | ✅ Spec'd and implemented - see detail below |
 | 75 — User-directed: multi-modal RAG ingestion, scoped to table extraction (table chunking made structural, not size-heuristic) | Claude Code | ✅ Done, verified, 2026-10-04 | ✅ Spec'd and implemented - see detail below |
+| 76 — User-directed: STM/LTM finalized on Postgres (durable conversation history) + delete-my-conversation NFR endpoint | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
+| 77 — User-directed: embedding cache, Postgres-backed, ingestion-side only | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
+| 78 — User-directed: answer cache, Postgres-backed, exact-match, genai-rag only | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
+| 79 — User-directed: confirm (not build) whether prompt caching fires - empirical verification only, no src/ changes | Claude Code | ✅ Done, verified, 2026-10-05 | N/A - verification only, no spec gate applies |
+| 80 — User-directed: `get_release_decision()` wired into a real, manual-trigger CI gate (Postgres service container + fresh KB ingestion + the gate script) | Claude Code | ✅ Done, verified, 2026-10-05 - real run against all 24 cases: PASS | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -5734,6 +5739,455 @@ Explicitly deferred to a later, separate wave - not part of the above:
   as every prior live check this session. Full default suite: 265 passed
   (same count - 4 old tests replaced by 4 new ones, not added on top).
   `bandit -ll`: 0 findings at any severity.
+
+- [x] **Phase 76 (2026-10-05) — User-directed: STM/LTM finalized on
+  Postgres (user's explicit infra choice - already-running Postgres, not
+  new Redis infra, migrate later) - conversation history becomes durable,
+  plus a delete-my-conversation NFR endpoint.**
+
+  **Spec:**
+  - **Context:** `conversation_memory.py`'s `_CONVERSATIONS` has been a
+    plain in-memory dict since Phase 58 - wiped on every restart,
+    single-process only. User confirmed: build STM/LTM on the already-
+    running Postgres (`POSTGRES_DB_HOST=localhost`, confirmed reachable -
+    `health_check()` returned `healthy` live before writing this spec),
+    not new Redis infra - migrate to Redis later only if there's a real
+    performance reason to. STM and LTM are **one store, not two tiers** -
+    every turn becomes durable (survives restarts, unlike today) and the
+    same rows are what gets read back into the next turn's context; a
+    separate fast/durable split is deferred to the Redis migration, not
+    built here as a fake two-tier system now.
+  - **Real gap found while designing this, not assumed away:** the
+    planned delete-conversation endpoint needs to verify the caller owns
+    the conversation before deleting it. Today's schema has no way to do
+    that - `conversation_id` is just a UUID, not tied to who created it.
+    Fixed by adding `employee_id` to the new table, recorded at
+    `save_turn()` time (already available as a parameter at all 3 real
+    call sites) - delete only matches rows where both `conversation_id`
+    *and* `employee_id` match the caller's own identity; a mismatched
+    `employee_id` deletes zero rows rather than leaking whether the
+    conversation exists for someone else.
+  - **New client, same pattern as `postgres_client.py`:** `common/clients/
+    db_client/conversation_store.py` - `ConversationStore` class, `psycopg`
+    via `asyncio.to_thread()`, lazy `_ensure_table()`, `log_backend_call()`
+    wrapping every real call - same shape as the existing Postgres client,
+    not a new pattern invented for this. One table,
+    `conversation_turns(id SERIAL PK, conversation_id, employee_id, role,
+    content, created_at)`, indexed on `conversation_id`. Registered on
+    `db_gateway.py` as `conversation_store()`, same singleton-per-gateway
+    convention as `postgres()`/`sqlite()`.
+  - **Breaking signature change, contained:** `conversation_memory.py`'s
+    `load_history()`/`save_turn()` become `async def` (DB I/O, can't stay
+    sync) - `new_conversation_id()` stays sync (pure UUID generation, no
+    I/O). `save_turn()` gains a required `employee_id` parameter. All 3
+    real call sites (`orchestration_agent.py`, `ai/rag_pipeline/
+    pipeline.py`, `multi_agent_pipeline.py`) already have `employee_id`
+    available as a parameter where they call this - threading it through
+    is mechanical, not a new lookup.
+  - **New endpoint:** `DELETE /v1/conversations/{conversation_id}` (new
+    small router, `api/conversations/`) - same Phase 45 identity-in-
+    payload pattern as every other `DELETE` in this project (JSON body,
+    not headers), gateway-open to any authenticated role (a user deletes
+    only their own data, scoped by `employee_id` as above). Returns how
+    many turns were deleted (0 if the conversation didn't exist or
+    belonged to someone else - same info either way, not distinguished,
+    so the endpoint doesn't confirm/deny another employee's conversation_id).
+  - **Error handling:** no new try/except added in `conversation_memory
+    .py`/`ConversationStore` - a real Postgres failure propagates like
+    every other client-layer method in this project (not `health_check()`,
+    which is the only method required to return errors as data), caught
+    by `main.py`'s existing global `@app.exception_handler(Exception)` as
+    a generic 500 - confirmed that handler exists before relying on it,
+    not assumed.
+  - **Testing strategy, matching real project precedent:** `postgres_client
+    .py` itself has zero dedicated unit tests today (confirmed - `RAG_
+    METADATA_STORE=sqlite` is the active default, Postgres is only
+    exercised live/manually) - `ConversationStore`'s own unit tests follow
+    the same precedent (mocked `psycopg`/fake store for `conversation_memory
+    .py`'s own tests, no real Postgres required in the default suite,
+    matching this project's zero-network-call guarantee for `pytest -v`).
+    One real, live Postgres verification (insert/load/delete against the
+    actual running instance) done by hand this session, not added as an
+    automated default-suite test - same precedent `postgres_client.py`
+    itself already set.
+  - **User-visible behavior:** conversation history now survives a server
+    restart. New `DELETE /v1/conversations/{conversation_id}` endpoint.
+  - **Failure modes:** Postgres unreachable -> 500 via the global handler
+    (see above) - no graceful degradation to in-memory fallback, since
+    silently losing durability without telling the caller would be worse
+    than a clear failure.
+  - **Out of scope:** Redis migration (explicitly deferred by the user);
+    a fast/durable two-tier split; summarization or trimming of long
+    conversation histories (every turn is kept, no pruning logic added).
+  - **Open questions:** none.
+
+  **Verified:** full default suite: 270 passed (265 + 5 new - 2
+  `delete_conversation` unit tests, 3 new route tests). `bandit -ll`: 0
+  findings at any severity. Live, real Postgres (not faked) end to end,
+  twice: (1) direct `conversation_memory` calls - saved a turn, loaded it
+  back correctly, confirmed a wrong `employee_id` deletes 0 rows and
+  leaves the real 2 rows untouched, then confirmed the correct
+  `employee_id` deletes both; (2) the full HTTP stack - a real
+  `POST /v1/single-agentic-rag/query` with `enable_conversation_memory:
+  true` (real LLM call, real Postgres write), then `DELETE
+  /v1/conversations/{id}` with the same `employee_id` returned
+  `turns_deleted: 2`, a repeat delete returned `0` (already gone, not an
+  error), and a request with no `user_profile` returned `401`. 4 test
+  files updated for the `load_history()`/`save_turn()` signature changes
+  (async, `employee_id` added) - `test_conversation_memory.py`,
+  `test_orchestration_agent.py`, `test_multi_agent_pipeline.py`,
+  `test_pipeline.py` - all pass against the new `FakeConversationStore`.
+
+- [x] **Phase 77 (2026-10-05) — User-directed: embedding cache, Postgres-
+  backed (same infra choice as Phase 76) - ingestion-side only, query-side
+  flagged as a scoped follow-up, not built here.**
+
+  **Spec:**
+  - **Context:** next item in the user's own confirmed sequence (Postgres
+    for caching, exact-match first). No caching of any kind exists today -
+    confirmed again before starting (Redis mentioned once in a comment,
+    never used; zero cache tables anywhere).
+  - **Scope decision, flagged:** embeddings get generated in two different
+    places in this codebase - ingestion (`embedding_generator
+    .generate_embeddings()`, a clean, explicit function) and query-time
+    retrieval (inside LangChain's own `OpenAIEmbeddings`, called
+    internally by `Chroma`/`PineconeVectorStore`'s own `similarity_search()`
+    - no explicit "embed the query" step exists in `retriever.py` to hook
+    into directly). This phase caches the **ingestion side only** - a
+    clean function wrap, well-contained. Query-side caching needs
+    subclassing LangChain's `Embeddings` interface (`embed_query()`/
+    `embed_documents()`, and their async variants) carefully enough not
+    to introduce a subtle sync/async bug in a path every live query
+    already depends on - a real follow-up, not quietly dropped, tracked
+    in `docs/agent-reference/BACKLOG.md`.
+  - **New client, same pattern as `conversation_store.py`:** `common/
+    clients/db_client/embedding_cache.py` - `EmbeddingCache` class, one
+    table `embedding_cache(content_hash, embedding_model, embedding TEXT
+    [JSON-encoded], created_at, PRIMARY KEY (content_hash,
+    embedding_model))`. Key is `sha256(chunk_text).hexdigest()`, same
+    hashing approach `documents_service.py` already uses for document-
+    level `content_hash` (`hashlib.sha256(...).hexdigest()`), applied at
+    chunk granularity instead - not a new convention invented for this.
+    Batch methods (`get_many`/`set_many`) since ingestion always embeds a
+    list of chunks together, not one at a time.
+  - **Embedding storage format:** JSON-encoded text column, not a vector/
+    array column type - no `pgvector` extension (would be a new, unapproved
+    dependency/extension); this cache only ever does exact key lookups
+    (`content_hash` + `embedding_model`), never similarity search over
+    stored vectors, so there's no need for a real vector column type.
+  - **Breaking signature change, contained:** `generate_embeddings()`
+    becomes `async def` (cache lookup is DB I/O) - one real caller
+    (`doc_processing/pipeline.py::index_document()`, already `async def`)
+    and one dedicated test file, confirmed by grep before starting.
+  - **Cache logic:** for each chunk, check the cache first (keyed by its
+    own content hash); only chunks missing from the cache get sent to the
+    real embedding API, in one batched call (not one call per miss);
+    cache misses get written back after. A full cache hit for all chunks
+    (e.g. re-indexing an unchanged document) skips the embedding API call
+    entirely.
+  - **User-visible behavior:** none directly - same embeddings, same
+    indexing result. Re-indexing an unchanged document should now cost
+    nothing in embedding API calls (previously re-embedded every chunk
+    every time).
+  - **Failure modes:** a cache read/write failure is not caught specially -
+    propagates like every other client-layer method, same reasoning as
+    Phase 76.
+  - **Testing strategy:** same precedent as Phase 76 - `EmbeddingCache`'s
+    own tests use a `FakeEmbeddingCache` (new, added to `tests/conftest.py`
+    next to `FakeConversationStore`), no real Postgres in the default
+    suite. One live, real-Postgres verification done by hand.
+  - **Out of scope:** query-time embedding caching (see above, tracked in
+    BACKLOG.md); `pgvector`/similarity-based cache lookups (this is an
+    exact-match cache only, per the user's own confirmed starting scope).
+  - **Open questions:** none.
+
+  **Verified:** 5 unit tests (3 existing, rewritten for the async
+  signature and the new fake; 2 new, confirming a cached chunk skips the
+  real client and a full cache hit makes zero client calls). Full default
+  suite: 272 passed (270 + 2 new). `bandit -ll`: 0 findings. Live, real
+  Postgres and real OpenAI (not faked), with INFO-level logging on to see
+  the real hit/miss counts: first call on a new chunk logged `0 cache
+  hit(s), 1 cache miss(es)` plus a real `openai embeddings.create`
+  API call; the identical second call logged `1 cache hit(s), 0 cache
+  miss(es)` with **no** `embeddings.create` call at all in the log -
+  proof the cache actually fired, not just that OpenAI's embeddings
+  happen to be deterministic for repeated input (checked for the real
+  absence of the API-call log line, not just that the returned vectors
+  matched).
+
+- [x] **Phase 78 (2026-10-05) — User-directed: answer cache, Postgres-
+  backed, exact-match only (user's confirmed starting scope - the
+  diagram's "Tier 2 similar" semantic matching is not built here).**
+
+  **Spec:**
+  - **Scope:** genai-rag's `pipeline.answer_query()` only - the one
+    pipeline that currently has a plain, deterministic
+    retrieve-then-generate path. Single/multi-agentic-rag are not wired
+    to this cache in this phase (both reason iteratively/dispatch to
+    multiple agents - caching "the final answer" there is a different,
+    bigger question about what's actually safe to treat as a pure
+    function of the input, not assumed answerable the same way here).
+  - **Real correctness issue found while designing this, not glossed
+    over:** a conversation-memory-enabled request's answer depends on
+    prior turns (`chat_history`), not just the query text - caching it
+    under a key that ignores conversation history would serve a stale
+    answer that silently ignores what the caller just said. Fixed by
+    **never checking or writing the cache when
+    `enable_conversation_memory` is true** - not a partial/best-effort
+    cache for that case, skipped entirely.
+  - **Cache key, resolved not raw:** built from the query plus every
+    parameter that can change the answer (`top_k`, `vector_db`,
+    `search_strategy`, `model_name`, `temperature`, `max_tokens`,
+    `use_multi_query`, `use_self_query`, `llm_provider`) - using the
+    *resolved* values (`resolved_top_k`, `resolved_vector_db`, etc.,
+    already computed by `answer_query()` before this phase), not the raw
+    possibly-`None` request fields. Two requests that resolve to the same
+    effective parameters (one explicit, one defaulted) now correctly
+    share a cache entry; if `.env`'s own defaults change later, old
+    entries keyed on the previous resolved values simply stop matching
+    new requests, not silently serve stale answers under a falsely-shared
+    key. `employee_id` is deliberately excluded from the key - a policy
+    answer shouldn't vary by who asks (personalized data like leave
+    balance already bypasses this whole pipeline via `try_route_to_mcp()`,
+    confirmed in Phase 73, so nothing personalized ever reaches here).
+  - **New client, same pattern as Phase 76/77's own:** `common/clients/
+    db_client/answer_cache.py` - `AnswerCache` class, one table
+    `answer_cache(cache_key TEXT PRIMARY KEY, query TEXT, answer_json
+    TEXT, created_at)`. `build_cache_key()` is a plain module function
+    (sha256 of a canonical sorted-JSON blob), not a method - matches this
+    project's existing `hashlib.sha256(...).hexdigest()` convention
+    (`documents_service.py`'s `content_hash`, Phase 77's `hash_text()`).
+  - **Invalidation - blunt, matches the diagram's own design intent
+    ("new doc version clears"):** the whole `answer_cache` table is
+    cleared on any successful document change - hooked into
+    `documents_service.py`'s `_index_now()` (on a successful
+    `pipeline.index_document()` call) and `delete_document()` (the one
+    shared primitive under every delete path - `delete_all_documents()`/
+    `delete_test_noise_documents()` both call it, so hooking there covers
+    all three without a second hook; a bulk delete clears an
+    already-emptying cache repeatedly, a correctness no-op, not a bug).
+    No per-document dependency tracking (which cached answers actually
+    referenced the changed document) - out of scope, a real future
+    refinement if the blunt version turns out too aggressive in practice.
+  - **What gets cached:** the full result dict `answer_query()` already
+    returns, built *after* `check_output()` - a cache hit serves an
+    already-guardrail-checked answer and skips retrieval, generation,
+    and the output guardrail entirely, not just generation.
+  - **User-visible behavior:** a repeated identical (non-memory) query
+    now returns near-instantly with no new retrieval/generation cost.
+  - **Failure modes:** a cache read/write failure propagates like every
+    other client-layer method (same reasoning as Phase 76/77) - not
+    caught specially, so a broken cache fails loudly rather than silently
+    serving nothing and looking like the cache was simply empty.
+  - **Testing strategy:** same precedent as Phase 76/77 - `AnswerCache`'s
+    own tests use a new `FakeAnswerCache` (added to `tests/conftest.py`),
+    no real Postgres in the default suite. One live, real-Postgres,
+    real-LLM verification done by hand.
+  - **Out of scope:** Tier-2 semantic/similarity matching (exact-match
+    only, per the user's own confirmed scope); caching single/multi-
+    agentic-rag's answers (see Scope above); per-document invalidation
+    tracking (see Invalidation above).
+  - **Open questions:** none.
+
+  **Verified:** real correction made mid-phase, not after - a first full
+  default-suite run surfaced a genuine regression: `_index_now()`/
+  `delete_document()`'s new `answer_cache().clear_all()` call hit real
+  Postgres inside `test_routes_documents.py` (that file deliberately uses
+  real-but-local SQLite/Chroma, no network call either way - Postgres
+  broke that property), turning a normally ~14s file into ~40s; separately,
+  `test_pipeline.py` got served a real, stale cache hit from an earlier
+  live-verification query, short-circuiting the exact resolution logic
+  that file exists to test. Both traced to their real cause (not patched
+  over blindly): made invalidation itself best-effort
+  (`_clear_answer_cache_best_effort()`, catches and logs rather than
+  raising - a down cache must never block a real upload/delete), added a
+  no-op fixture to `test_routes_documents.py`, and added a proper
+  `FakeDBGateway`-backed autouse fixture to `test_pipeline.py` - then
+  caught and fixed a second bug in that very fixture (`lambda:
+  FakeDBGateway()` built a *new* fake gateway on every call, meaning
+  nothing ever actually cached across two calls in the same test - fixed
+  to share one instance). Also manually cleared 4 real cache rows these
+  investigations had accidentally written into the live Postgres instance
+  before the fixtures existed. Full default suite, after all of this:
+  274 passed, back to its normal ~20s runtime. Full eval suite re-ran
+  clean too (6 passed). 2 new behavior tests confirm a cache hit skips
+  `retrieve_chunks()`/`generate_answer()` entirely (call-counted, not
+  just same-answer-by-coincidence) and a conversation-memory-enabled
+  request never touches the cache on either call. Live, real Postgres and
+  real LLM calls through the actual HTTP endpoint, timed: the same
+  question asked twice - first call `13.734s` (real retrieval +
+  generation), second call `0.754s` (an ~18x speedup), byte-for-byte
+  identical response bodies, and the server's own log shows the literal
+  line `Answer cache hit for 'What is the tuition assistance maximum per
+  year?'` on the second call. `bandit -ll`: 0 findings at any severity.
+
+- [x] **Phase 79 (2026-10-05) — User-directed: confirm (not build) whether
+  OpenAI's automatic prompt caching is actually firing - step 5 of the
+  user's own confirmed sequence. No `src/` changes - pure empirical
+  verification, no spec gate applies.**
+
+  **Finding: it is not firing anywhere in this project today, confirmed
+  empirically, not assumed:**
+  - OpenAI's automatic prompt caching only activates on a stable prefix
+    **1024+ tokens long**. Measured every static system prompt in this
+    codebase directly: `PLANNER_SYSTEM_PROMPT` ~239 tokens,
+    `REVIEWER_SYSTEM_PROMPT` ~76 tokens, `ORCHESTRATION_SYSTEM_PROMPT`
+    ~93 tokens, genai-rag's own `SYSTEM_PROMPT_TEMPLATE` ~653 tokens -
+    all below the threshold on their own.
+  - The one place a real request's prompt *does* cross 1024 tokens is
+    `orchestration_agent.py`'s own multi-iteration tool-calling loop,
+    confirmed live: a real 2-tool-call question logged `411 prompt`
+    tokens on iteration 1, `2210 prompt` tokens on iteration 2. But each
+    iteration's prefix is **novel** (it grew by a new, different tool
+    result each time) - prompt caching only discounts a prefix the
+    provider has already seen, so a first-time-seen 2210-token prompt
+    gets no cache credit even though it's past the size threshold.
+  - **Conclusion: not a gap to build around right now** - no static
+    prompt in this codebase is long enough on its own, and the one path
+    that does grow past the threshold never repeats the same prefix
+    twice. This isn't a missing feature, it's confirmation the current
+    prompts simply don't create the repeated-long-prefix pattern prompt
+    caching is for.
+  - **Real, separate gap found and flagged while investigating, not
+    silently noticed and dropped:** genai-rag's own generation path
+    (`response_generator.py`'s `GatewayChatModel` → `OpenAIChatClient
+    .ask()`) has **zero token/usage visibility at all** - confirmed live,
+    `response.usage_metadata` is `None` on every call through this path.
+    `ask()` only ever returns the plain answer string, discarding the
+    real OpenAI response object (and its `usage` field) entirely before
+    `GatewayChatModel._generate()` ever sees it. This means Phase 66's
+    cost/token logging (which covers the 3 agent files) has a real,
+    unaddressed hole: genai-rag's own query endpoint, the most heavily
+    used one, has no token/cost telemetry anywhere. Also confirmed this
+    path isn't picked up by LangSmith tracing either - `OpenAIChatClient`
+    calls the raw `openai` SDK directly, not instrumented via
+    `langsmith.wrappers.wrap_openai()`, so `LANGCHAIN_TRACING_V2` doesn't
+    see it. Tracked in `docs/agent-reference/BACKLOG.md`, not fixed here -
+    out of this step's own scope (confirm, don't build).
+
+- [x] **Phase 80 (2026-10-05) — User-directed: wire `get_release_decision()`
+  into a real, working CI gate - step 6 of the user's own confirmed
+  sequence. Manual trigger only (user's explicit choice, confirmed before
+  building - a real-LLM-cost job must not fire on every push).**
+
+  **Spec:**
+  - **Context:** `get_release_decision()` (Phase 62) and its own unit
+    tests already exist and are already correct - what's missing is
+    wiring, not logic. `ci.yml`'s existing jobs (test suite, bandit,
+    pip-audit, docker build) all run on every push (`branches: ["**"]`)
+    and cost nothing real; this job is different in kind (real LLM calls,
+    real cost) and needed its own, separate trigger decision, confirmed
+    with the user before building anything: `workflow_dispatch` only, not
+    automatic on any push.
+  - **Real blocker found and solved, not glossed over:** a fresh GitHub
+    Actions runner has neither a running Postgres (Phase 76/77/78 all
+    hard-depend on it, no fallback) nor an indexed knowledge base (empty
+    vector store) - the gate cannot produce a meaningful verdict against
+    either. Confirmed with the user before building: do this properly
+    (a real Postgres service container + a real fresh-ingestion step) or
+    local-only (script only, no workflow file). User chose the full,
+    real version.
+  - **New workflow, separate from `ci.yml`:** `.github/workflows/
+    eval-gate.yml` - `workflow_dispatch` trigger only. A `postgres:16`
+    service container (matching `POSTGRES_DB_*` settings already used
+    everywhere else in this project). `RAG_METADATA_STORE=sqlite` (the
+    project's own existing default - no reason to also require Postgres
+    for metadata when SQLite already works fine for it) and
+    `ACTIVE_VECTOR_DB=chromadb` in `persistent` mode (no external vector
+    DB service needed - Chroma's local-persistent mode is file-based,
+    same as every other live verification this session already used).
+    `OPENAI_API_KEY` read from a GitHub Actions secret - **the user adds
+    this manually via GitHub's own UI, not something this session can
+    configure** - flagged clearly, not assumed done.
+  - **New script, `scripts/ingest_kb_docs.py`:** starts the real app
+    (`uvicorn`, backgrounded, polled on `/ping` before proceeding - same
+    readiness pattern already used by hand throughout this session's own
+    live verifications) and uploads every real PDF in `resources/kb_docs/`
+    through the real `POST /v1/genai-rag/ingest-document/documents`
+    endpoint - the actual production upload path, not a shortcut that
+    calls internal functions directly, so the gate tests what a real
+    deploy would actually serve. Safe to re-run - the endpoint's own
+    existing content-hash dedup (Phase 16) makes a second run against an
+    already-populated KB a no-op, not a duplicate-document error.
+  - **New script, `scripts/run_release_gate.py`:** runs every golden-
+    dataset case through genai-rag's real `pipeline.answer_query()` (the
+    same `ask_genai_rag()` adapter pattern `test_golden_dataset_harness
+    .py` already established), **excluding the `agent_call`-classified
+    cases** (Phase 73) - scoring a live MCP-routed answer against
+    retrieval/generation metrics isn't meaningful. Averages each metric
+    across every scored case, calls the existing, already-tested
+    `get_release_decision()` on the aggregate, prints a clear per-case and
+    aggregate report, and exits non-zero on `BLOCK` - the actual CI gate
+    behavior (a `BLOCK` verdict fails the GitHub Actions job).
+  - **Scope, flagged:** genai-rag only, matching Phase 78's own answer-
+    cache scoping reasoning - single/multi-agentic-rag could use the same
+    pattern with their own existing adapters (Phase 69), a natural,
+    same-shape follow-up, not bundled in here.
+  - **User-visible behavior:** a new "Run workflow" button on the Actions
+    tab for "Release Eval Gate" - does nothing until triggered by hand.
+  - **Failure modes:** a `BLOCK` verdict fails the job (`exit 1`) -
+    visible in the Actions run, not just printed and ignored. An
+    unreachable OpenAI API (missing/invalid secret) fails ingestion or
+    scoring outright, same as any other real API dependency.
+  - **Out of scope:** single/multi-agentic-rag's own release gates
+    (see Scope above); automatic triggering on any push (explicitly
+    confirmed with the user, manual only); a Slack/email notification on
+    the verdict (not asked for).
+  - **Open questions:** none - the one real open item (adding
+    `OPENAI_API_KEY` as a GitHub Actions secret) is the user's own action,
+    not a design question.
+
+  **Verified:** YAML syntax validated. Both scripts tested locally against
+  the real environment (same commands the workflow runs, `python -m
+  scripts.ingest_kb_docs`/`python -m scripts.run_release_gate` - caught a
+  real `ModuleNotFoundError` from invoking them as plain scripts instead
+  of modules, fixed by adding `scripts/__init__.py` and switching both
+  invocations). Ingestion script run against the real, already-populated
+  KB - correctly reported every PDF as `duplicate` (content-hash dedup,
+  Phase 16), proving the safe-to-rerun claim for real, not just in theory.
+
+  **Two further real bugs found and fixed while running the actual gate
+  end to end, not assumed correct from the design alone:**
+  1. `retrieved_ids` was built from `chunk["document_id"]` (a UUID) but
+     `expected_source_document` uses the dataset's own short keys
+     ("401k.pdf") - neither could ever match the other, so precision/
+     recall/f1 came back `0.0` on the first full run, for every single
+     case. Fixed in `ask_genai_rag()`/`_load_scorable_cases()` - compare
+     against the real `chunk["filename"]`, resolved through the dataset's
+     own `_meta.source_documents` mapping.
+  2. Confirmed with the user before fixing (not assumed): even after fix
+     #1, `calculate_retrieval_metrics()`'s course-faithful `k=3` default
+     didn't match genai-rag's real `top_k=5`, capping precision - passing
+     the real `k=5` explicitly then revealed a *deeper* issue, confirmed
+     live: precision@k is mathematically capped at `1/k` when (as here)
+     every golden case has exactly one labeled relevant document, which
+     is a mismatch between the metric and this project's own
+     deliberately-broad multi-chunk RAG design, not a quality problem -
+     confirmed by recall sitting at `1.0`/`0.818` (aggregate) while
+     precision stayed near its structural ceiling regardless of k.
+     Resolved by confirming with the user to gate only on
+     `recall`/`groundedness`/`completeness` (`GATE_METRICS`) -
+     precision/f1 are still computed and printed per case as
+     informational context, just never block a release.
+     `golden_dataset_harness.py` itself was never modified - both fixes
+     live entirely in `scripts/run_release_gate.py`, course-faithful
+     logic stays untouched for every other caller.
+  - **Full, real run against all 24 golden cases, genuinely live** (real
+    OpenAI calls, the real Postgres answer cache, the real ChromaDB KB):
+    final verdict **`PASS`** - `recall: 0.818`, `groundedness: 0.975`,
+    `completeness: 0.842`, all three above their `RELEASE_GATE_THRESHOLDS`
+    pass marks. One remaining observation, noted not chased further: 3
+    cases (`401k-01/02/03`) showed `recall: 0.0` despite strong
+    groundedness (`0.9`) - isolated and confirmed live to be a stale
+    answer-cache entry from earlier testing sessions, not a real
+    retrieval defect (a direct, fresh `retrieve_chunks()` call for the
+    same query returned the correct document in all 5 slots). Cleared the
+    answer cache afterward so no stale/test-session data remains in the
+    real Postgres instance. Full default suite: 274 passed (scripts/ has
+    no dedicated unit tests of its own, matching this project's existing
+    precedent for CI/operational scripts). `bandit -ll` on `src/
+    hrb_chatbot` and the new `scripts/` directory: 0 findings at any
+    severity.
 
 ## Verification checklist (Phases 1-3)
 

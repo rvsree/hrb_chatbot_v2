@@ -1,0 +1,88 @@
+name: Release Eval Gate
+
+# Manual trigger only (Phase 80, confirmed with the user before building) -
+# unlike ci.yml's jobs, this one makes real LLM calls and costs real money,
+# so it must never fire automatically on a push. Run this by hand when
+# you're ready to check whether a release candidate is actually good enough
+# to deploy - see docs/agent-reference/RAG-ROADMAP.md's Phase 80 entry for
+# the full design and docs/agent-reference/CICD-BRANCHING-STRATEGY.md for
+# how this fits alongside ci.yml/deploy.yml.
+#
+# Requires an OPENAI_API_KEY repo secret - add it under Settings > Secrets
+# and variables > Actions before the first real run. Nothing here can set
+# that for you.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  eval-gate:
+    name: Golden dataset release gate (real LLM calls, real cost)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # A fresh runner has no Postgres at all - Phase 76/77/78's conversation
+    # history/embedding cache/answer cache all hard-depend on it, no
+    # fallback. This service container is the whole reason this job needs
+    # more than just "checkout, install, run" - see Phase 80's own spec for
+    # why that's a deliberate, confirmed choice, not scope creep.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hrb_chatbot_v2
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      POSTGRES_DB_HOST: localhost
+      POSTGRES_DB_PORT: "5432"
+      POSTGRES_DB_NAME: hrb_chatbot_v2
+      POSTGRES_DB_USER: postgres
+      POSTGRES_DB_PASSWORD: postgres
+      # SQLite for metadata (this project's own existing default - no
+      # reason to also require Postgres there) and local-persistent Chroma
+      # for vectors (file-based, no external vector DB service needed).
+      RAG_METADATA_STORE: sqlite
+      ACTIVE_VECTOR_DB: chromadb
+      CHROMA_DB_MODE: persistent
+      CHROMA_DB_PERSIST_DIR: data/chroma_db
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Start the app
+        run: |
+          python -m uvicorn src.hrb_chatbot.main:app --port 8093 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8093/ping && exit 0
+            sleep 1
+          done
+          echo "App never became healthy" >&2
+          exit 1
+
+      - name: Ingest the real KB documents
+        # Through the real upload endpoint, not a shortcut - see
+        # scripts/ingest_kb_docs.py's own docstring for why. Run as a
+        # module from the repo root (-m), same convention this project's
+        # own CLAUDE.md requires everywhere else, since src/__init__.py
+        # makes a plain `python scripts/x.py` invocation unable to import src.
+        run: python -m scripts.ingest_kb_docs
+
+      - name: Run the golden-dataset release gate
+        # Exits non-zero on a BLOCK verdict, failing this job for real.
+        run: python -m scripts.run_release_gate

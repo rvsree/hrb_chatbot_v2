@@ -5,8 +5,29 @@ the request omits them, not a hardcoded literal (Phase 38). retrieve_chunks/
 generate_answer are faked - no real network call, this only tests the
 resolution branching."""
 
+import pytest
+
+from src.hrb_chatbot.ai.pre_processing import conversation_memory
 from src.hrb_chatbot.ai.rag_pipeline import pipeline
 from src.hrb_chatbot.common.rag_query_params import RagQueryParams
+from tests.conftest import FakeConversationStore, FakeDBGateway
+
+
+@pytest.fixture(autouse=True)
+def _fake_answer_cache(monkeypatch):
+    """Phase 78: pipeline.py now calls get_db_gateway().answer_cache() on every
+    answer_query() call - fake it for every test in this file, or tests would
+    hit real Postgres (confirmed live: one unfaked run got served a real,
+    stale cache hit from an earlier live-verification query, short-circuiting
+    the very resolution logic this file exists to test)."""
+    gateway = FakeDBGateway()
+    monkeypatch.setattr(pipeline, "get_db_gateway", lambda: gateway)
+
+
+def _patch_conversation_store(monkeypatch, conversation_store=None):
+    gateway = FakeDBGateway(conversation_store=conversation_store or FakeConversationStore())
+    monkeypatch.setattr(conversation_memory, "get_db_gateway", lambda: gateway)
+    return gateway
 
 
 def _fake_retrieve_chunks_capturing(captured, chunks=None):
@@ -143,9 +164,7 @@ async def test_conversation_memory_disabled_by_default_no_conversation_id(monkey
 
 
 async def test_enabling_conversation_memory_generates_and_saves_a_turn(monkeypatch):
-    from src.hrb_chatbot.ai.pre_processing import conversation_memory
-
-    conversation_memory._CONVERSATIONS.clear()
+    _patch_conversation_store(monkeypatch)
     _patch_guardrails(monkeypatch)
     monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve_chunks_capturing({}, chunks=[{"filename": "x", "chunk_index": 0, "text": "y"}]))
     monkeypatch.setattr(pipeline, "generate_answer", _fake_generate_answer_capturing({}))
@@ -153,14 +172,12 @@ async def test_enabling_conversation_memory_generates_and_saves_a_turn(monkeypat
     result = await pipeline.answer_query(RagQueryParams(query="test question", enable_conversation_memory=True))
 
     assert result["conversation_id"] is not None
-    saved = conversation_memory.load_history(result["conversation_id"])
+    saved = await conversation_memory.load_history(result["conversation_id"])
     assert [m.content for m in saved] == ["test question", "fake answer"]
 
 
 async def test_mcp_routed_answer_echoes_conversation_id_but_does_not_save_a_turn(monkeypatch):
-    from src.hrb_chatbot.ai.pre_processing import conversation_memory
-
-    conversation_memory._CONVERSATIONS.clear()
+    _patch_conversation_store(monkeypatch)
 
     async def _fake_try_route_to_mcp(query, employee_id):
         return {"query": query, "answer": "MCP answer", "model_used": "mcp:x", "sources": [],
@@ -174,14 +191,13 @@ async def test_mcp_routed_answer_echoes_conversation_id_but_does_not_save_a_turn
     )
 
     assert result["conversation_id"] is not None
-    assert conversation_memory.load_history(result["conversation_id"]) == []
+    assert await conversation_memory.load_history(result["conversation_id"]) == []
 
 
 async def test_an_existing_conversation_id_is_passed_to_generate_answer_as_chat_history(monkeypatch):
-    from src.hrb_chatbot.ai.pre_processing import conversation_memory
-
-    conversation_memory._CONVERSATIONS.clear()
-    conversation_memory.save_turn("conv-1", "earlier question", "earlier answer")
+    conversation_store = FakeConversationStore()
+    _patch_conversation_store(monkeypatch, conversation_store)
+    await conversation_memory.save_turn("conv-1", "EMP052", "earlier question", "earlier answer")
     captured = {}
     _patch_guardrails(monkeypatch)
     monkeypatch.setattr(
@@ -201,3 +217,52 @@ async def test_an_existing_conversation_id_is_passed_to_generate_answer_as_chat_
     )
 
     assert [m.content for m in captured["chat_history"]] == ["earlier question", "earlier answer"]
+
+
+async def test_a_cache_hit_skips_retrieval_and_generation_entirely(monkeypatch):
+    """Phase 78 - the second identical call must not touch retrieve_chunks/
+    generate_answer at all, not just return the same answer by coincidence."""
+    _patch_guardrails(monkeypatch)
+    call_count = {"retrieve": 0, "generate": 0}
+
+    async def _counting_retrieve(query, top_k=5, vector_db=None, search_strategy=None, **kwargs):
+        call_count["retrieve"] += 1
+        return ([{"filename": "x", "chunk_index": 0, "text": "y"}], None)
+
+    def _counting_generate(query, chunks, model_name=None, temperature=0.0, max_tokens=None, chat_history=None):
+        call_count["generate"] += 1
+        return {"answer": "fake answer", "model_used": "gpt-4.1-mini"}
+
+    monkeypatch.setattr(pipeline, "retrieve_chunks", _counting_retrieve)
+    monkeypatch.setattr(pipeline, "generate_answer", _counting_generate)
+
+    first = await pipeline.answer_query(RagQueryParams(query="what is the parental leave policy?"))
+    second = await pipeline.answer_query(RagQueryParams(query="what is the parental leave policy?"))
+
+    assert call_count == {"retrieve": 1, "generate": 1}  # only the first call did real work
+    assert first["answer"] == second["answer"] == "fake answer"
+
+
+async def test_conversation_memory_enabled_requests_never_use_the_answer_cache(monkeypatch):
+    """Phase 78 - a memory-enabled answer depends on prior turns, so it must
+    never be served from (or written to) the cache, even for a repeated query."""
+    _patch_conversation_store(monkeypatch)
+    _patch_guardrails(monkeypatch)
+    call_count = {"generate": 0}
+
+    async def _fake_retrieve(query, top_k=5, vector_db=None, search_strategy=None, **kwargs):
+        return ([{"filename": "x", "chunk_index": 0, "text": "y"}], None)
+
+    def _counting_generate(query, chunks, model_name=None, temperature=0.0, max_tokens=None, chat_history=None):
+        call_count["generate"] += 1
+        return {"answer": f"answer #{call_count['generate']}", "model_used": "gpt-4.1-mini"}
+
+    monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve)
+    monkeypatch.setattr(pipeline, "generate_answer", _counting_generate)
+
+    first = await pipeline.answer_query(RagQueryParams(query="what is my balance?", enable_conversation_memory=True))
+    second = await pipeline.answer_query(RagQueryParams(query="what is my balance?", enable_conversation_memory=True))
+
+    assert call_count["generate"] == 2  # both calls did real work - never cache-served
+    assert first["answer"] == "answer #1"
+    assert second["answer"] == "answer #2"

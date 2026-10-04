@@ -6,6 +6,8 @@ from src.hrb_chatbot.ai.rag_pipeline.query_retrieval.retriever import retrieve_c
 from src.hrb_chatbot.ai.rag_pipeline.response_generation.guardrails_output import check_output
 from src.hrb_chatbot.ai.rag_pipeline.response_generation.response_generator import generate_answer
 from src.hrb_chatbot.ai.rag_pipeline.tools.mcp_tools import try_route_to_mcp
+from src.hrb_chatbot.common.clients.db_client.answer_cache import build_cache_key
+from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
 from src.hrb_chatbot.common.config.settings import get_active_llm_provider, get_active_vector_db, read_setting
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rag_query_params import RagQueryParams
@@ -38,6 +40,27 @@ async def answer_query(params: RagQueryParams) -> dict:
     else:
         resolved_temperature = params.temperature
 
+    # Phase 78: answer cache, exact match only - never used for a conversation-memory
+    # request, since that answer depends on prior turns, not just the query alone.
+    cache_key = None
+    if not params.enable_conversation_memory:
+        cache_key = build_cache_key(
+            checked_query,
+            top_k=resolved_top_k,
+            vector_db=resolved_vector_db,
+            search_strategy=resolved_search_strategy,
+            model_name=params.model_name,
+            temperature=resolved_temperature,
+            max_tokens=params.max_tokens,
+            use_multi_query=params.use_multi_query,
+            use_self_query=params.use_self_query,
+            llm_provider=resolved_llm_provider,
+        )
+        cached_result = await get_db_gateway().answer_cache().get(cache_key)
+        if cached_result is not None:
+            logger.info("Answer cache hit for %r", checked_query)
+            return cached_result
+
     logger.info(
         "Answering query %r (top_k=%s, vector_db=%s, search_strategy=%s, use_multi_query=%s, "
         "use_self_query=%s, llm_provider=%s)",
@@ -59,7 +82,7 @@ async def answer_query(params: RagQueryParams) -> dict:
         use_self_query=params.use_self_query,
         llm_provider=resolved_llm_provider,
     )
-    chat_history = conversation_memory.load_history(resolved_conversation_id) if resolved_conversation_id else None
+    chat_history = await conversation_memory.load_history(resolved_conversation_id) if resolved_conversation_id else None
     generation = generate_answer(
         checked_query, chunks, model_name=params.model_name, temperature=resolved_temperature,
         max_tokens=params.max_tokens, chat_history=chat_history,
@@ -67,11 +90,11 @@ async def answer_query(params: RagQueryParams) -> dict:
     checked_answer = await check_output(checked_query, generation["answer"])
 
     if resolved_conversation_id:
-        conversation_memory.save_turn(resolved_conversation_id, checked_query, checked_answer)
+        await conversation_memory.save_turn(resolved_conversation_id, params.employee_id, checked_query, checked_answer)
 
     logger.info("Query %r answered using %d chunk(s)", checked_query, len(chunks))
 
-    return {
+    result = {
         "query": checked_query,
         "answer": checked_answer,
         "model_used": generation["model_used"],
@@ -81,3 +104,8 @@ async def answer_query(params: RagQueryParams) -> dict:
         "applied_filter": applied_filter,
         "conversation_id": resolved_conversation_id,
     }
+
+    if cache_key:
+        await get_db_gateway().answer_cache().set(cache_key, checked_query, result)
+
+    return result

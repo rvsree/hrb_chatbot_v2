@@ -6,6 +6,7 @@ from fastapi.exceptions import RequestValidationError
 
 from src.hrb_chatbot.api.admin import routes_health
 from src.hrb_chatbot.api.agentic_rag import query_agent
+from src.hrb_chatbot.api.conversations import manage_conversations
 from src.hrb_chatbot.api.multi_agentic_rag import query_agent as multi_query_agent
 from src.hrb_chatbot.api.dependencies import json_error
 from src.hrb_chatbot.api.rag import ingest_document, retrieve_document
@@ -42,6 +43,7 @@ app.include_router(ingest_document.router_ingest_document, prefix="/v1/genai-rag
 app.include_router(retrieve_document.router_retrieve_document, prefix="/v1/genai-rag/retrieve-document")
 app.include_router(query_agent.router_query_agent, prefix="/v1/single-agentic-rag")
 app.include_router(multi_query_agent.router_query_agent, prefix="/v1/multi-agentic-rag")
+app.include_router(manage_conversations.router_manage_conversations, prefix="/v1/conversations")
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
