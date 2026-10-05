@@ -153,7 +153,7 @@ reviewed before that phase's code starts.
 | 79 — User-directed: confirm (not build) whether prompt caching fires - empirical verification only, no src/ changes | Claude Code | ✅ Done, verified, 2026-10-05 | N/A - verification only, no spec gate applies |
 | 80 — User-directed: `get_release_decision()` wired into a real, manual-trigger CI gate (Postgres service container + fresh KB ingestion + the gate script) | Claude Code | ✅ Done, verified, 2026-10-05 - real run against all 24 cases: PASS | ✅ Spec'd and implemented - see detail below |
 | 81 — User-directed: Postgres cache/memory calls (answer cache, embedding cache, conversation store) degrade gracefully instead of crashing the request when Postgres is unreachable | Claude Code | 📋 Planned | ✅ Spec'd - see detail below |
-| 82 — Urgent production fix: missing `en_core_web_lg` Spacy model breaks every genai-rag query in production (input guardrail fails-closed) | Claude Code | 🚧 In progress | ✅ Spec'd - see detail below |
+| 82 — Urgent production fix: missing `en_core_web_lg` Spacy model breaks every genai-rag query in production (input guardrail fails-closed) | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -6267,7 +6267,7 @@ Explicitly deferred to a later, separate wave - not part of the above:
     client.
   - **Open questions:** none.
 
-- [ ] **Phase 82 (in progress, 2026-10-05) — Urgent production fix: missing
+- [x] **Phase 82 (2026-10-05) — Urgent production fix: missing
   `en_core_web_lg` Spacy model breaks every genai-rag query in production.**
 
   **Spec:**
@@ -6315,6 +6315,21 @@ Explicitly deferred to a later, separate wave - not part of the above:
     display-only and doesn't affect real query behavior.
   - **Open questions:** none - root cause is confirmed from the real
     error, not inferred.
+
+  **Verified:** Dockerfile fix committed and deployed via the real CI/CD
+  pipeline (`deploy.yml` - full build including the ~400MB model download,
+  push to ECR, App Runner redeploy, smoke test, all green). Confirmed live
+  with a real `POST /v1/genai-rag/retrieve-document/query` call against
+  production immediately after: `200` response, no guardrail block - the
+  exact query that previously returned `422 INPUT_GUARDRAIL_BLOCKED` now
+  succeeds. Same call also incidentally re-confirmed Milestone 1's
+  `ACTIVE_VECTOR_DB` fix: the response's `retrieval_info.vector_db` field
+  read `"pinecone"` with no per-request override - the real default now,
+  not just what `describe-service` reported. (The answer itself came back
+  empty/no-sources - expected, not a new bug: the 45 vectors currently in
+  Pinecone are leftover ad-hoc testing, not yet a real ingest of
+  `resources/kb_docs/` against this corrected config - still the pending
+  "re-run ingestion" item from Milestone 1's own checklist.)
 
 ## Verification checklist (Phases 1-3)
 
