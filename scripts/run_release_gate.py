@@ -9,6 +9,7 @@ own manual trigger), not run automatically."""
 import asyncio
 import json
 import sys
+import traceback
 
 from src.hrb_chatbot.ai.rag_pipeline import pipeline
 from src.hrb_chatbot.ai.rag_pipeline.evaluations.golden_dataset_harness import (
@@ -112,11 +113,18 @@ async def main() -> int:
     print(f"Scoring {len(scorable_cases)} golden case(s) against genai-rag (retrieval k={RETRIEVAL_K})...\n")
 
     for case in scorable_cases:
-        result = await score_case_with_real_k(case)
+        print(f"  scoring {case['id']}...", flush=True)
+        try:
+            result = await score_case_with_real_k(case)
+        except Exception:
+            print(f"  {case['id']}: FAILED", flush=True)
+            traceback.print_exc()
+            sys.stdout.flush()
+            continue
         for metric, score in result["scores"].items():
             if metric in per_metric_scores and score is not None:
                 per_metric_scores[metric].append(score)
-        print(f"  {case['id']}: {result['scores']}")
+        print(f"  {case['id']}: {result['scores']}", flush=True)
 
     aggregated = {metric: sum(scores) / len(scores) for metric, scores in per_metric_scores.items() if scores}
 
@@ -135,4 +143,19 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    # Diagnostic hardening, 2026-10-05: a real failure on a fresh CI
+    # runner produced zero output anywhere - no per-case score, no
+    # traceback, even with PYTHONUNBUFFERED=1 - genuinely unclear why a
+    # normal Python exception wouldn't have printed one. This guarantees
+    # visibility regardless of the mechanism: explicit catch, explicit
+    # flush, explicit non-zero exit, so the next failure (if any) is
+    # finally diagnosable.
+    try:
+        exit_code = asyncio.run(main())
+    except BaseException:
+        print("FATAL - exception escaped main():", flush=True)
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        sys.exit(1)
+    sys.exit(exit_code)
