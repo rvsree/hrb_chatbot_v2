@@ -158,6 +158,7 @@ reviewed before that phase's code starts.
 | 84 — User-directed, Milestone 2: Redis-backed caching (answer cache, embedding cache, rate limiter), Upstash-hosted | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 85 — Found while closing out Milestone 2: SQLiteClient never created its own parent directory, breaking the golden-dataset gate on a fresh runner | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 86 — Found while closing out Milestone 2: eval-gate.yml never had the Phase 82 Spacy fix, and the gate itself silently PASSed with zero cases scored | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
+| 87 — Found during full AWS verification sweep: multi-turn memory bypassed on zero-chunk follow-ups; production metadata store resets on every redeploy (ephemeral SQLite) | Claude Code | 🚧 In progress - code done, AWS deploy pending | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -6669,7 +6670,93 @@ Explicitly deferred to a later, separate wave - not part of the above:
   regressed genai-rag's retrieval/generation quality - the standing gate
   from Phase 80 now genuinely protects this, not just appears to.
 
-## Verification checklist (Phases 1-3)
+- [ ] **Phase 87 (planned, not started) — Found during full AWS
+  verification sweep: multi-turn memory bypassed on zero-chunk
+  follow-ups; production metadata store resets on every redeploy
+  (ephemeral SQLite).**
+
+  **Spec:**
+  - **Context:** requested by the user as a full AWS feature-parity sweep
+    before Milestone 3 - every built feature confirmed working on AWS,
+    not just locally. Two real, independent bugs surfaced, neither
+    related to Redis/Milestone 2:
+    1. A real 2-turn conversation on AWS: turn 1 answered correctly, turn
+       2 ("What did I just ask you about?") returned the canned
+       no-context answer despite `conversation_store`'s `load_turns`
+       succeeding and returning real history. Root cause:
+       `response_generator.py:80`'s `if not chunks:` short-circuits
+       before `chat_history` (only used at line 93) is ever reached -
+       conversation memory only helps when the follow-up *also*
+       independently matches KB content via retrieval.
+    2. `GET /v1/genai-rag/ingest-document/documents` returned 0 documents
+       on AWS, despite Pinecone genuinely holding 272 real vectors
+       (confirmed separately via `/health`). Root cause:
+       `RAG_METADATA_STORE=sqlite` writes to the App Runner container's
+       local disk, which is ephemeral - every redeploy (several happened
+       today) wipes it. Real consequences beyond the list endpoint:
+       content-hash dedup (Phase 16) can't detect prior uploads after a
+       reset, risking duplicate Pinecone vectors on any future re-ingest.
+  - **Data/API contracts:** N/A - no request/response shape changes to
+    either endpoint.
+  - **Fix 1 (conversational fallback):** `generate_answer()` gets a new
+    branch - when `chunks` is empty but `chat_history` is not, call the
+    LLM with a **separate, dedicated prompt** (not `RAG_PROMPT`) scoped
+    explicitly to "answer from prior conversation only, don't invent new
+    HR facts." Keeps the existing strict context-grounded `RAG_PROMPT`
+    completely unchanged for the normal retrieval path - this is an
+    additive branch, not a modification of existing behavior. Only when
+    both `chunks` and `chat_history` are empty does the free, no-LLM-call
+    canned answer still apply (unchanged from today).
+  - **Fix 2 (persistent metadata store):** switch `RAG_METADATA_STORE`
+    from `sqlite` to `postgres` in both local `.env` and the AWS App
+    Runner config - Neon is already provisioned and verified healthy
+    (confirmed repeatedly this session). No new fail-open/graceful-
+    degradation code needed for this one, unlike Phase 84's caches:
+    metadata writes are core data, not a cache - silently discarding a
+    failed `create_document()` call would create untracked, orphaned
+    documents, which is worse than a clear error. This matches the
+    project's own existing error-handling-by-layer convention (service
+    layer raises, doesn't swallow) - `PostgresClient` already behaves
+    this way, no change needed there.
+  - **Operational cleanup required alongside the switch:** today's 272
+    Pinecone vectors have no corresponding Postgres metadata records
+    (they were tracked under the now-reset SQLite, and Postgres's own
+    `documents` table is separately empty). Clear the Pinecone namespace
+    and re-ingest the real 6 KB documents fresh after switching, so
+    metadata and vectors are consistent and dedup has a real baseline to
+    work from - not left as two systems silently out of sync.
+  - **User-visible behavior:** multi-turn conversations can now answer
+    genuine follow-up/meta questions. Document list/get/dedup become
+    reliable in production and survive future redeploys (Neon is
+    external, not tied to the container's ephemeral disk).
+  - **Failure modes:** unchanged for the metadata store (errors still
+    propagate as real exceptions, matching existing convention). The new
+    conversational-fallback branch has no new failure mode of its own -
+    same LLM call pattern as the existing RAG path.
+  - **Out of scope:** Phase 81's originally-scoped Postgres graceful-
+    fallback for `conversation_store` - still open, separate, smaller
+    remaining piece (conversation memory is already best-effort at its
+    own call sites per Phase 76, so this is lower urgency than the
+    metadata-store switch was).
+  - **Open questions:** none - both fixes confirmed necessary from live,
+    reproduced evidence, not assumed.
+
+  **Local-dev scope note:** `RAG_METADATA_STORE` stays `sqlite` in local
+  `.env` - the ephemeral-disk problem is specific to App Runner's
+  container filesystem, not local dev, matching this project's existing
+  local/cloud split (`ACTIVE_VECTOR_DB` stays `chromadb` locally too).
+  Only AWS's config switches to `postgres`. Verified locally anyway via a
+  one-off `RAG_METADATA_STORE=postgres` env override (not persisted) - a
+  real upload correctly showed `"duplicate"` (dedup working against
+  local Postgres's existing record) and listing returned real documents,
+  before touching AWS.
+
+  **Verified:** full suite green (277 passed, +3 new tests for the
+  conversational-fallback branch), `bandit -ll` clean. Pinecone's
+  `hrb_chatbot_kb` namespace cleared (272 -> 0 vectors) ahead of
+  switching AWS's metadata store, so the re-ingest that follows starts
+  both systems from a consistent, empty baseline - not two stores
+  silently out of sync.
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,

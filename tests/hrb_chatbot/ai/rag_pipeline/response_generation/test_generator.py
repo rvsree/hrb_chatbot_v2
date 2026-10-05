@@ -8,6 +8,7 @@ test_retriever.py already fakes it (a BaseChatModel subclass) - no real
 network call."""
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import HumanMessage
 from langchain_core.messages.ai import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import Field
@@ -51,6 +52,46 @@ def test_no_chunks_returns_the_no_context_answer_without_calling_the_llm(monkeyp
 
     assert result["answer"] == response_generator.NO_CONTEXT_ANSWER
     assert fake_llm.calls == []  # never called - no chunks means nothing to ground on
+
+
+def test_no_chunks_but_chat_history_answers_from_history_not_the_canned_response(monkeypatch):
+    # Phase 87: the real bug this covers - a follow-up question that
+    # retrieval can't match on its own must still use conversation memory,
+    # not silently fall back to the free no-context answer.
+    fake_llm = _FakeGatewayChatModel(response_text="You asked about parental leave a moment ago.")
+    monkeypatch.setattr(response_generator, "GatewayChatModel", lambda **kwargs: fake_llm)
+    history = [HumanMessage(content="How much parental leave do I get?"), AIMessage(content="16 weeks.")]
+
+    result = response_generator.generate_answer("What did I just ask you about?", chunks=[], chat_history=history)
+
+    assert result["answer"] == "You asked about parental leave a moment ago."
+    assert len(fake_llm.calls) == 1  # unlike the no-history case, the LLM IS called here
+
+
+def test_no_chunks_and_no_chat_history_still_returns_the_canned_answer(monkeypatch):
+    # Unchanged behavior: genuinely nothing to work with (no retrieval, no history).
+    fake_llm = _FakeGatewayChatModel()
+    monkeypatch.setattr(response_generator, "GatewayChatModel", lambda **kwargs: fake_llm)
+
+    result = response_generator.generate_answer("any question", chunks=[], chat_history=[])
+
+    assert result["answer"] == response_generator.NO_CONTEXT_ANSWER
+    assert fake_llm.calls == []
+
+
+def test_conversational_fallback_prompt_is_scoped_to_history_only_not_the_rag_examples(monkeypatch):
+    # Regression: must NOT use RAG_PROMPT's context-citation few-shot
+    # examples when there are no chunks - that prompt assumes fresh
+    # document context exists, which it doesn't here.
+    fake_llm = _FakeGatewayChatModel()
+    monkeypatch.setattr(response_generator, "GatewayChatModel", lambda **kwargs: fake_llm)
+    history = [HumanMessage(content="What's the tuition cap?"), AIMessage(content="$5,250/year.")]
+
+    response_generator.generate_answer("Can you repeat that?", chunks=[], chat_history=history)
+
+    system_message = fake_llm.calls[0][0]
+    assert "Example 1" not in system_message.content
+    assert "prior conversation" in system_message.content
 
 
 def test_generate_answer_returns_the_model_that_actually_answered(monkeypatch):

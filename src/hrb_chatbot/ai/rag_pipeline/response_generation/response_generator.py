@@ -61,6 +61,22 @@ RAG_PROMPT = ChatPromptTemplate.from_messages(
     ]
 )
 
+# Phase 87: a separate, smaller prompt for the case retrieval found
+# nothing but real conversation history exists - e.g. "what did I just
+# ask you?". Deliberately NOT the same prompt as RAG_PROMPT above: that
+# one's few-shot examples are all about citing fresh document context,
+# which doesn't exist here. This one is scoped tightly to the prior
+# conversation only, so it can't drift into inventing new HR facts.
+CONVERSATIONAL_FALLBACK_PROMPT_TEMPLATE = """You are the HR benefits assistant for JPMC employees, continuing an existing conversation. No knowledge-base documents matched this specific question, so answer using ONLY the prior conversation below - summarize or refer back to what was already said. Never introduce a new HR policy fact that isn't already in the conversation history. If the prior conversation doesn't help either, say you don't have that information."""
+
+CONVERSATIONAL_FALLBACK_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        ("system", CONVERSATIONAL_FALLBACK_PROMPT_TEMPLATE),
+        MessagesPlaceholder("chat_history"),
+        ("human", "{question}"),
+    ]
+)
+
 
 def _to_result(message: AIMessage) -> dict:
     # GatewayChatModel sets response_metadata["model"] - StrOutputParser()
@@ -78,6 +94,27 @@ def generate_answer(
 ) -> dict:
     """Returns {"answer": str, "model_used": str} - chat_history is empty/omitted when memory isn't enabled."""
     if not chunks:
+        if chat_history:
+            # Phase 87: retrieval found nothing, but there's real prior
+            # conversation - a genuine follow-up/meta question (e.g. "what
+            # did I just ask?"), not necessarily a dead end. Answer from
+            # history alone instead of the free canned response.
+            logger.info(
+                "No chunks retrieved for %r but chat_history has %d turn(s) - answering from conversation memory only",
+                query,
+                len(chat_history),
+            )
+            llm = GatewayChatModel(
+                provider=LlmProvider.OPENAI,
+                temperature=temperature,
+                model_name_override=model_name,
+                max_tokens=max_tokens,
+            )
+            chain = CONVERSATIONAL_FALLBACK_PROMPT | llm | RunnableLambda(_to_result)
+            result = chain.invoke({"question": query, "chat_history": chat_history})
+            logger.info("Generated a %d-character answer from conversation history only (0 chunks)", len(result["answer"]))
+            return result
+
         logger.info("No chunks retrieved for %r - returning the no-context answer, not calling the LLM", query)
         return {"answer": NO_CONTEXT_ANSWER, "model_used": model_name or get_client_gateway().openai_chat().model}
 
