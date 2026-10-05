@@ -6657,10 +6657,17 @@ Explicitly deferred to a later, separate wave - not part of the above:
 
   **Verified:** full suite green (274 passed) after each change. Full
   real run against `eval-gate.yml` with both fixes applied, triggered via
-  `gh workflow run` and watched to completion - pending as of this entry;
-  see the next commit for the real verdict once the Spacy model download
-  (a ~400MB one-time cost per run) completes and real scoring can finally
-  happen.
+  `gh workflow run` and watched to completion - genuinely succeeded this
+  time, all 24 cases scored (not `FAILED`): `recall: 0.955`,
+  `groundedness: 0.979`, `completeness: 0.862`, final verdict **`PASS`**,
+  all three above `RELEASE_GATE_THRESHOLDS`. Confirmed by fetching the
+  **raw** log archive (`gh api .../logs --allow-escape-sequences`), not
+  `gh run view --log` (confirmed to truncate this step's full output -
+  worth remembering for any future CI debugging in this project: the
+  formatted view is not reliable for a chatty step, fetch the raw archive
+  directly when in doubt). Milestone 2 (Redis) is confirmed to not have
+  regressed genai-rag's retrieval/generation quality - the standing gate
+  from Phase 80 now genuinely protects this, not just appears to.
 
 ## Verification checklist (Phases 1-3)
 
