@@ -66,13 +66,20 @@ jobs:
         run: pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Start the app
+        # stdout/stderr redirected to a file, not left attached to this
+        # step's own backgrounded `&` process - without this, the app's
+        # own traceback on a later request (during Ingest/Run, not this
+        # step) is lost entirely once this step completes. Found the hard
+        # way: a real 500 on the very first ingest request had zero
+        # diagnostic information anywhere in this workflow's logs.
         run: |
-          python -m uvicorn src.hrb_chatbot.main:app --port 8093 &
+          python -m uvicorn src.hrb_chatbot.main:app --port 8093 > app.log 2>&1 &
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:8093/ping && exit 0
             sleep 1
           done
           echo "App never became healthy" >&2
+          cat app.log
           exit 1
 
       - name: Ingest the real KB documents
@@ -86,3 +93,7 @@ jobs:
       - name: Run the golden-dataset release gate
         # Exits non-zero on a BLOCK verdict, failing this job for real.
         run: python -m scripts.run_release_gate
+
+      - name: Show app logs (always, not just on failure - confirms what actually ran)
+        if: always()
+        run: cat app.log || echo "no app.log found"
