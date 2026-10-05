@@ -155,7 +155,7 @@ reviewed before that phase's code starts.
 | 81 — User-directed: Postgres cache/memory calls (answer cache, embedding cache, conversation store) degrade gracefully instead of crashing the request when Postgres is unreachable | Claude Code | 📋 Planned | ✅ Spec'd - see detail below |
 | 82 — Urgent production fix: missing `en_core_web_lg` Spacy model breaks every genai-rag query in production (input guardrail fails-closed) | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 83 — Urgent production fix: missing `llama-index-embeddings-openai` pin breaks every real document indexing attempt silently | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
-| 84 — User-directed, Milestone 2: Redis-backed caching (answer cache, embedding cache, rate limiter), Upstash-hosted | Claude Code | 🚧 In progress - code done, Upstash provisioning pending | ✅ Spec'd and implemented - see detail below |
+| 84 — User-directed, Milestone 2: Redis-backed caching (answer cache, embedding cache, rate limiter), Upstash-hosted | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -6527,6 +6527,29 @@ Explicitly deferred to a later, separate wave - not part of the above:
   `answer_cache` get and set), same as the local check. Production is not
   broken by this deploy despite `REDIS_URL` still being unconfigured
   there.
+
+  **Upstash provisioned and fully verified, 2026-10-05.** User signed up
+  and created a database; connection string wired into local `.env` (as
+  `REDIS_URL`, a plain TCP connection string - not Upstash's separate REST
+  API tokens, which were also provided but aren't what this project's
+  `redis-py`-based implementation uses) and into AWS (new
+  `hrb-chatbot/REDIS_URL` secret, added to App Runner's
+  `RuntimeEnvironmentSecrets`, deployed). One real fix needed along the
+  way: the connection string as given used `redis://` (plain), which
+  Upstash's server closed immediately - Upstash requires TLS, fixed by
+  using `rediss://` instead, confirmed by direct connection test before
+  touching any app code.
+
+  Verified for real, not assumed: a direct script against the actual
+  `RateLimiter`/`AnswerCache`/`EmbeddingCache` classes (not just a raw
+  Redis client) confirmed the rate limiter's real 429 enforcement after
+  the configured limit, and real get/set round-trips for both caches -
+  all against the live Upstash instance. Then confirmed live in
+  production: the same query sent twice back-to-back took 9.2s the first
+  time (full retrieval + generation) and 0.8s the second (an 11x
+  speedup), and CloudWatch confirms why - a real `answer_cache.get`
+  succeeding in 3ms on the second call, right after the first call's
+  `answer_cache.set`. Milestone 2 is genuinely complete.
 
 ## Verification checklist (Phases 1-3)
 
