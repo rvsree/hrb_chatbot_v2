@@ -35,6 +35,14 @@ RUN python -m venv /opt/venv && \
     /opt/venv/bin/pip install --upgrade pip && \
     /opt/venv/bin/pip install -r requirements.txt
 
+# Presidio's analyzer (used by the "mask sensitive data" guardrail, Phase 7)
+# needs this model at runtime - requirements.txt's own presidio-analyzer
+# comment already named this, but the download step was never added here,
+# so every query was blocked in production (Phase 82) until this line
+# existed. Installs as a package into the venv, so the existing
+# COPY --from=builder /opt/venv /opt/venv below picks it up automatically.
+RUN /opt/venv/bin/python -m spacy download en_core_web_lg
+
 # ---------------------------------------------------------------------------
 # Stage 2 - the image that actually runs
 # ---------------------------------------------------------------------------

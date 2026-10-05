@@ -153,6 +153,7 @@ reviewed before that phase's code starts.
 | 79 — User-directed: confirm (not build) whether prompt caching fires - empirical verification only, no src/ changes | Claude Code | ✅ Done, verified, 2026-10-05 | N/A - verification only, no spec gate applies |
 | 80 — User-directed: `get_release_decision()` wired into a real, manual-trigger CI gate (Postgres service container + fresh KB ingestion + the gate script) | Claude Code | ✅ Done, verified, 2026-10-05 - real run against all 24 cases: PASS | ✅ Spec'd and implemented - see detail below |
 | 81 — User-directed: Postgres cache/memory calls (answer cache, embedding cache, conversation store) degrade gracefully instead of crashing the request when Postgres is unreachable | Claude Code | 📋 Planned | ✅ Spec'd - see detail below |
+| 82 — Urgent production fix: missing `en_core_web_lg` Spacy model breaks every genai-rag query in production (input guardrail fails-closed) | Claude Code | 🚧 In progress | ✅ Spec'd - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -6265,6 +6266,55 @@ Explicitly deferred to a later, separate wave - not part of the above:
     `_clear_answer_cache_best_effort()` already put it, not inside the
     client.
   - **Open questions:** none.
+
+- [ ] **Phase 82 (in progress, 2026-10-05) — Urgent production fix: missing
+  `en_core_web_lg` Spacy model breaks every genai-rag query in production.**
+
+  **Spec:**
+  - **Context:** found while verifying Phase 3 of the AWS deployment-guide
+    work (confirming the `ACTIVE_VECTOR_DB` env var fix actually changed
+    query behavior) - the very first real `POST /v1/genai-rag/retrieve-
+    document/query` call against production since today's Phase 76-81
+    deploy returned `422 INPUT_GUARDRAIL_BLOCKED` for a completely benign
+    query. Confirmed via the real CloudWatch application log, not guessed:
+    `RuntimeError: The en_core_web_lg Spacy model was not found.` -
+    Presidio's analyzer (used by NeMo Guardrails' "mask sensitive data on
+    input" rail, Phase 7) throws on first use, and NeMo Guardrails treats
+    that exception as a block, not a pass-through. `requirements.txt`'s
+    own comment already named this exact risk (`presidio-analyzer`'s
+    section: "needs `python -m spacy download en_core_web_lg` - not
+    installable via pip, do this once per environment") but the step was
+    never added to the Dockerfile - only ever run by hand in local dev.
+  - **Blast radius:** every single genai-rag query, regardless of content
+    - not just ones that would legitimately trigger PII masking. This is
+    the first time this guardrail code has ever actually run in
+    production (today's deploy was the first to ship Phase 7's guardrails
+    to AWS), so the outage has been live since that deploy, undetected
+    until now because only `/ping`/`/health` had been checked.
+  - **Fix:** add `RUN /opt/venv/bin/python -m spacy download
+    en_core_web_lg` to the Dockerfile's builder stage, right after `pip
+    install -r requirements.txt` - the model installs as a package into
+    the venv's site-packages (modern spacy packages models as pip-
+    installable wheels), so it's picked up automatically by the existing
+    `COPY --from=builder /opt/venv /opt/venv` into the runtime stage - no
+    other Dockerfile change needed.
+  - **User-visible behavior:** genai-rag queries stop being blocked;
+    the "mask sensitive data" rail starts actually working as designed
+    (masking real PII in a query) instead of failing closed on everything.
+  - **Failure modes:** none new - this restores the originally-designed
+    behavior. A query that genuinely contains sensitive data still gets
+    masked/blocked as intended; everything else now passes through.
+  - **Out of scope:** auditing whether single-agentic-rag/multi-agentic-
+    rag hit the same guardrail path (they likely do, via the same
+    `check_input()` - worth a quick live check once this is deployed, not
+    assumed fixed by extension). Also out of scope: the separate,
+    unrelated `/health` endpoint cosmetic bug (hardcoded `VectorDB
+    .CHROMADB`/`MetadataStore.SQLITE` `Query()` defaults in
+    `api/dependencies.py`, not reading the real `ACTIVE_VECTOR_DB`/
+    `RAG_METADATA_STORE` settings) - flagged, not fixed here, since it's
+    display-only and doesn't affect real query behavior.
+  - **Open questions:** none - root cause is confirmed from the real
+    error, not inferred.
 
 ## Verification checklist (Phases 1-3)
 
