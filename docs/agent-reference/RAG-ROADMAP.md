@@ -154,7 +154,7 @@ reviewed before that phase's code starts.
 | 80 — User-directed: `get_release_decision()` wired into a real, manual-trigger CI gate (Postgres service container + fresh KB ingestion + the gate script) | Claude Code | ✅ Done, verified, 2026-10-05 - real run against all 24 cases: PASS | ✅ Spec'd and implemented - see detail below |
 | 81 — User-directed: Postgres cache/memory calls (answer cache, embedding cache, conversation store) degrade gracefully instead of crashing the request when Postgres is unreachable | Claude Code | 📋 Planned | ✅ Spec'd - see detail below |
 | 82 — Urgent production fix: missing `en_core_web_lg` Spacy model breaks every genai-rag query in production (input guardrail fails-closed) | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
-| 83 — Urgent production fix: missing `llama-index-embeddings-openai` pin breaks every real document indexing attempt silently | Claude Code | 🚧 In progress | ✅ Spec'd - see detail below |
+| 83 — Urgent production fix: missing `llama-index-embeddings-openai` pin breaks every real document indexing attempt silently | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -6332,7 +6332,7 @@ Explicitly deferred to a later, separate wave - not part of the above:
   `resources/kb_docs/` against this corrected config - still the pending
   "re-run ingestion" item from Milestone 1's own checklist.)
 
-- [ ] **Phase 83 (in progress, 2026-10-05) — Urgent production fix: missing
+- [x] **Phase 83 (2026-10-05) — Urgent production fix: missing
   `llama-index-embeddings-openai` pin breaks every real indexing attempt
   silently.**
 
@@ -6381,6 +6381,27 @@ Explicitly deferred to a later, separate wave - not part of the above:
     response?) rather than a one-line dependency fix.
   - **Open questions:** none for this fix. The error-handling gap above
     is noted for `docs/agent-reference/BACKLOG.md`, not resolved here.
+
+  **Verified:** real redeploy via `deploy.yml` (slight race with a
+  concurrent deploy required one manual `aws apprunner start-deployment`
+  retry, documented, not hidden). Re-ran `scripts/ingest_kb_docs.py`
+  against production afterward - Pinecone's `total_vector_count` jumped
+  45 -> 272 (confirms real indexing now happens, not just a silent no-op).
+  A follow-on retrieval test then surfaced a third, separate issue
+  (`RAG_MIN_PINECONE_SCORE=0.5` sitting right at the boundary of real
+  data, filtering out genuinely relevant matches) - investigated with real
+  data (20 golden-dataset questions queried directly against Pinecone,
+  scores 0.4969-0.8229) and lowered to `0.45` as a confirmed, data-backed
+  stop-gap (not a finished calibration - see `BACKLOG.md`). Final
+  end-to-end confirmation: a real `POST /v1/genai-rag/retrieve-document
+  /query` call for "What percentage does JPMorgan Chase match on 401k
+  contributions?" returned a correct, grounded answer ("matches 100% of
+  employee contributions up to 5% of Eligible Compensation after one year
+  of service") with 5 correctly-cited sources, scores 0.67-0.70. Milestone
+  1 (Pinecone as the standing AWS vector store, `docs/dev-reference/
+  deployment-guide/03-pinecone-standard.html`) is now genuinely complete,
+  not just configured - the original env var fix plus two further bugs
+  this verification pass surfaced and fixed along the way.
 
 ## Verification checklist (Phases 1-3)
 

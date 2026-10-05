@@ -963,4 +963,33 @@ later: should `DocumentUploadResponse`'s per-file `status` distinguish
 `"uploaded"` (saved, not yet confirmed indexed) from `"indexed"`/
 `"indexing_failed"`? Not decided, not touched in Phase 83 - that phase's
 scope was strictly the missing dependency pin.
-`golden_dataset_harness.py` itself untouched.
+
+## Pinecone relevance threshold is a data-backed stop-gap, not a final calibration (Phase 83 follow-up, 2026-10-05)
+
+`RAG_MIN_PINECONE_SCORE` was `0.5`, which sat right at the boundary of real
+data rather than below it - confirmed by querying Pinecone directly for 20
+real golden-dataset questions: scores ranged 0.4969-0.8229, with the
+lowest *correct* match at 0.4969 (just under the old threshold - would
+have been incorrectly filtered). Lowered to `0.45` in both local `.env`
+and the live App Runner config, giving real margin below the observed
+minimum. This is a deliberate stop-gap, not a finished calibration - the
+sample only confirmed where *correct* matches score, not where irrelevant
+noise starts scoring too high. Worth a real calibration later: run queries
+expected to have no good answer in the KB, find the real separation
+point between signal and noise, and ideally do this through the
+golden-dataset release gate once it also exercises Pinecone (see
+`docs/dev-reference/deployment-guide/03-pinecone-standard.html`'s open
+question on extending `eval-gate.yml` beyond ChromaDB) rather than a
+one-off manual check like this one.
+
+## Chunk metadata's `filename` field reads `"unknown"` in Pinecone (found Phase 83, 2026-10-05)
+
+Confirmed via a real retrieval response: every source chunk returned
+`"filename": "unknown"` instead of the real PDF name, even though
+`document_id` and the chunk's actual text content are both correct and
+citations work. Minor, not blocking - cosmetic only until something
+actually displays `filename` to a user (a future React UI would). Not
+investigated further - likely a metadata-key mismatch between what the
+LlamaIndex-based indexer writes and what the LangChain-based retriever
+reads back out, similar in shape to Phase 83's dependency gap but a
+separate, smaller bug.
