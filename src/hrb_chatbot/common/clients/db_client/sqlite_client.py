@@ -3,6 +3,7 @@
 import json
 import sqlite3
 from datetime import UTC, datetime
+from pathlib import Path
 
 import aiosqlite
 
@@ -91,6 +92,17 @@ class SQLiteClient(BaseMetadataClient):
     def __init__(self, db_path: str | None = None):
         self.db_path = read_setting(db_path, "SQLITE_DB_PATH", self.DEFAULT_DB_PATH)
         self._table_ready = False
+
+        # The Dockerfile pre-creates data/ for the container image, but
+        # nothing did for a bare checkout (a fresh CI runner, or a fresh
+        # local clone) - sqlite3 raises "unable to open database file"
+        # rather than creating a missing parent directory itself. Found
+        # live, 2026-10-05: eval-gate.yml's fresh runner had no data/ at
+        # all, failing the very first request. Harmless no-op when the
+        # directory already exists (exist_ok=True).
+        parent_dir = Path(self.db_path).parent
+        if str(parent_dir) not in ("", "."):
+            parent_dir.mkdir(parents=True, exist_ok=True)
 
     async def _ensure_table(self) -> None:
         if self._table_ready:

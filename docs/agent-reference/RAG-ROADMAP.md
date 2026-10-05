@@ -156,6 +156,7 @@ reviewed before that phase's code starts.
 | 82 — Urgent production fix: missing `en_core_web_lg` Spacy model breaks every genai-rag query in production (input guardrail fails-closed) | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 83 — Urgent production fix: missing `llama-index-embeddings-openai` pin breaks every real document indexing attempt silently | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 84 — User-directed, Milestone 2: Redis-backed caching (answer cache, embedding cache, rate limiter), Upstash-hosted | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
+| 85 — Found while closing out Milestone 2: SQLiteClient never created its own parent directory, breaking the golden-dataset gate on a fresh runner | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -6550,6 +6551,50 @@ Explicitly deferred to a later, separate wave - not part of the above:
   speedup), and CloudWatch confirms why - a real `answer_cache.get`
   succeeding in 3ms on the second call, right after the first call's
   `answer_cache.set`. Milestone 2 is genuinely complete.
+
+- [x] **Phase 85 (2026-10-05) — Found while closing out Milestone 2:
+  `SQLiteClient` never created its own parent directory, breaking the
+  golden-dataset gate on a fresh runner.**
+
+  **Spec:**
+  - **Context:** triggering `eval-gate.yml` to close out Phase 84 failed
+    at the very first document upload with a generic `500
+    INTERNAL_ERROR` - unrelated to Redis/Milestone 2 at all. CI's own log
+    didn't capture the real traceback (the backgrounded `uvicorn &`
+    process's output was never redirected anywhere, so it vanished once
+    the "Start the app" step completed) - fixed first, separately, by
+    redirecting to `app.log` and printing it unconditionally
+    (`.github/workflows/eval-gate.yml`). With that in place, the retry
+    surfaced the real cause: `sqlite3.OperationalError: unable to open
+    database file` - `SQLiteClient`'s default path
+    (`data/hrb_chatbot.sqlite3`) assumes `data/` already exists. The
+    Dockerfile creates it for the container image (`RUN mkdir -p data`),
+    but nothing creates it for a bare checkout - a fresh GitHub Actions
+    runner, or a fresh local clone, both lack it. Confirmed deterministic
+    by retriggering the gate once with the logging fix alone (unchanged
+    behavior, now with a real traceback) before touching this code.
+  - **Fix:** `SQLiteClient.__init__` now creates its own parent directory
+    (`Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)`) if
+    it's non-trivial (skips a bare filename with no directory component).
+    Checked for other SQLite path construction with the same gap - none
+    found (the only other `data/*.sqlite3` file present locally,
+    `record_manager.sqlite3`, is leftover from Phase 17's LangChain-
+    indexing approach, reverted in Phase 44; no current code references
+    `SQLRecordManager` at all).
+  - **User-visible behavior:** none for an existing deployment (the
+    Dockerfile already covers production). Fixes a genuine first-run gap
+    for CI and fresh local clones.
+  - **Failure modes:** none new - this removes a failure mode, not adds
+    one.
+  - **Out of scope:** nothing else touched.
+  - **Open questions:** none - root cause confirmed from the real
+    traceback, not inferred.
+
+  **Verified:** direct unit-level check (`SQLiteClient(db_path=".../
+  nested/dir/test.sqlite3")` against a path with no existing parent at
+  all) confirms the directory now gets created. Full suite green (274
+  passed) - this change is additive (an idempotent `mkdir`), nothing
+  about existing behavior changes when the directory already exists.
 
 ## Verification checklist (Phases 1-3)
 
