@@ -152,6 +152,7 @@ reviewed before that phase's code starts.
 | 78 — User-directed: answer cache, Postgres-backed, exact-match, genai-rag only | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 79 — User-directed: confirm (not build) whether prompt caching fires - empirical verification only, no src/ changes | Claude Code | ✅ Done, verified, 2026-10-05 | N/A - verification only, no spec gate applies |
 | 80 — User-directed: `get_release_decision()` wired into a real, manual-trigger CI gate (Postgres service container + fresh KB ingestion + the gate script) | Claude Code | ✅ Done, verified, 2026-10-05 - real run against all 24 cases: PASS | ✅ Spec'd and implemented - see detail below |
+| 81 — User-directed: Postgres cache/memory calls (answer cache, embedding cache, conversation store) degrade gracefully instead of crashing the request when Postgres is unreachable | Claude Code | 📋 Planned | ✅ Spec'd - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -6188,6 +6189,82 @@ Explicitly deferred to a later, separate wave - not part of the above:
     precedent for CI/operational scripts). `bandit -ll` on `src/
     hrb_chatbot` and the new `scripts/` directory: 0 findings at any
     severity.
+
+- [ ] **Phase 81 (planned, not started) — User-directed: Postgres cache/
+  memory calls (answer cache, embedding cache, conversation store) degrade
+  gracefully instead of crashing the request when Postgres is unreachable.**
+
+  **Spec:**
+  - **Context:** found while preparing to merge `develop` into `master`
+    for deployment. Phases 76-78 added three Postgres-backed features
+    (conversation store, embedding cache, answer cache), all using the
+    same `psycopg`-via-`asyncio.to_thread()` client pattern - none of
+    their call sites on the request hot path catch a connection failure.
+    `pipeline.py`'s `answer_cache().get()`/`.set()` calls (lines 59, 109)
+    run unconditionally on every non-conversation-memory genai-rag query -
+    the default path - with no `try`/`except`. A Postgres outage,
+    misconfiguration, or network blip would raise straight through
+    `answer_query()` as an unhandled exception, taking down the entire
+    `POST /v1/genai-rag/retrieve-document/query` endpoint, not just the
+    caching behavior. Same exposure in `conversation_memory.py`'s
+    `load_history()`/`save_turn()` (used whenever conversation memory is
+    enabled) - notably, `load_history()`'s own docstring already claims
+    "never raises," which is not actually true today - and in
+    `embedding_generator.py`'s `cache.get_many()`/`cache.set_many()` calls
+    on the ingestion path. This is a real, found correctness gap, not a
+    hypothetical - confirmed by reading each call site directly, not
+    assumed.
+  - **Data/API contracts:** N/A - no request/response shape changes. This
+    only changes internal error handling; every endpoint's existing
+    contract in `docs/agent-reference/endpoint-request-response-contracts.md` is
+    unaffected.
+  - **User-visible behavior:** when Postgres is unreachable, a genai-rag
+    query still succeeds (answers normally, just without a cache hit/write
+    and without saved conversation history) instead of returning a 500.
+    Ingestion still succeeds without an embedding-cache hit/write. Matches
+    the best-effort pattern already established in
+    `documents_service.py`'s `_clear_answer_cache_best_effort()` (Phase 78)
+    - same shape, applied to the read/write call sites this time, not
+    just invalidation.
+  - **Failure modes:** a Postgres connection error at any of the six call
+    sites below is caught, logged as a `warning` (not `error` - this is
+    expected-to-happen-sometimes infrastructure degradation, not a bug),
+    and the call site falls back to its cache-miss/no-op behavior. The
+    *rest* of the request (retrieval, generation, guardrails) proceeds
+    normally and still returns its real 200 response. No new
+    `error_codes.py` code needed - this prevents a failure from reaching
+    the client at all, it doesn't change what the client sees on a
+    genuinely different error.
+  - **Exact call sites in scope:**
+    1. `pipeline.py` - `answer_cache().get(cache_key)` (read) - catch,
+       log, treat as a miss (`cached_result = None`).
+    2. `pipeline.py` - `answer_cache().set(cache_key, ...)` (write) -
+       catch, log, continue (the already-built `result` is still
+       returned to the caller either way).
+    3. `conversation_memory.py` - `load_history()` - catch, log, return
+       `[]` (makes the existing docstring claim actually true).
+    4. `conversation_memory.py` - `save_turn()` - catch, log, continue
+       (the answer was already generated and returned; losing one turn
+       of history is recoverable, losing the whole response is not).
+    5. `embedding_generator.py` - `cache.get_many()` (read) - catch, log,
+       treat as a full cache miss (embed every chunk, same as today's
+       behavior when nothing is cached yet).
+    6. `embedding_generator.py` - `cache.set_many()` (write) - catch,
+       log, continue (the embeddings were already generated and are still
+       returned/used for indexing either way).
+  - **Out of scope:** `answer_cache.clear_all()`'s invalidation call in
+    `documents_service.py` - already best-effort since Phase 78, not
+    touched here. The three clients' own `health_check()` methods -
+    already never raise, by existing convention. Retrying a failed
+    Postgres call, a circuit breaker, or any other resilience pattern
+    beyond catch-log-continue - not asked for, and this project's error-
+    handling-by-layer convention (`docs/agent-reference/CODING-STANDARDS.md`) doesn't
+    call for it elsewhere either. Changing the underlying client classes
+    (`answer_cache.py`/`conversation_store.py`/`embedding_cache.py`
+    themselves) - the fix belongs at the call site, matching where
+    `_clear_answer_cache_best_effort()` already put it, not inside the
+    client.
+  - **Open questions:** none.
 
 ## Verification checklist (Phases 1-3)
 
