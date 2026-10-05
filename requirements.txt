@@ -84,6 +84,12 @@ sqlalchemy==2.0.52
 llama-index-core==0.13.6
 llama-index-vector-stores-chroma==0.6.0
 llama-index-vector-stores-pinecone==0.9.0
+# Phase 83: present locally (installed by hand at some point during Phase 44,
+# "Required-by:" empty - not a transitive dep of anything else here) but
+# never pinned - missing from every container build, so every real indexing
+# attempt failed silently in production (embeddings succeeded, the actual
+# VectorStoreIndex write never ran) until this line existed.
+llama-index-embeddings-openai==0.7.0
 
 # -----------------------------------------------------------------------------
 # LLM and Agent Stack

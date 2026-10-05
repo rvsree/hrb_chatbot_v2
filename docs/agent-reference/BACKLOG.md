@@ -945,3 +945,22 @@ precision@k belongs in this project's own metric set at all given its
 deliberately broad multi-chunk retrieval design. Not decided, not touched
 in Phase 80 - that phase's own user instruction was explicitly to leave
 `golden_dataset_harness.py` itself untouched.
+
+## Indexing failures are silent to the API caller (confirmed Phase 83, 2026-10-05)
+
+`documents_service.py` catches any exception from the indexing step
+(`ai/doc_processing/pipeline.py`) and logs it as `ERROR`, but the upload's
+own HTTP response still reports `"status": "uploaded"` for that document -
+not `"failed"`. Found for real during Phase 83 (a missing
+`llama-index-embeddings-openai` pin broke every indexing attempt for an
+unknown period, completely silently - the API never once returned
+anything other than `"uploaded"`). The dependency bug is fixed; this is
+the separate, still-open design gap it exposed: a caller (a script, a
+future React UI, a human in Postman) currently has no way to tell "fully
+indexed and searchable" apart from "uploaded but indexing silently failed"
+without reading CloudWatch/application logs by hand. Worth a real decision
+later: should `DocumentUploadResponse`'s per-file `status` distinguish
+`"uploaded"` (saved, not yet confirmed indexed) from `"indexed"`/
+`"indexing_failed"`? Not decided, not touched in Phase 83 - that phase's
+scope was strictly the missing dependency pin.
+`golden_dataset_harness.py` itself untouched.

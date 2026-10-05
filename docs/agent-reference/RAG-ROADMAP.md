@@ -154,6 +154,7 @@ reviewed before that phase's code starts.
 | 80 — User-directed: `get_release_decision()` wired into a real, manual-trigger CI gate (Postgres service container + fresh KB ingestion + the gate script) | Claude Code | ✅ Done, verified, 2026-10-05 - real run against all 24 cases: PASS | ✅ Spec'd and implemented - see detail below |
 | 81 — User-directed: Postgres cache/memory calls (answer cache, embedding cache, conversation store) degrade gracefully instead of crashing the request when Postgres is unreachable | Claude Code | 📋 Planned | ✅ Spec'd - see detail below |
 | 82 — Urgent production fix: missing `en_core_web_lg` Spacy model breaks every genai-rag query in production (input guardrail fails-closed) | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
+| 83 — Urgent production fix: missing `llama-index-embeddings-openai` pin breaks every real document indexing attempt silently | Claude Code | 🚧 In progress | ✅ Spec'd - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -6330,6 +6331,56 @@ Explicitly deferred to a later, separate wave - not part of the above:
   Pinecone are leftover ad-hoc testing, not yet a real ingest of
   `resources/kb_docs/` against this corrected config - still the pending
   "re-run ingestion" item from Milestone 1's own checklist.)
+
+- [ ] **Phase 83 (in progress, 2026-10-05) — Urgent production fix: missing
+  `llama-index-embeddings-openai` pin breaks every real indexing attempt
+  silently.**
+
+  **Spec:**
+  - **Context:** found immediately after Phase 82, while verifying
+    Milestone 1's `ACTIVE_VECTOR_DB=pinecone` fix by re-ingesting the real
+    KB (`resources/kb_docs/`) into production. All 6 documents reported
+    `status: "uploaded"` via the API, but Pinecone's `total_vector_count`
+    never moved past 45 and retrieval kept returning zero sources.
+    Confirmed via the real CloudWatch application log, not guessed: every
+    document's embeddings generated successfully (real OpenAI calls, real
+    Postgres embedding-cache writes, all logged), then immediately failed
+    with `ImportError: llama-index-embeddings-openai package not found` -
+    `doc_processing/pipeline.py`'s indexing step (Phase 44's LlamaIndex-
+    based `VectorStoreIndex`) needs this package, `documents_service.py`
+    catches the exception and logs it as `ERROR`, but the upload's own
+    HTTP response still reports `"uploaded"` - the failure is real but
+    silent to the API caller.
+  - **Root cause, confirmed not inferred:** `pip show llama-index-
+    embeddings-openai` in the local venv shows `Version: 0.7.0`,
+    `Required-by:` empty - it was installed by hand at some point during
+    Phase 44's LlamaIndex work and never added to `requirements.txt`,
+    unlike every sibling `llama-index-*` package (`-core`, `-vector-
+    stores-chroma`, `-vector-stores-pinecone`), all of which are pinned.
+    Local dev never noticed because the package was already sitting in
+    the local venv; every container build (which installs strictly from
+    `requirements.txt`) has been missing it.
+  - **Blast radius:** every real document indexing attempt, against
+    either vector store (Pinecone or ChromaDB) - not Pinecone-specific.
+    The 45 vectors already in Pinecone predate this gap (indexed before
+    whatever point this package stopped being bundled in, or indexed
+    through a path that doesn't hit this import). Metadata/upload itself
+    still succeeds either way, which is exactly what made this silent -
+    the user-visible "uploaded" status looked like success.
+  - **Fix:** add `llama-index-embeddings-openai==0.7.0` to
+    `requirements.txt`, grouped with the other `llama-index-*` pins.
+  - **User-visible behavior:** document uploads actually index into the
+    configured vector store, matching what `"status": "uploaded"` already
+    claimed.
+  - **Failure modes:** none new - restores intended behavior.
+  - **Out of scope:** making `documents_service.py` surface an indexing
+    failure as something other than a silently-logged `ERROR` (e.g. a
+    `"failed"` status in the API response) - a real, separate error-
+    handling gap worth its own flag, not fixed here since it's a design
+    decision (should a partial pipeline failure fail the whole upload
+    response?) rather than a one-line dependency fix.
+  - **Open questions:** none for this fix. The error-handling gap above
+    is noted for `docs/agent-reference/BACKLOG.md`, not resolved here.
 
 ## Verification checklist (Phases 1-3)
 
