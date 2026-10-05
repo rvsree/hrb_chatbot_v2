@@ -23,7 +23,7 @@ router_query_agent = APIRouter(tags=["multi-agentic-rag"])
 @router_query_agent.post("/query", response_model=MultiAgenticRagResponse)
 async def query(payload: MultiAgenticRagRequest, request: Request):
     userProfile = require_role(payload.user_profile, Role.EMPLOYEE, Role.MANAGER, Role.HR_SUPPORT)
-    enforce_rate_limit(request)
+    await enforce_rate_limit(request)
 
     try:
         result = await multi_agent_pipeline.run_multi_agent(

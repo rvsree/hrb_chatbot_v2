@@ -33,6 +33,16 @@ _TEST_SQLITE_DB_PATH = "data/test_sqlite_db.sqlite3"
 os.environ["SQLITE_DB_PATH"] = _TEST_SQLITE_DB_PATH
 Path(_TEST_SQLITE_DB_PATH).unlink(missing_ok=True)
 
+# Phase 84: rate limiting is now Redis-backed, and real .env has
+# APP_RATE_LIMITING=true - without this override, every route test that
+# incidentally passes through enforce_rate_limit() would try to build a
+# real Redis connection (no REDIS_URL set in this environment) and crash.
+# Forced off here, same reasoning/pattern as SQLITE_DB_PATH above;
+# test_rate_limiter.py tests the enabled case directly, unaffected by this
+# (it passes enabled="true" explicitly to the constructor, which wins over
+# this env default) with its own injected FakeRedisClient, not real Redis.
+os.environ["APP_RATE_LIMITING"] = "false"
+
 
 class FakeEmbeddings(Embeddings):
     """LangChain's own Embeddings interface, satisfied without a network
@@ -373,9 +383,9 @@ class FakeConversationStore:
 
 
 class FakeEmbeddingCache:
-    """Stands in for EmbeddingCache (Phase 77) - plain in-memory dict keyed
-    by (content_hash, embedding_model), same async interface as the real
-    Postgres-backed one, never touches a real database."""
+    """Stands in for EmbeddingCache (Phase 84, Redis-backed) - plain
+    in-memory dict keyed by (content_hash, embedding_model), same async
+    interface as the real Redis-backed one, never touches a real cache."""
 
     def __init__(self):
         self._entries: dict[tuple[str, str], list[float]] = {}
@@ -391,14 +401,14 @@ class FakeEmbeddingCache:
         for content_hash, embedding in entries:
             self._entries[(content_hash, embedding_model)] = embedding
 
-    def health_check(self):
-        return {"provider": "postgres", "status": "healthy"}
+    async def health_check(self):
+        return {"provider": "redis", "status": "healthy"}
 
 
 class FakeAnswerCache:
-    """Stands in for AnswerCache (Phase 78) - plain in-memory dict keyed by
-    cache_key, same async interface as the real Postgres-backed one, never
-    touches a real database."""
+    """Stands in for AnswerCache (Phase 84, Redis-backed) - plain in-memory
+    dict keyed by cache_key, same async interface as the real Redis-backed
+    one, never touches a real cache."""
 
     def __init__(self):
         self._entries: dict[str, dict] = {}
@@ -416,8 +426,8 @@ class FakeAnswerCache:
         self.clear_all_call_count += 1
         return count
 
-    def health_check(self):
-        return {"provider": "postgres", "status": "healthy"}
+    async def health_check(self):
+        return {"provider": "redis", "status": "healthy"}
 
 
 class FakeDBGateway:

@@ -189,6 +189,17 @@ mcp==1.9.4
 pyjwt==2.10.1
 
 # -----------------------------------------------------------------------------
+# Redis (Phase 84) - answer cache, embedding cache, rate limiter, replacing
+# the Postgres-backed versions from Phases 77/78 and the in-memory rate
+# limiter. Official redis-py client, native asyncio support (redis.asyncio) -
+# no separate async driver needed. Hosted on Upstash (public endpoint, no
+# VPC networking needed), not AWS ElastiCache (VPC-only, confirmed before
+# choosing this). `pip install --dry-run` resolved clean against this
+# project's existing pins.
+# -----------------------------------------------------------------------------
+redis==8.1.0
+
+# -----------------------------------------------------------------------------
 # Deferred Packages (Enable for Linux/Docker deployment)
 # -----------------------------------------------------------------------------
 # crewai==0.86.0  # Requires uvloop which doesn't support Windows

@@ -6,7 +6,7 @@ from src.hrb_chatbot.ai.rag_pipeline.query_retrieval.retriever import retrieve_c
 from src.hrb_chatbot.ai.rag_pipeline.response_generation.guardrails_output import check_output
 from src.hrb_chatbot.ai.rag_pipeline.response_generation.response_generator import generate_answer
 from src.hrb_chatbot.ai.rag_pipeline.tools.mcp_tools import try_route_to_mcp
-from src.hrb_chatbot.common.clients.db_client.answer_cache import build_cache_key
+from src.hrb_chatbot.common.clients.cache_client.answer_cache import build_cache_key
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
 from src.hrb_chatbot.common.config.settings import get_active_llm_provider, get_active_vector_db, read_setting
 from src.hrb_chatbot.common.logging.logger import get_logger

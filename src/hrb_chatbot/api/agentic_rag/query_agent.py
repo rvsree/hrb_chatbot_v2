@@ -17,7 +17,7 @@ router_query_agent = APIRouter(tags=["single-agentic-rag"])
 @router_query_agent.post("/query", response_model=AgenticRagResponse)
 async def query(payload: AgenticRagRequest, request: Request):
     userProfile = require_role(payload.user_profile, Role.EMPLOYEE, Role.MANAGER, Role.HR_SUPPORT)
-    enforce_rate_limit(request)
+    await enforce_rate_limit(request)
 
     result = await run_agent(
         payload.query,

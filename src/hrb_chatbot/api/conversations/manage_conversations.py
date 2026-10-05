@@ -24,7 +24,7 @@ async def delete_conversation(conversation_id: str, identity: IdentityPayload, r
     """Deletes every turn for one conversation - scoped to the caller's own employee_id,
     so one employee can never delete another's history even by knowing their conversation_id."""
     userProfile = require_role(identity.user_profile, Role.EMPLOYEE, Role.MANAGER, Role.HR_SUPPORT)
-    enforce_rate_limit(request)
+    await enforce_rate_limit(request)
 
     turns_deleted = await conversation_memory.delete_conversation(conversation_id, userProfile.employee_id)
 

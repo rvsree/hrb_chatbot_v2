@@ -155,6 +155,7 @@ reviewed before that phase's code starts.
 | 81 — User-directed: Postgres cache/memory calls (answer cache, embedding cache, conversation store) degrade gracefully instead of crashing the request when Postgres is unreachable | Claude Code | 📋 Planned | ✅ Spec'd - see detail below |
 | 82 — Urgent production fix: missing `en_core_web_lg` Spacy model breaks every genai-rag query in production (input guardrail fails-closed) | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 83 — Urgent production fix: missing `llama-index-embeddings-openai` pin breaks every real document indexing attempt silently | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
+| 84 — User-directed, Milestone 2: Redis-backed caching (answer cache, embedding cache, rate limiter), Upstash-hosted | Claude Code | 🚧 In progress - code done, Upstash provisioning pending | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -6402,6 +6403,122 @@ Explicitly deferred to a later, separate wave - not part of the above:
   deployment-guide/03-pinecone-standard.html`) is now genuinely complete,
   not just configured - the original env var fix plus two further bugs
   this verification pass surfaced and fixed along the way.
+
+- [ ] **Phase 84 (planned, not started) — User-directed, Milestone 2:
+  Redis-backed caching (answer cache, embedding cache, rate limiter),
+  Upstash-hosted.**
+
+  **Spec:**
+  - **Context:** Postgres-backed caching (Phases 77-78) was always the
+    interim step, confirmed explicitly by the user - the destination is
+    Redis, the industry-standard tool for this job (native TTL,
+    sub-millisecond in-memory reads, purpose-built eviction), not a
+    relational database bent into a cache shape. Sequenced here (right
+    after Milestone 1, before Milestone 3's S3+Lambda build) per
+    `docs/dev-reference/deployment-guide/04-redis-cache.html`'s reasoning:
+    not a hard technical blocker for Lambda the way Pinecone was, but it
+    independently fixes a real, already-broken gap - `rate_limiter.py`'s
+    own docstring already named Redis as the fix for its in-memory,
+    single-process-only counter, and App Runner's real auto-scaling
+    config (confirmed, `MaxSize: 25`) means that counter already doesn't
+    hold across instances today.
+  - **Hosting decision, confirmed with the user:** AWS ElastiCache for
+    Redis has no public endpoint - it's VPC-only, requiring a VPC
+    Connector + subnets + security groups for App Runner to reach it, real
+    added infrastructure beyond "swap the cache backend." Flagged before
+    building anything; user chose **Upstash Redis** instead - a hosted
+    Redis with a public endpoint, the same "public SaaS over the internet"
+    pattern already working for Neon Postgres and Pinecone, no VPC
+    networking needed.
+  - **Data/API contracts:** N/A - no request/response shape changes, same
+    as Phase 81. Internal cache-backend swap only.
+  - **Scope - exactly 3 call sites move, nothing else:**
+    1. `pipeline.py`'s `answer_cache().get()`/`.set()` calls
+    2. `embedding_generator.py`'s `cache.get_many()`/`.set_many()` calls
+    3. `rate_limiter.py`'s in-memory `_windows` dict, replaced by Redis
+       `INCR`+`EXPIRE` (the standard, atomic fixed-window pattern)
+  - **Explicitly NOT in scope:** `conversation_store.py` - durable
+    application data, not a cache, stays on Postgres. No change to
+    `ai/agents/`, `ai/rag_pipeline/query_retrieval/`,
+    `ai/rag_pipeline/response_generation/`, or any retrieval/generation/
+    guardrail logic - per the user's explicit instruction to keep this
+    work isolated from the existing RAG/agentic implementation as much as
+    possible. The only files touched outside the new `cache_client/`
+    package are the 3 call sites above, each a narrow swap of which
+    gateway method is called - same pattern already used for Phase 77/78's
+    original Postgres caches, not a redesign of what surrounds them.
+  - **Architecture, refined during implementation for even less call-site
+    churn than originally planned:** no separate `CacheGateway` - the new
+    Redis-backed `AnswerCache`/`EmbeddingCache` classes (in a new
+    `common/clients/cache_client/` package, via `redis-py`'s native async
+    client - not Upstash's own REST SDK, since this is a long-running
+    container, not serverless/edge, so the plain Redis protocol is the
+    simpler, more standard choice) are handed off through the *existing*
+    `DBGateway.answer_cache()`/`.embedding_cache()` methods, which already
+    are the one thing `pipeline.py`/`embedding_generator.py` call - only
+    `db_gateway.py`'s internal construction changes (which class it
+    builds), so those two files need zero changes at all for their cache
+    calls, not even an import swap. No formal ABC either - `AnswerCache`/
+    `EmbeddingCache` were always concrete, single-backend classes (never
+    had a Postgres-vs-something-else runtime choice), so an abstract base
+    would add a layer with no real polymorphism behind it.
+  - **Interface parity, not just a backend swap:** the new
+    `AnswerCache`/`EmbeddingCache` classes keep the exact same method
+    signatures as their Postgres predecessors (`get`/`set`/`clear_all`/
+    `get_many`/`set_many`/`health_check`) - call sites change which
+    gateway they call, not how they call it. `clear_all()` is kept (Redis
+    `SCAN`+`DEL` on a key prefix) for the same immediate-invalidation-on-
+    document-change behavior Phase 78 already established in
+    `documents_service.py` - not silently replaced with TTL-only, since
+    that would be a real behavior change, not just a backend swap. TTL is
+    added in addition, as defense in depth (answer cache: short-to-medium
+    window; embedding cache: long, since a given content hash's embedding
+    never changes).
+  - **User-visible behavior:** none - same cache-hit/miss behavior,
+    faster and with real expiry now.
+  - **Failure modes:** unchanged from Phase 81's already-spec'd graceful-
+    degradation behavior (not yet implemented as of this phase) - a
+    down/unreachable Redis should degrade the same way a down Postgres
+    was spec'd to (log, skip the cache, proceed with the real work) once
+    Phase 81 lands. If Phase 81 still hasn't landed when this phase ships,
+    the same gap applies to Redis that currently applies to Postgres -
+    flagged, not silently fixed here, since Phase 81 is its own scoped
+    piece of work.
+  - **Out of scope:** Phase 81's graceful-fallback implementation itself
+    for Postgres (separate phase, not bundled in here). ElastiCache (ruled
+    out above). Any change to `conversation_store.py` or durable data.
+  - **Open questions:** none - hosting decision already confirmed.
+
+  **Scope addition found necessary during implementation, not originally
+  spec'd above:** the "Failure modes" section originally deferred graceful
+  degradation to Phase 81 landing first. Caught live, locally, before any
+  deploy: with no `REDIS_URL` configured yet, every real request crashed
+  with a 500 (`rate_limiter.check()` raising `ValueError: Redis URL must
+  specify one of the following schemes` building a client from an empty
+  URL) - reproduced directly by starting the app locally and hitting a
+  real endpoint, the same catch-it-before-deploying discipline Phase
+  82/83 established the hard way. Added fail-open `try`/`except` directly
+  to `rate_limiter.check()`, `answer_cache.get()`/`.set()`, and
+  `embedding_cache.get_many()`/`.set_many()` - each logs a warning and
+  degrades (skip rate limiting / treat as a cache miss / skip the cache
+  write) rather than raising. `clear_all()` was already wrapped at its own
+  call site (`documents_service.py`'s `_clear_answer_cache_best_effort()`,
+  Phase 78) so needed no change. This is Phase 81's own intended pattern,
+  applied now to Redis specifically because it couldn't safely wait -
+  Phase 81's Postgres-side implementation is still separate, unstarted
+  work.
+
+  **Verified so far:** full suite green (274 passed), `bandit -r
+  src/hrb_chatbot -ll` clean (0 Medium/High findings). Local app started
+  for real (`uvicorn`, no `REDIS_URL` set) and a real
+  `POST /v1/genai-rag/retrieve-document/query` call succeeded end to end
+  (200, real answer) with all three fail-open warnings correctly logged
+  (`rate_limiter`, `answer_cache` get and set) - confirms the app is not
+  broken while Redis remains unprovisioned. **Not yet verified:** real
+  Redis connectivity itself (Upstash account not yet created), real
+  cache-hit behavior, the rate limiter's actual 429 enforcement against a
+  live Redis, or a deploy to AWS. Those are next, once Upstash is
+  provisioned.
 
 ## Verification checklist (Phases 1-3)
 

@@ -1,11 +1,11 @@
 """One place that hands out every database client the project uses."""
 
-from src.hrb_chatbot.common.clients.db_client.answer_cache import AnswerCache
+from src.hrb_chatbot.common.clients.cache_client.answer_cache import AnswerCache
+from src.hrb_chatbot.common.clients.cache_client.embedding_cache import EmbeddingCache
 from src.hrb_chatbot.common.clients.db_client.base_metadata_client import BaseMetadataClient
 from src.hrb_chatbot.common.clients.db_client.base_vector_db_client import BaseVectorDBClient
 from src.hrb_chatbot.common.clients.db_client.chroma_client import ChromaDBClient
 from src.hrb_chatbot.common.clients.db_client.conversation_store import ConversationStore
-from src.hrb_chatbot.common.clients.db_client.embedding_cache import EmbeddingCache
 from src.hrb_chatbot.common.clients.db_client.pinecone_client import PineconeClient
 from src.hrb_chatbot.common.clients.db_client.postgres_client import PostgresClient
 from src.hrb_chatbot.common.clients.db_client.sqlite_client import SQLiteClient

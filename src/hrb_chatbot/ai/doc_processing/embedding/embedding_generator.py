@@ -2,8 +2,8 @@
 first (Phase 77), only the real cache misses go to the embedding API, in
 one batched call."""
 
+from src.hrb_chatbot.common.clients.cache_client.embedding_cache import hash_text
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
-from src.hrb_chatbot.common.clients.db_client.embedding_cache import hash_text
 from src.hrb_chatbot.common.clients.llm_client.client_gateway import get_client_gateway
 from src.hrb_chatbot.common.config.settings import read_setting
 from src.hrb_chatbot.common.logging.logger import get_logger

@@ -49,7 +49,7 @@ async def upload_documents(
         return json_error(422, "payload is not valid JSON, or doesn't match the expected shape.", code=error_codes.VALIDATION_ERROR)
 
     userProfile = require_role(parsed_payload.user_profile, Role.HR_SUPPORT)
-    enforce_rate_limit(request)
+    await enforce_rate_limit(request)
 
     chunk_info = parsed_payload.chunk_info
     document_metadata = parsed_payload.document_metadata
@@ -115,7 +115,7 @@ async def preview_test_noise_documents(identity: IdentityPayload):
 async def delete_test_noise_documents(identity: IdentityPayload, request: Request):
     """Delete every document below TEST_NOISE_MAX_FILE_SIZE_BYTES - same full-delete semantics as DELETE /documents."""
     userProfile = require_role(identity.user_profile, Role.HR_SUPPORT)
-    enforce_rate_limit(request)
+    await enforce_rate_limit(request)
     result = await documents_service.delete_test_noise_documents(
         TEST_NOISE_MAX_FILE_SIZE_BYTES, deleted_by=userProfile.employee_id
     )
@@ -138,7 +138,7 @@ async def get_document(document_id: str, identity: IdentityPayload):
 async def delete_document(document_id: str, identity: IdentityPayload, request: Request):
     """Delete one document completely: vectors, metadata rows, uploaded file."""
     userProfile = require_role(identity.user_profile, Role.HR_SUPPORT)
-    enforce_rate_limit(request)
+    await enforce_rate_limit(request)
     result = await documents_service.delete_document(document_id, deleted_by=userProfile.employee_id)
 
     if result is None:
@@ -151,6 +151,6 @@ async def delete_document(document_id: str, identity: IdentityPayload, request: 
 async def delete_all_documents(identity: IdentityPayload, request: Request):
     """Delete every document completely - same full delete as DELETE /documents/{id}, just for all of them."""
     userProfile = require_role(identity.user_profile, Role.HR_SUPPORT)
-    enforce_rate_limit(request)
+    await enforce_rate_limit(request)
     result = await documents_service.delete_all_documents(deleted_by=userProfile.employee_id)
     return DocumentDeleteAllResponse(**result)
