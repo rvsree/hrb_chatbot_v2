@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deployment Guide — hrb_chatbot_v2</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .doclist { list-style: none; padding: 0; margin: 20px 0; }
+  .doclist li {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 12px; display: flex; gap: 14px; align-items: flex-start;
+  }
+  .doclist .num {
+    font-family: var(--mono); color: var(--accent); font-weight: 700; font-size: 1.3rem;
+    min-width: 28px;
+  }
+  .doclist a { font-weight: 600; font-size: 1.02rem; text-decoration: none; }
+  .doclist a:hover { text-decoration: underline; }
+  .doclist p { margin: 4px 0 0; color: var(--muted); font-size: 0.9rem; }
+  .order-box { background: var(--surface); border: 2px solid var(--accent); border-radius: 10px; padding: 18px 20px; margin: 22px 0 28px; }
+  .order-box h2 { margin-top: 0; border: none; padding: 0; font-size: 1.05rem; }
+  .order-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 0.95rem; margin-top: 10px; }
+  .order-step {
+    background: var(--accent-soft); color: var(--accent); font-weight: 700;
+    padding: 6px 14px; border-radius: 999px; white-space: nowrap;
+  }
+  .order-arrow { color: var(--muted); font-size: 1.1rem; }
+  .order-note { color: var(--muted); font-size: 0.85rem; margin-top: 10px; }
+  .ref-note { color: var(--muted); font-size: 0.85rem; margin: 4px 0 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Deployment Guide — hrb_chatbot_v2</h1>
+<p class="subtitle">Java/Spring Boot → Python/FastAPI/AWS, split by topic. Written 2026-10-05, from a live audit of the deployed service (App Runner, Neon, Pinecone) — not from memory of what was planned. Bookmark this page as the entry point.</p>
+
+<div class="order-box">
+<h2>Implementation order — not the same as the doc numbering below</h2>
+<p class="ref-note">Docs 1 and 2 are <strong>reference</strong> (how to operate what's already deployed, and what already exists in Neon) — nothing to "build" there, read anytime. Doc 6 (NFR/Resilience) is also reference, folded into the other milestones rather than its own build step. The actual build sequence is docs 3 → 4 → 5 → 7, gated by doc 8 at every step:</p>
+<div class="order-row">
+  <span class="order-step">1. Pinecone (doc 3)</span>
+  <span class="order-arrow">&rarr;</span>
+  <span class="order-step">2. Redis cache (doc 4)</span>
+  <span class="order-arrow">&rarr;</span>
+  <span class="order-step">3. RAG ingestion batch (doc 5)</span>
+  <span class="order-arrow">&rarr;</span>
+  <span class="order-step">4. React UI (doc 7) — LAST</span>
+</div>
+<p class="order-note">Revised 2026-10-05: Pinecone and Redis both come before the big ingestion build — Pinecone because it's a hard technical prerequisite (Lambda can't use ChromaDB's file-based mode), Redis because it independently fixes an already-broken rate limiter at real App Runner scale. React UI remains the final milestone. See <a href="08-milestone-plan.html">doc 8</a> for the full gate each step must clear.</p>
+</div>
+
+<ul class="doclist">
+  <li>
+    <span class="num">1</span>
+    <div>
+      <a href="01-deployment-aws.html">Deployment &amp; AWS Operations</a>
+      <p>Reference. How source gets built and deployed (jar → Docker analogy), and how to check health/logs/deployment status in the AWS console.</p>
+    </div>
+  </li>
+  <li>
+    <span class="num">2</span>
+    <div>
+      <a href="02-neon-postgres.html">Neon Postgres</a>
+      <p>Reference. What schema and data actually exist today, lazy table creation vs. Flyway/Liquibase, what's still missing.</p>
+    </div>
+  </li>
+  <li>
+    <span class="num">3</span>
+    <div>
+      <a href="03-pinecone-standard.html">Pinecone as the Standing Vector Store</a>
+      <p>Build step 1. A hard prerequisite for ingestion, not just a convenient first step — why, plus the fix and the endpoint test matrix.</p>
+    </div>
+  </li>
+  <li>
+    <span class="num">4</span>
+    <div>
+      <a href="04-redis-cache.html">Redis Cache</a>
+      <p>Build step 2. The decided caching layer (not a comparison), moved earlier than originally planned — fixes a real, already-broken rate limiter too.</p>
+    </div>
+  </li>
+  <li>
+    <span class="num">5</span>
+    <div>
+      <a href="05-rag-ingestion-batch.html">RAG Ingestion Batch Process</a>
+      <p>Build step 3, the biggest piece. Full architecture diagrams, the encoding/decoding fundamentals, NFR considerations, implementation and testing plan.</p>
+    </div>
+  </li>
+  <li>
+    <span class="num">6</span>
+    <div>
+      <a href="06-nfr-reliability-resilience.html">NFR: Reliability &amp; Resilience</a>
+      <p>Reference. Whole-system gap-check — retry/backoff, rate limiting at scale, monitoring/alarms, logging, load balancing — every finding verified against real code or the live AWS account.</p>
+    </div>
+  </li>
+  <li>
+    <span class="num">7</span>
+    <div>
+      <a href="07-reactjs-ui.html">React UI</a>
+      <p>Build step 4, last. Angular/ASP.NET → React concept mapping, the monorepo decision, SDD for the frontend, and a build plan.</p>
+    </div>
+  </li>
+  <li>
+    <span class="num">8</span>
+    <div>
+      <a href="08-milestone-plan.html">Milestone Plan &amp; Golden Dataset Gate</a>
+      <p>The incremental MVP delivery order across every milestone above, and the one quality gate (golden dataset + CI/CD) each must clear before touching <code>master</code>.</p>
+    </div>
+  </li>
+</ul>
+
+<footer>
+Companion to <code>docs/agent-reference/RAG-ROADMAP.md</code> (phase history), <code>docs/agent-reference/AWS-DEVOPS-RUNBOOK.md</code> (full ops reference), and <code>docs/agent-reference/S3-ASYNC-UPLOAD-DESIGN.md</code> (doc 3's underlying design).
+</footer>
+
+</div>
+</body>
+</html>

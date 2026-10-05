@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neon Postgres</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+<div class="crumbs"><a href="index.html">&larr; Deployment Guide</a></div>
+
+<h1>Neon Postgres</h1>
+<p class="subtitle">What schema and data actually exist today — verified by querying Neon directly, not assumed from the phase history.</p>
+
+<h2>Did we create tables and insert data?</h2>
+<p>Partially, and worth being precise about what actually happened:</p>
+
+<div class="card">
+<span class="status ok">&check; Connectivity verified</span> — live App Runner service successfully connects to Neon (confirmed via <code>GET /health?metadata_provider=postgres</code>).<br><br>
+<span class="status ok">&check; One table auto-created</span> — <code>documents</code> (the document-metadata table), via a <code>CREATE TABLE IF NOT EXISTS</code> that ran the first time the code touched Postgres (a health check). <strong>0 rows</strong> — no data inserted.<br><br>
+<span class="status warn">&#9675; Three tables NOT created yet</span> — <code>conversation_turns</code>, <code>embedding_cache</code>, <code>answer_cache</code>. Each is created lazily, the same way, but only the first time a <em>real request</em> actually exercises that code path. Since production has only served health checks so far, these don't exist yet.
+</div>
+
+<table>
+<tr><th>Java / Spring Boot</th><th>This project</th></tr>
+<tr><td>Flyway / Liquibase migration scripts, versioned, run explicitly on deploy</td><td><strong>No migration tool.</strong> Each Postgres client (<code>postgres_client.py</code>, <code>conversation_store.py</code>, <code>embedding_cache.py</code>, <code>answer_cache.py</code>) runs its own <code>CREATE TABLE IF NOT EXISTS</code> the first time it's used.</td></tr>
+<tr><td><code>spring.jpa.hibernate.ddl-auto=update</code></td><td>Conceptually identical — schema appears automatically from code, not from a separate script you run</td></tr>
+<tr><td>A seed-data script / <code>data.sql</code></td><td>Doesn't exist — no data has been seeded into Neon</td></tr>
+</table>
+
+<p>This is fine at current scale (matches how SQLite/local Postgres already worked all session) but is worth knowing: there's no schema version history, and a destructive schema change to any of these tables has no rollback path beyond manual SQL.</p>
+
+<h2>What will create the remaining 3 tables</h2>
+<table>
+<tr><th>Table</th><th>Created by</th><th>When</th></tr>
+<tr><td><code>conversation_turns</code></td><td><code>conversation_store.py</code></td><td>First request with <code>enable_conversation_memory: true</code></td></tr>
+<tr><td><code>embedding_cache</code></td><td><code>embedding_cache.py</code></td><td>First document ingested (embeddings get cached by content hash)</td></tr>
+<tr><td><code>answer_cache</code></td><td><code>answer_cache.py</code></td><td>First genai-rag query (without conversation memory enabled)</td></tr>
+</table>
+<p>None of these need a manual step — they'll appear automatically once real traffic exercises each path. Worth checking back in Neon's own console (Tables view) after the first real end-to-end test against production.</p>
+
+<h2>Where to look in Neon's console</h2>
+<ol>
+<li>console.neon.tech → your project → <strong>Tables</strong> (left sidebar)</li>
+<li>Select the <code>HR_Benefits</code> database to see the live table list and row counts — the direct equivalent of opening a schema browser (DBeaver/pgAdmin) against a Spring Boot app's datasource</li>
+<li><strong>Monitoring</strong> tab — connection count, compute usage — relevant since Neon's free tier auto-suspends the compute after inactivity (first query after a suspend has a brief cold-start delay, worth knowing if a health check ever times out unexpectedly)</li>
+</ol>
+
+<div class="pager">
+<a href="01-deployment-aws.html">&larr; Deployment &amp; AWS Operations</a>
+<a href="03-pinecone-standard.html">Next: Pinecone as the Standing Vector Store &rarr;</a>
+</div>
+
+</div>
+</body>
+</html>

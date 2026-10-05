@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG Ingestion Batch Process</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"></script>
+<style>
+  .mermaid-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin: 16px 0; overflow-x: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="crumbs"><a href="index.html">&larr; Deployment Guide</a></div>
+
+<h1>RAG Ingestion Batch Process</h1>
+<p class="subtitle">Milestone 3 — the biggest piece of this guide. Full architecture, the fundamentals refresher you asked for, non-functional considerations, and the implementation + testing plan.</p>
+
+<div class="flag"><strong>Prerequisites, confirmed:</strong> <a href="03-pinecone-standard.html">Pinecone as the standing vector store</a> (Milestone 1, hard dependency — Lambda's ephemeral filesystem can't use ChromaDB) and <a href="04-redis-cache.html">Redis cache</a> (Milestone 2) both complete and verified in AWS before this milestone starts.</div>
+
+<h2>Architecture — request flow (revised: S3 &rarr; SQS &rarr; Lambda)</h2>
+<p>Revised 2026-10-05 from the original S3-&gt;Lambda-direct design — SQS is now the primary trigger queue, not just a bolt-on failure bucket. Same reasoning either way needs stating plainly: <strong>there is no separate "listener" process to write or deploy.</strong> Lambda's own SQS trigger (an "event source mapping") is AWS-managed infrastructure — AWS polls the queue and invokes the Lambda function for you.</p>
+<div class="mermaid-wrap">
+<pre class="mermaid">
+sequenceDiagram
+    actor Client
+    participant API as FastAPI (POST /v1/genai-rag/ingest-document)
+    participant S3 as S3 bucket
+    participant SQS as SQS queue
+    participant Lambda as Lambda (index_document handler)
+    participant Meta as Postgres (metadata)
+    participant Vec as Pinecone
+    participant DLQ as SQS dead-letter queue (redrive policy)
+    participant CW as CloudWatch
+
+    Client->>API: POST (filename, content_type)
+    API->>Meta: create_document(id, filename, status="pending_upload")
+    API->>S3: generate presigned POST URL for this document's key
+    API-->>Client: {document_id, upload_url, upload_fields}
+
+    Client->>S3: PUT file bytes directly, using the presigned URL
+    Note over Client,S3: Raw binary multipart upload - no base64,<br/>no encoding step, API process never touches the bytes
+
+    S3->>SQS: ObjectCreated event notification (bucket, key)
+    Note over SQS: Messages buffer here - decouples upload rate<br/>from processing rate, natural backpressure
+
+    SQS->>Lambda: AWS polls the queue, invokes with a batch<br/>(Lambda's own event source mapping - not custom code)
+    activate Lambda
+    Lambda->>Meta: update_status(id, "indexing")
+    Lambda->>S3: get_object() - reads raw bytes back
+    Lambda->>Lambda: chunk_document() / embed_chunks() / index_chunks()<br/>(same pipeline.py code that runs synchronously today)
+    Lambda->>Vec: upsert chunks + embeddings
+    Lambda->>Meta: set_chunk_ids(id, new_ids); update_status(id, "indexed")
+    Lambda->>SQS: delete message (success - won't be redelivered)
+    Lambda->>CW: structured logs, duration, success metric
+    deactivate Lambda
+
+    alt processing fails - message not deleted
+        Note over SQS: Message becomes visible again after visibility timeout,<br/>Lambda retries up to maxReceiveCount
+        SQS->>DLQ: redrive policy moves it here after max retries
+        Lambda->>Meta: update_status(id, "failed", error_message)
+        DLQ->>CW: DLQ depth alarm fires if backlog grows
+    end
+
+    Client->>API: GET /v1/genai-rag/ingest-document/documents/{id} (poll)
+    API-->>Client: {status: "indexed", chunk_ids: [...]}
+</pre>
+</div>
+
+<h2>Architecture — components</h2>
+<div class="mermaid-wrap">
+<pre class="mermaid">
+flowchart TD
+    Client["Client"]
+    subgraph API["This project's FastAPI app (App Runner)"]
+        Upload["POST /ingest-document<br/>issues a presigned URL, never touches file bytes"]
+        Status["GET /documents/id<br/>unchanged from today"]
+    end
+    S3["S3 bucket<br/>one object per document_id"]
+    SQS["SQS queue<br/>primary trigger, not just a DLQ"]
+    Lambda["Lambda: index_document handler<br/>reuses ai/doc_processing/pipeline.py unchanged<br/>triggered by SQS event source mapping (AWS-managed)"]
+    DLQ["SQS dead-letter queue<br/>via redrive policy, maxReceiveCount"]
+    Meta["Postgres metadata store<br/>(Neon)"]
+    Vec["Pinecone<br/>(the only vector store reachable from Lambda)"]
+    CW["CloudWatch<br/>Lambda logs, error-rate alarm, DLQ-depth alarm"]
+
+    Client -->|1. request upload URL| Upload
+    Upload -->|2. presigned URL + fields| Client
+    Client -->|3. PUT file bytes directly| S3
+    S3 -->|4. object created| SQS
+    SQS -->|5. AWS polls + invokes| Lambda
+    Lambda -->|6. read object| S3
+    Lambda -->|7. write chunks + embeddings| Vec
+    Lambda -->|8. update status| Meta
+    SQS -.->|9. after max retries| DLQ
+    Lambda -->|structured logs, metrics| CW
+    Client -->|10. poll status| Status
+    Status -->|reads| Meta
+</pre>
+</div>
+<script>mermaid.initialize({ startOnLoad: true, theme: "neutral" });</script>
+
+<h2>Presigned URLs — how they actually work</h2>
+<p>A presigned URL is a normal S3 URL with extra query-string parameters (a signature, an expiry timestamp, which AWS credential signed it) appended by AWS's own SDK — generated entirely <strong>server-side</strong>, using this project's own backend credentials, handed to the client as a plain string. The client then uploads directly to that URL with a plain HTTP <code>PUT</code> (or <code>POST</code> for the form-field variant) — no AWS SDK, no AWS credentials, nothing AWS-specific required on the client at all. It works exactly like you'd have built it at JPMorgan (DARCE/UMA) — same mechanism, same reason: keep large file bytes off your own application server.</p>
+
+<pre><code># Server-side (Lambda-free, just boto3 in the FastAPI app):
+import boto3
+s3 = boto3.client("s3")
+url = s3.generate_presigned_url(
+    "put_object",
+    Params={"Bucket": "hrb-chatbot-kb-uploads", "Key": f"{document_id}.pdf"},
+    ExpiresIn=300,   # link only valid for 5 minutes
+)
+# Hand `url` back to the client in the API response. That's the whole mechanism.</code></pre>
+
+<h3>Does this need JWT or OAuth2? No — two separate questions, easy to conflate</h3>
+<table>
+<tr><th>Question</th><th>Answer</th></tr>
+<tr><td>Does generating the presigned URL itself need JWT/OAuth2?</td><td><strong>No.</strong> The "presigned" signature is AWS's own SigV4 request-signing, built into the AWS SDK, signed with the backend's existing AWS IAM identity (the same App Runner instance role already used for every other AWS call). Nothing to do with JWT or OAuth2 — a completely separate mechanism.</td></tr>
+<tr><td>Should the <em>endpoint that hands out</em> the presigned URL be protected by real caller authentication?</td><td>A fair, separate security question — whoever can call that endpoint gets indirect write access to the S3 bucket. Today it would get the same protection every other endpoint already has: the placeholder <code>user_profile</code> RBAC gateway, not real auth. That's an existing, already-documented project-wide limitation (see <code>CLAUDE.md</code>'s gateway section) — not something this feature introduces or needs to solve on its own.</td></tr>
+</table>
+<p>Worth knowing for later: this project <em>does</em> already have a real OAuth2 client-credentials flow (Phase 53 — app-to-app, for calling <code>hrb_lms_mcp</code>), so the groundwork exists if/when real human-to-app auth gets built. That's unrelated to presigned URLs working today, though — presigned URLs need nothing further to implement right now.</p>
+
+<h2>Fundamentals refresher: encoding/decoding, from the ground up</h2>
+<p>Going slower here since this is foundational. A file on disk — a PDF included — is just a long sequence of numbers, each between 0 and 255 (one byte). Nothing about a PDF is inherently "text"; it's binary data, full stop.</p>
+<p>Some systems were only ever designed to carry <strong>text</strong> safely — email (historically), URLs, JSON string fields, HTTP headers. These systems can choke, corrupt, or outright reject certain byte values (e.g., byte value 0, or anything above 127) if you hand them raw binary. <strong>Encoding</strong> is the fix: a mechanical, reversible translation that re-expresses arbitrary binary bytes using only a small, safe set of text characters. <strong>Decoding</strong> is just running that translation backward to get the original bytes back.</p>
+<p>The most common encoding for this is <strong>Base64</strong>. Concretely, step by step:</p>
+<ol>
+<li>Base64 only uses 64 safe characters: <code>A-Z</code>, <code>a-z</code>, <code>0-9</code>, <code>+</code>, <code>/</code> — every one of them is guaranteed safe in text/URLs/JSON</li>
+<li>It takes your binary data <strong>3 bytes at a time</strong> (3 bytes = 24 bits)</li>
+<li>It re-slices those 24 bits into <strong>4 groups of 6 bits each</strong> (6 bits = a number from 0-63 — exactly how many safe characters there are)</li>
+<li>Each 6-bit number maps to one of the 64 safe characters, via a fixed lookup table</li>
+<li>Result: 3 raw bytes become 4 text characters — which is also why base64 text is always about <strong>33% larger</strong> than the original binary</li>
+</ol>
+<p>Decoding is exactly the reverse: read 4 base64 characters, look each up to get its 6-bit number back, recombine four 6-bit groups into three original 8-bit bytes.</p>
+<div class="flag"><strong>One common confusion worth clearing up directly: encoding is not encryption.</strong> Base64 provides zero security — anyone can decode it instantly, there's no secret key involved. It exists purely to make binary data <em>transportable</em> through text-only channels, never to hide or protect it.</div>
+
+<h3>Where this actually shows up in this project's design — and where it deliberately doesn't</h3>
+<table>
+<tr><th>Scenario</th><th>Encoding involved?</th></tr>
+<tr><td>Client uploading the PDF directly to S3 via the presigned URL (this design)</td><td><strong>No.</strong> Raw binary <code>PUT</code> over HTTP — S3's upload API accepts binary natively. This is deliberate: it's exactly why the presigned-URL pattern is preferred over routing bytes through the API.</td></tr>
+<tr><td>Lambda reading the file back from S3 (<code>get_object()</code>)</td><td><strong>No.</strong> boto3 hands back raw bytes directly — another direct binary call, no text layer in between.</td></tr>
+<tr><td>A presigned POST policy's <code>Content-MD5</code> field</td><td>Yes, but only a small <em>checksum</em> of the file (for integrity verification), never the file itself</td></tr>
+<tr><td>If file bytes were ever routed through API Gateway + Lambda proxy integration instead (not this design)</td><td>Yes — API Gateway/Lambda payloads are JSON under the hood, a text format, so a binary body would need base64 encoding on the way in and decoding on the way out. This is the exact overhead the presigned-URL pattern exists to avoid.</td></tr>
+</table>
+<p>So, directly: in this project's actual design, the PDF's bytes are never encoded or decoded at all, anywhere. That's not an accident — it's one of the concrete reasons presigned direct-to-S3 upload was the recommended pattern in the first place.</p>
+
+<h2>Why this design already fits your Spring Boot instincts</h2>
+<table>
+<tr><th>Concept</th><th>Spring Boot analogy</th></tr>
+<tr><td>Presigned S3 upload URL</td><td>Like generating a pre-signed Azure Blob/S3 SAS token so the client uploads directly, bypassing your app server</td></tr>
+<tr><td>S3 &rarr; SQS &rarr; Lambda</td><td>S3 publishes an event, SQS buffers it — conceptually a JMS/Kafka topic. But unlike a Spring <code>@JmsListener</code> bean you write and deploy, Lambda's SQS trigger <em>is</em> the consumer — AWS polls the queue and invokes your function; there's no listener process of your own to run.</td></tr>
+<tr><td>Lambda calling the same <code>pipeline.py</code> code</td><td>Exactly like extracting an existing <code>@Service</code> into something callable both from a REST controller <em>and</em> a <code>@JmsListener</code> — no new business logic, just a new entry point</td></tr>
+<tr><td>SQS dead-letter queue</td><td>Same DLQ concept you'd configure on a Spring JMS/Kafka listener</td></tr>
+</table>
+
+<h2>Non-functional considerations specific to this milestone</h2>
+<table>
+<tr><th>Concern</th><th>How this design addresses it</th></tr>
+<tr><td><strong>Reliability</strong></td><td>SQS's own redrive policy (<code>maxReceiveCount</code>) retries a failed message automatically, then moves it to the DLQ once exhausted — nothing silently disappears, and the retry/DLQ mechanism is one native SQS feature, not bolted onto Lambda separately</td></tr>
+<tr><td><strong>Resilience</strong></td><td>Lambda invocations are independent and stateless — one document's failure never blocks another's processing, unlike today's synchronous in-request indexing</td></tr>
+<tr><td><strong>Idempotency</strong></td><td>Re-processing the same S3 object (a Lambda retry, or a replayed DLQ message) must not double-index — reuse the existing content-hash dedup (Phase 16) inside <code>pipeline.py</code>, already built for exactly this</td></tr>
+<tr><td><strong>Scalability</strong></td><td>Lambda scales per-invocation automatically — a batch of 100 uploaded documents triggers up to 100 concurrent Lambda executions (bounded by account concurrency limits, worth setting a reserved concurrency to protect Pinecone/Postgres from a thundering herd)</td></tr>
+<tr><td><strong>Monitoring</strong></td><td>CloudWatch alarm on DLQ depth (&gt;0 messages = something is failing and needs attention) and on Lambda error rate — neither exists for any part of this system yet (verified: zero CloudWatch alarms currently configured), so this is also where alarming gets introduced for the first time</td></tr>
+<tr><td><strong>Logging</strong></td><td>Lambda logs go to their own CloudWatch log group automatically — worth using structured (JSON) log lines from the start here, unlike the plain-text format the rest of this project currently uses, so Logs Insights queries are possible without regex parsing</td></tr>
+</table>
+<p>See <a href="06-nfr-reliability-resilience.html">the NFR &amp; Resilience page</a> for the whole-system view — rate limiting, retry/backoff on LLM calls, and load balancing are cross-cutting concerns, not specific to this milestone, so they're covered there rather than duplicated here.</p>
+
+<h2>Implementation plan</h2>
+<ul class="checklist">
+<li>Write the Phase spec first (per this project's own spec-first convention) — this page plus <code>docs/agent-reference/S3-ASYNC-UPLOAD-DESIGN.md</code> already cover 90% of it</li>
+<li>Create the S3 bucket (one object per <code>document_id</code>, matching the existing metadata model)</li>
+<li>Add a new endpoint (or extend the existing ingest endpoint) to generate a presigned POST URL instead of accepting the file body directly</li>
+<li>Write the Lambda handler — thin wrapper calling <code>ai/doc_processing/pipeline.py</code>'s existing chunk/embed/index functions unchanged</li>
+<li>Create the SQS queue, configured as the S3 <code>ObjectCreated</code> event target (not Lambda directly)</li>
+<li>Wire Lambda's SQS trigger (event source mapping) — AWS-managed polling, no custom consumer code to write</li>
+<li>Configure the queue's redrive policy (<code>maxReceiveCount</code>) pointing at a dead-letter queue, plus a CloudWatch alarm on DLQ depth — not optional, the standard pattern for this architecture</li>
+<li>Switch metadata <code>update_status</code> calls to the <code>pending_upload</code> &rarr; <code>indexing</code> &rarr; <code>indexed</code>/<code>failed</code> state machine</li>
+<li>Set Lambda reserved concurrency to a sane cap, protecting Pinecone/Postgres from a large batch upload spike</li>
+<li>IAM: a scoped role for the Lambda (S3 read, Pinecone network egress, Postgres write) — same least-privilege pattern as <code>hrb-chatbot-github-actions-deploy</code></li>
+<li>Switch Lambda's own logging to structured JSON from day one</li>
+</ul>
+
+<h2>Testing considerations</h2>
+<ul class="checklist">
+<li><strong>Unit test the Lambda handler</strong> with a synthetic S3 event payload (a fixture, not a real S3 call) — confirms the handler parses the event and calls <code>pipeline.py</code> correctly, matching this project's existing fake-based test convention</li>
+<li><strong>Integration test</strong> against a real (or LocalStack-emulated) S3 bucket — upload a real PDF via presigned URL, confirm the Lambda fires and the document reaches <code>indexed</code> status</li>
+<li><strong>Idempotency test</strong> — invoke the handler twice for the same object key, confirm no duplicate chunks land in Pinecone (content-hash dedup holds)</li>
+<li><strong>Chaos/failure test</strong> — force a failure (e.g., a malformed PDF, or a temporarily unreachable Pinecone), confirm the message lands in the DLQ and the document's status becomes <code>failed</code> with a real error message, not a silent drop</li>
+<li><strong>Full endpoint matrix from <a href="03-pinecone-standard.html">the Pinecone page</a></strong> still applies — now exercised via the async upload path, not just the synchronous one</li>
+<li><strong>Golden dataset gate</strong> — run <code>eval-gate.yml</code> after a batch of real documents has been ingested through this new path, confirming retrieval quality holds when documents arrive via Lambda instead of the synchronous endpoint</li>
+</ul>
+
+<div class="pager">
+<a href="04-redis-cache.html">&larr; Redis Cache</a>
+<a href="06-nfr-reliability-resilience.html">Next: NFR &amp; Resilience &rarr;</a>
+</div>
+
+</div>
+</body>
+</html>

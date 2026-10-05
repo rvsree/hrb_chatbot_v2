@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deployment & AWS Operations</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+<div class="crumbs"><a href="index.html">&larr; Deployment Guide</a></div>
+
+<h1>Deployment &amp; AWS Operations</h1>
+<p class="subtitle">How the source gets built and deployed, and how to check it's actually working — every step mapped to the Spring Boot/Jenkins equivalent you already know.</p>
+
+<h2>How was the source built for deployment?</h2>
+<p>Python has no compile step and no single build artifact like a <code>.jar</code>. The closest equivalent is a two-stage Docker build, which plays the same role your Maven/Gradle build + Dockerfile combo does.</p>
+
+<table>
+<tr><th>Java / Spring Boot</th><th>This project (Python / FastAPI)</th></tr>
+<tr><td><code>pom.xml</code> / <code>build.gradle</code> (dependency list)</td><td><code>requirements.txt</code></td></tr>
+<tr><td><code>mvn package</code> → resolves deps, compiles, produces <code>app.jar</code></td><td><code>pip install -r requirements.txt</code> into a venv — no compilation, just downloading/unpacking packages</td></tr>
+<tr><td><code>FROM openjdk:21-slim</code>, <code>COPY target/app.jar .</code></td><td><code>Dockerfile</code> stage 2 (<code>runtime</code>): <code>COPY --from=builder /opt/venv /opt/venv</code> + <code>COPY src ./src</code></td></tr>
+<tr><td>Multi-stage build to drop the JDK/build tools from the final image</td><td>Same idea — stage 1 (<code>builder</code>) has compilers/headers for pip wheels; stage 2 is just Python + the finished venv, no build tooling</td></tr>
+<tr><td><code>docker build -t myapp .</code></td><td>Identical: <code>docker buildx build ... -t hrb-chatbot:local .</code></td></tr>
+<tr><td>Push to Nexus/Artifactory (jar) or Docker Hub/ECR (image)</td><td>Push to <strong>ECR</strong> (AWS's container registry) — same registry concept, images not jars</td></tr>
+<tr><td>Kubernetes/ECS "roll out new version", or Tomcat restart with a new WAR</td><td><code>aws apprunner start-deployment</code> — tells the running service to pull the new ECR image and restart</td></tr>
+</table>
+
+<h3>The actual pipeline (CI/CD)</h3>
+<p>This all happens inside <code>.github/workflows/deploy.yml</code>, triggered on every push to <code>master</code> — think of it as a Jenkins/GitHub Actions pipeline you'd wire for a Spring Boot app, just targeting App Runner instead of Kubernetes/EC2:</p>
+<pre><code>1. checkout
+2. configure AWS credentials (IAM user scoped to just this job)
+3. docker login to ECR
+4. docker buildx build --provenance=false --sbom=false ...push=true
+   (two flags that matter a lot here — App Runner silently fails
+    to start a container built without them; see AWS-DEVOPS-RUNBOOK.md)
+5. aws apprunner start-deployment   # tell App Runner to pull + redeploy
+6. poll Service.Status until RUNNING (not instant — takes a minute or two)
+7. smoke test: curl the live /ping endpoint for a real 200</code></pre>
+
+<div class="flag"><strong>No <code>AutoDeploymentsEnabled</code></strong> — unlike Kubernetes watching a registry tag, App Runner does <em>not</em> auto-redeploy just because a new image landed in ECR. Step 5 above is what actually triggers it; this is deliberate, confirmed during this project's Phase 10.</div>
+
+<h2>Checking health, logs, and deployment status</h2>
+
+<h3>1. Is the app actually healthy right now?</h3>
+<p>Skip the console for this — hit the endpoints directly, same as you'd hit Spring Boot Actuator's <code>/actuator/health</code>:</p>
+<pre><code>GET https://mrgysvt6ye.us-east-1.awsapprunner.com/ping    # liveness only, instant, no cost
+GET https://mrgysvt6ye.us-east-1.awsapprunner.com/health  # real check of every backend (LLM, vector DB, metadata DB)</code></pre>
+
+<h3>2. Was the last deployment successful? (AWS Console)</h3>
+<ol>
+<li>console.aws.amazon.com → search <strong>App Runner</strong></li>
+<li>Click <strong>hrb-chatbot</strong></li>
+<li><strong>Overview</strong> tab — top-right status badge: <code>Running</code> (good), <code>Operation in progress</code> (mid-deploy), or <code>Create failed</code>/<code>Deploy failed</code></li>
+<li><strong>Activity</strong> tab — deployment history, one row per deploy, with timestamps and pass/fail — your App Runner equivalent of a Jenkins build history, specifically for what got deployed and when</li>
+</ol>
+
+<h3>3. Reading application logs (your own <code>structlog</code>/print output)</h3>
+<ol>
+<li>App Runner service page → <strong>Logs</strong> tab</li>
+<li>Two log groups, same split you'd see between a container orchestrator's own events vs. your app's <code>catalina.out</code>:
+  <ul>
+    <li><code>.../service</code> — App Runner's own system events (image pulled, deployment started/failed) — <strong>this is all you get if the container never starts at all</strong></li>
+    <li><code>.../application</code> — your actual FastAPI/uvicorn stdout — request logs, exceptions, everything <code>get_logger()</code> writes</li>
+  </ul>
+</li>
+<li>Or via CloudWatch directly: CloudWatch → Log groups → <code>/aws/apprunner/hrb-chatbot/&lt;service-id&gt;/application</code></li>
+</ol>
+<div class="flag"><strong>Known gap, from the runbook:</strong> if a deploy fails because the <em>container itself</em> never starts, there's no <code>/application</code> log at all — only the generic <code>/service</code> log, which won't say why. That pattern almost always means something about the image itself (manifest format, missing entrypoint), not your Python code.</div>
+
+<h3>4. Traffic / performance metrics</h3>
+<p>App Runner service page → <strong>Metrics</strong> tab — request count, 4xx/5xx rate, latency (p50/p99), CPU/memory. This is the AWS-managed equivalent of wiring Micrometer + Prometheus/Grafana yourself in a Spring Boot app — you get it for free here, just less customizable.</p>
+
+<h3>5. Did the GitHub Actions deploy itself succeed?</h3>
+<pre><code>gh run list --workflow=deploy.yml --limit 5
+gh run view &lt;run-id&gt; --log-failed   # only on failure, see exactly which step broke</code></pre>
+<p>Your Jenkins "build history" equivalent — <code>gh</code> CLI is now installed and authenticated on this machine, so this works directly from the terminal instead of browser navigation.</p>
+
+<h2>Operational housekeeping, current</h2>
+<ul class="checklist">
+<li><strong>Rotate the AWS access key</strong> for <code>hrb-chatbot-github-actions-deploy</code> — it was pasted into a chat session during setup. Create a new key for the same IAM user, swap the GitHub secret (<code>gh secret set AWS_ACCESS_KEY_ID</code>), deactivate the old key.</li>
+<li><strong>Clean up 5 duplicate Postgres secrets</strong> left in AWS Secrets Manager's <code>us-east-2</code> region (from an early region mix-up) — harmless clutter, delete whenever convenient.</li>
+<li><strong>Phase 81 (spec'd, not implemented)</strong> — the Postgres cache/memory calls still crash the request if Neon ever has a blip, instead of degrading gracefully. See <code>docs/agent-reference/RAG-ROADMAP.md</code>'s Phase 81 entry.</li>
+</ul>
+
+<div class="pager">
+<a href="index.html">&larr; Guide index</a>
+<a href="02-neon-postgres.html">Next: Neon Postgres &rarr;</a>
+</div>
+
+</div>
+</body>
+</html>

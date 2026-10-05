@@ -14,6 +14,10 @@
       "value": ""
     },
     {
+      "key": "conversation_id",
+      "value": ""
+    },
+    {
       "key": "kb_docs_dir",
       "value": "C:/workspace/2026-v1/interview-kickstart/hrb_chatbot_v2/resources/kb_docs"
     }
@@ -908,10 +912,21 @@
                 "method": "POST",
                 "url": {
                   "raw": "{{base_url}}/v1/single-agentic-rag/query",
-                  "host": ["{{base_url}}"],
-                  "path": ["v1", "single-agentic-rag", "query"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "single-agentic-rag",
+                    "query"
+                  ]
                 },
-                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"user_profile\": {\"employee_id\": \"EMP052\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"What is my PTO balance?\"\n}"
@@ -925,10 +940,21 @@
                 "method": "POST",
                 "url": {
                   "raw": "{{base_url}}/v1/single-agentic-rag/query",
-                  "host": ["{{base_url}}"],
-                  "path": ["v1", "single-agentic-rag", "query"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "single-agentic-rag",
+                    "query"
+                  ]
                 },
-                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"user_profile\": {\"employee_id\": \"EMP052\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"How many weeks of paid parental leave does JPMorgan Chase provide?\"\n}"
@@ -942,10 +968,21 @@
                 "method": "POST",
                 "url": {
                   "raw": "{{base_url}}/v1/single-agentic-rag/query",
-                  "host": ["{{base_url}}"],
-                  "path": ["v1", "single-agentic-rag", "query"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "single-agentic-rag",
+                    "query"
+                  ]
                 },
-                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"user_profile\": {\"employee_id\": \"EMP052\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"What is the JPMC 401k match?\",\n  \"enable_conversation_memory\": true\n}"
@@ -959,10 +996,21 @@
                 "method": "POST",
                 "url": {
                   "raw": "{{base_url}}/v1/single-agentic-rag/query",
-                  "host": ["{{base_url}}"],
-                  "path": ["v1", "single-agentic-rag", "query"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "single-agentic-rag",
+                    "query"
+                  ]
                 },
-                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"user_profile\": {\"employee_id\": \"EMP052\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"What was the phone number you just gave me?\",\n  \"enable_conversation_memory\": true,\n  \"conversation_id\": \"<paste conversation_id from the previous response here>\"\n}"
@@ -976,10 +1024,21 @@
                 "method": "POST",
                 "url": {
                   "raw": "{{base_url}}/v1/single-agentic-rag/query",
-                  "host": ["{{base_url}}"],
-                  "path": ["v1", "single-agentic-rag", "query"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "single-agentic-rag",
+                    "query"
+                  ]
                 },
-                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"query\": \"What is my PTO balance?\"\n}"
@@ -1004,10 +1063,21 @@
                 "method": "POST",
                 "url": {
                   "raw": "{{base_url}}/v1/multi-agentic-rag/query",
-                  "host": ["{{base_url}}"],
-                  "path": ["v1", "multi-agentic-rag", "query"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "multi-agentic-rag",
+                    "query"
+                  ]
                 },
-                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"user_profile\": {\"employee_id\": \"EMP052\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"What is the parental leave policy, and also what is my current leave balance?\"\n}"
@@ -1021,10 +1091,21 @@
                 "method": "POST",
                 "url": {
                   "raw": "{{base_url}}/v1/multi-agentic-rag/query",
-                  "host": ["{{base_url}}"],
-                  "path": ["v1", "multi-agentic-rag", "query"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "multi-agentic-rag",
+                    "query"
+                  ]
                 },
-                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"user_profile\": {\"employee_id\": \"EMP052\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"},\n  \"query\": \"What is the parental leave policy?\"\n}"
@@ -1038,15 +1119,121 @@
                 "method": "POST",
                 "url": {
                   "raw": "{{base_url}}/v1/multi-agentic-rag/query",
-                  "host": ["{{base_url}}"],
-                  "path": ["v1", "multi-agentic-rag", "query"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "multi-agentic-rag",
+                    "query"
+                  ]
                 },
-                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"query\": \"What is my PTO balance?\"\n}"
                 },
                 "description": "Same identity-in-payload rule as every other endpoint. Expect 401, code UNAUTHENTICATED - the gateway/RBAC layer runs before the stub is ever reached."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "conversations",
+      "description": "NFR delete-my-data endpoint (Phase 76) - deletes every turn for one conversation_id, scoped to the requesting employee_id. Non-standard but deliberate: DELETE with a JSON body, same identity mechanism (user_profile) as every other endpoint - see CLAUDE.md's gateway section.",
+      "item": [
+        {
+          "name": "Delete — DELETE /v1/conversations/{conversation_id}",
+          "item": [
+            {
+              "name": "Delete own conversation",
+              "request": {
+                "method": "DELETE",
+                "url": {
+                  "raw": "{{base_url}}/v1/conversations/{{conversation_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "conversations",
+                    "{{conversation_id}}"
+                  ]
+                },
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"user_profile\": {\n    \"employee_id\": \"EMP052\",\n    \"full_name\": \"Eddy Employee\",\n    \"role\": \"employee\"\n  }\n}"
+                },
+                "description": "Set {{conversation_id}} to a real id first (e.g. one returned by a prior genai-rag/single-agentic-rag/multi-agentic-rag query with enable_conversation_memory=true). Expect 200, turns_deleted > 0."
+              }
+            },
+            {
+              "name": "Delete someone else's conversation (0 deleted, not an error)",
+              "request": {
+                "method": "DELETE",
+                "url": {
+                  "raw": "{{base_url}}/v1/conversations/{{conversation_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "conversations",
+                    "{{conversation_id}}"
+                  ]
+                },
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"user_profile\": {\n    \"employee_id\": \"EMP052\",\n    \"full_name\": \"Eddy Employee\",\n    \"role\": \"employee\"\n  }\n}"
+                },
+                "description": "A conversation_id that exists but belongs to a different employee_id - the endpoint scopes deletion to the requester, so this returns 200 with turns_deleted: 0, not a 403/404. Matches test_manage_conversations.py's own coverage."
+              }
+            },
+            {
+              "name": "Missing user_profile (401)",
+              "request": {
+                "method": "DELETE",
+                "url": {
+                  "raw": "{{base_url}}/v1/conversations/{{conversation_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "conversations",
+                    "{{conversation_id}}"
+                  ]
+                },
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                },
+                "description": "Same gateway RBAC as every other endpoint - no user_profile means 401, before the delete logic ever runs."
               }
             }
           ]

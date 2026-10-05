@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>React UI</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+<div class="crumbs"><a href="index.html">&larr; Deployment Guide</a></div>
+
+<h1>React UI</h1>
+<p class="subtitle">Coming from Angular v2/TypeScript and ASP.NET — your TypeScript carries over directly. The mental model shifts more than the language does.</p>
+
+<div class="flag"><strong>Sequencing, confirmed — this is the last milestone.</strong> Starts only after <a href="03-pinecone-standard.html">Pinecone</a>, <a href="04-redis-cache.html">Redis</a>, and <a href="05-rag-ingestion-batch.html">S3+Lambda batch ingestion</a> are all implemented, tested, and deployed to AWS. Don't start scaffolding until all three are done — see <a href="08-milestone-plan.html">the milestone plan</a> for the full order.</div>
+
+<h2>Same repo or separate repo?</h2>
+<p><strong>Recommendation: same repo, a <code>frontend/</code> folder.</strong> Not the "easier" choice made for convenience — the reasoning:</p>
+<ul class="checklist">
+<li><strong>A monorepo doesn't actually bloat.</strong> Git handles folders natively; <code>node_modules/</code> and <code>dist/</code> are gitignored exactly like <code>.venv/</code> already is for the backend. The repo doesn't grow meaningfully from adding source files in a sibling folder.</li>
+<li><strong>CI/CD stays cleanly separated anyway</strong> — GitHub Actions supports path-scoped triggers (<code>on.push.paths: ["frontend/**"]</code>). A frontend-only commit never runs the backend's test suite/Docker build, and vice versa. Same isolation a separate repo gives you, without the separate-repo overhead.</li>
+<li><strong>A separate repo's upfront cost is real, not nominal</strong>: its own CI/CD workflow files from scratch, its own AWS deploy credentials (S3/CloudFront, separate from the backend's ECR/App Runner ones), its own branch-protection/default-branch setup (the exact kind of misconfiguration this project's own backend hit and had to fix manually), and cross-repo coordination any time an API contract changes on one side.</li>
+<li><strong>For interview/portfolio presentation, a well-organized monorepo is a normal, well-regarded structure</strong> — it demonstrates the ability to manage a cohesive full-stack system with clear internal boundaries, which is exactly what gets evaluated. Separate repos are typically chosen for organizational/team-scaling reasons (independent release trains, separate ownership) that don't apply to a solo project at this stage — splitting now would be optimizing for a problem that doesn't exist yet.</li>
+</ul>
+
+<h2>Spec-Driven Development for the frontend — confirmed, yes</h2>
+<p>The same SDD process this backend uses transfers directly:</p>
+<ul class="checklist">
+<li>A <code>frontend/CLAUDE.md</code> (or a shared root-level one covering both) stating frontend-specific conventions — component structure, state-management choice, testing approach</li>
+<li>Specs still live as a <code>**Spec:**</code> block in a roadmap file before code — either a new <code>docs/agent-reference/REACT-UI-ROADMAP.md</code> (mirroring <code>RAG-ROADMAP.md</code>'s exact shape) or, if the two stay tightly coupled, additional phases appended to the existing roadmap under a clear "Frontend" heading</li>
+<li>The same <code>PreToolUse</code> spec-gate hook pattern can be scoped to also cover <code>frontend/src/**</code>, not just <code>src/hrb_chatbot/**</code> — a one-line change to <code>.claude/scripts/spec_gate.py</code>'s path match</li>
+<li>Same "one task at a time," "flag don't fix" working norms apply unchanged — these aren't backend-specific, they're how this project works</li>
+</ul>
+<p>This will be set up when the milestone actually starts, not now — flagged here so it's a known, already-decided part of the plan rather than a question revisited later.</p>
+
+<h2>Concept mapping</h2>
+<table>
+<tr><th>Angular (what you know)</th><th>React (what you're learning)</th></tr>
+<tr><td>Component = class + decorator + separate HTML template</td><td>Component = a function that returns JSX (HTML-like syntax <em>inside</em> the TS/JS file)</td></tr>
+<tr><td><code>@Injectable()</code> services + constructor DI</td><td>No built-in DI — plain functions, or React Context for shared state</td></tr>
+<tr><td>RxJS <code>Observable</code> + <code>HttpClient</code></td><td><code>fetch</code>/<code>axios</code> + a data-fetching library (<strong>TanStack Query</strong> recommended — handles loading/error/caching state, the part RxJS used to give you for free)</td></tr>
+<tr><td>Two-way binding (<code>[(ngModel)]</code>)</td><td>Explicit one-way: <code>useState</code> + an <code>onChange</code> handler — more verbose, but easier to trace</td></tr>
+<tr><td>Angular CLI (<code>ng new</code>, <code>ng serve</code>)</td><td><strong>Vite</strong> (<code>npm create vite@latest</code>) — same role, much faster dev server, less configuration than Angular CLI or Create React App</td></tr>
+<tr><td>Angular Router</td><td>React Router — same concept, similar API</td></tr>
+<tr><td><code>*ngIf</code> / <code>*ngFor</code> template directives</td><td>Plain JavaScript inside JSX: <code>{condition &amp;&amp; &lt;X/&gt;}</code>, <code>{items.map(...)}</code></td></tr>
+</table>
+
+<h2>What's missing on the backend before a UI can call it</h2>
+<div class="flag"><strong>CORS is not configured.</strong> Confirmed — no <code>CORSMiddleware</code> exists in <code>main.py</code>. A React dev server (<code>localhost:5173</code>) calling this API directly will be blocked by the browser until this is added. One small, standard FastAPI addition — not a redesign.</div>
+<div class="flag"><strong>Auth is still a placeholder.</strong> The gateway's RBAC reads an unsigned <code>user_profile</code> straight from the request body — a UI makes this limitation much more visible to an actual user than Postman testing did (there's no login screen to back it, so the UI would need to let the user "claim" an identity, which is awkward for anything beyond a demo).</div>
+
+<h2>Action items</h2>
+<ul class="checklist">
+<li>Add CORS middleware to <code>main.py</code> (scoped to the dev server origin, then the real UI's deployed domain later)</li>
+<li>Scaffold with Vite + React + TypeScript: <code>npm create vite@latest hrb-chatbot-ui -- --template react-ts</code></li>
+<li>Build the chat screen first: a form posting to <code>POST /v1/genai-rag/retrieve-document/query</code>, rendering <code>answer</code> + <code>sources</code> — the one endpoint that proves the whole loop works</li>
+<li>Add TanStack Query for the request/loading/error state (the RxJS-shaped problem you already know how to think about)</li>
+<li>Add a minimal "who am I" selector (name + role dropdown) to populate <code>user_profile</code> — a stand-in for real login, consistent with how Postman testing already works against this API</li>
+<li>Local dev: <code>npm run dev</code> (Vite) talking to <code>uvicorn --reload</code> locally — two processes, two ports, same as Angular dev server + a local Spring Boot API</li>
+<li>Deployment plan (once the UI works locally): a static React build (<code>npm run build</code> &rarr; plain HTML/JS/CSS) is <strong>not</strong> an App Runner container — it deploys to <strong>S3 (static hosting) + CloudFront</strong> instead, the standard AWS pattern for a single-page app. Different pipeline from the backend's Docker/ECR/App Runner one.</li>
+</ul>
+
+<div class="pager">
+<a href="06-nfr-reliability-resilience.html">&larr; NFR &amp; Resilience</a>
+<a href="08-milestone-plan.html">Next: Milestone Plan &amp; Golden Dataset Gate &rarr;</a>
+</div>
+
+</div>
+</body>
+</html>
