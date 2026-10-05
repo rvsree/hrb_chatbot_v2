@@ -73,6 +73,16 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
 
+      - name: Download the Spacy model Presidio needs (Phase 82's fix, applied here too)
+        # The Dockerfile downloads this for the container image, but this
+        # workflow installs dependencies via plain pip, not Docker, so it
+        # never got this fix. Without it, the "mask sensitive data on
+        # input" guardrail throws on every single query - confirmed live,
+        # 2026-10-05: all 24 golden cases failed, and the gate still
+        # returned PASS (a separate bug, also fixed this same day - see
+        # the next step/run_release_gate.py's own BLOCK-on-zero-scores fix).
+        run: python -m spacy download en_core_web_lg
+
       - name: Start the app
         # stdout/stderr redirected to a file, not left attached to this
         # step's own backgrounded `&` process - without this, the app's

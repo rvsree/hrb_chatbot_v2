@@ -110,6 +110,7 @@ async def main() -> int:
     scorable_cases = _load_scorable_cases()
 
     per_metric_scores: dict[str, list[float]] = {metric: [] for metric in METRICS}
+    failed_ids: list[str] = []
     print(f"Scoring {len(scorable_cases)} golden case(s) against genai-rag (retrieval k={RETRIEVAL_K})...\n")
 
     for case in scorable_cases:
@@ -120,6 +121,7 @@ async def main() -> int:
             print(f"  {case['id']}: FAILED", flush=True)
             traceback.print_exc()
             sys.stdout.flush()
+            failed_ids.append(case["id"])
             continue
         for metric, score in result["scores"].items():
             if metric in per_metric_scores and score is not None:
@@ -134,7 +136,24 @@ async def main() -> int:
         print(f"  {metric}: {value:.3f}{gated}")
 
     gate_scores = {metric: value for metric, value in aggregated.items() if metric in GATE_METRICS}
-    decision, flags = get_release_decision(gate_scores)
+
+    # Found live, 2026-10-05: get_release_decision({}) returns PASS on
+    # empty input (nothing to check against thresholds) - with every case
+    # failing to score (a real incident that day), the gate still reported
+    # PASS. A gate that can't tell "verified good" apart from "verified
+    # nothing" is worse than no gate at all. Any missing gate metric, or
+    # any failed case, is now a hard BLOCK - never silently a PASS.
+    missing_gate_metrics = [metric for metric in GATE_METRICS if metric not in gate_scores]
+    if failed_ids or missing_gate_metrics:
+        decision = "BLOCK"
+        flags = []
+        if failed_ids:
+            flags.append(f"{len(failed_ids)}/{len(scorable_cases)} case(s) failed to score at all: {', '.join(failed_ids)}")
+        if missing_gate_metrics:
+            flags.append(f"no scores collected for: {', '.join(missing_gate_metrics)} - cannot verify release quality")
+    else:
+        decision, flags = get_release_decision(gate_scores)
+
     print(f"\nRelease decision: {decision}")
     for flag in flags:
         print(f"  - {flag}")

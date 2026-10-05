@@ -157,6 +157,7 @@ reviewed before that phase's code starts.
 | 83 — Urgent production fix: missing `llama-index-embeddings-openai` pin breaks every real document indexing attempt silently | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 84 — User-directed, Milestone 2: Redis-backed caching (answer cache, embedding cache, rate limiter), Upstash-hosted | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 85 — Found while closing out Milestone 2: SQLiteClient never created its own parent directory, breaking the golden-dataset gate on a fresh runner | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
+| 86 — Found while closing out Milestone 2: eval-gate.yml never had the Phase 82 Spacy fix, and the gate itself silently PASSed with zero cases scored | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -6595,6 +6596,71 @@ Explicitly deferred to a later, separate wave - not part of the above:
   all) confirms the directory now gets created. Full suite green (274
   passed) - this change is additive (an idempotent `mkdir`), nothing
   about existing behavior changes when the directory already exists.
+
+- [x] **Phase 86 (2026-10-05) — Found while closing out Milestone 2:
+  `eval-gate.yml` never had the Phase 82 Spacy fix, and the gate itself
+  silently PASSed with zero cases scored.**
+
+  **Spec:**
+  - **Context:** after Phase 85's SQLite fix got ingestion working, the
+    gate's own scoring step still failed, with no visible output anywhere
+    - not even its own first `print()`, despite `PYTHONUNBUFFERED=1`
+    (added as a diagnostic fix, still didn't surface it) and an explicit
+    `try`/`except` wrapper around `main()` (also added, still didn't
+    surface it at the `gh run view --log` level). Root cause of the
+    *missing diagnostics* turned out to be a red herring in a different
+    place: `gh run view --log`'s formatted output silently truncates very
+    chatty steps - the real content was there all along, only visible by
+    fetching the raw log archive directly (`gh api
+    .../actions/jobs/{id}/logs --allow-escape-sequences`), which came back
+    5x longer (2246 lines vs 1499).
+  - **Real root cause, finally confirmed from the raw log:** the exact
+    same bug as Phase 82 - `en_core_web_lg` Spacy model missing, so the
+    "mask sensitive data on input" guardrail throws on every query. Phase
+    82 fixed this for the **Docker image** (production); `eval-gate.yml`
+    was never touched, because it installs dependencies via plain `pip`,
+    not Docker, so it never got that fix. **All 24 golden-dataset cases
+    failed** as a result.
+  - **Second, independent bug this exposed:** `get_release_decision({})`
+    returns `("PASS", [])` on empty input, by design (nothing to check
+    against thresholds) - correct for *that* function in isolation, but
+    `run_release_gate.py`'s `main()` called it on `gate_scores` built from
+    zero successfully-scored cases, and the gate still reported `PASS`.
+    A release gate that can't distinguish "verified good" from "verified
+    nothing" is worse than no gate - it actively hides the exact failure
+    it exists to catch.
+  - **Fixes, both required - confirmed by one case alone wasn't enough:**
+    1. `.github/workflows/eval-gate.yml` - new step, `python -m spacy
+       download en_core_web_lg`, right after `pip install`, mirroring the
+       Dockerfile's own fix.
+    2. `scripts/run_release_gate.py` - `main()` now tracks failed case
+       IDs and which `GATE_METRICS` have zero collected scores; either
+       condition forces `BLOCK` directly, bypassing
+       `get_release_decision()` entirely rather than calling it on
+       incomplete data.
+    3. (Incidental, same investigation) `scripts/run_release_gate.py`'s
+       per-case loop now wraps each case in its own `try`/`except`
+       instead of one bare loop - a single case's failure is now
+       identifiable and skipped, not a silent kill of the entire run with
+       nothing to diagnose. This is what let the *previous* run return
+       exit 0 "successfully" while scoring nothing - necessary
+       diagnostically, but only safe to keep now that fix 2 above closes
+       the resulting blind spot.
+  - **User-visible behavior:** the gate now fails loudly (`BLOCK`, real
+    exit 1) if Presidio/guardrails or any other per-case failure prevents
+    real scoring, instead of a silent false-positive `PASS`.
+  - **Failure modes:** covered above - this phase's entire point is
+    making failure modes visible instead of silent.
+  - **Out of scope:** nothing else touched.
+  - **Open questions:** none - confirmed from the real raw log, not
+    inferred.
+
+  **Verified:** full suite green (274 passed) after each change. Full
+  real run against `eval-gate.yml` with both fixes applied, triggered via
+  `gh workflow run` and watched to completion - pending as of this entry;
+  see the next commit for the real verdict once the Spacy model download
+  (a ~400MB one-time cost per run) completes and real scoring can finally
+  happen.
 
 ## Verification checklist (Phases 1-3)
 
