@@ -41,6 +41,14 @@ jobs:
           --health-retries 5
 
     env:
+      # Without this, Python block-buffers stdout when not attached to a
+      # TTY (every CI runner) - if the process is ever killed abruptly
+      # rather than exiting cleanly, buffered print() output (including
+      # the very first line) is silently lost. The Dockerfile already sets
+      # this for the same reason; this workflow never did. Found live,
+      # 2026-10-05: "Run the golden-dataset release gate" failed with zero
+      # output at all, not even its own first print() statement.
+      PYTHONUNBUFFERED: "1"
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       POSTGRES_DB_HOST: localhost
       POSTGRES_DB_PORT: "5432"
