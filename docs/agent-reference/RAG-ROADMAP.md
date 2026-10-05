@@ -6517,8 +6517,16 @@ Explicitly deferred to a later, separate wave - not part of the above:
   broken while Redis remains unprovisioned. **Not yet verified:** real
   Redis connectivity itself (Upstash account not yet created), real
   cache-hit behavior, the rate limiter's actual 429 enforcement against a
-  live Redis, or a deploy to AWS. Those are next, once Upstash is
-  provisioned.
+  live Redis. Those are next, once Upstash is provisioned.
+
+  Deployed via the real CI/CD pipeline (`deploy.yml`, full build and
+  redeploy, green) and confirmed live in production with a real
+  `POST /v1/genai-rag/retrieve-document/query` call (200, correct grounded
+  answer, real Pinecone sources) - and confirmed via CloudWatch that all
+  three fail-open paths fired correctly there too (`rate_limiter`,
+  `answer_cache` get and set), same as the local check. Production is not
+  broken by this deploy despite `REDIS_URL` still being unconfigured
+  there.
 
 ## Verification checklist (Phases 1-3)
 
