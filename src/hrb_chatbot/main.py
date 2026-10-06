@@ -40,14 +40,10 @@ app = FastAPI(
 # Phase 92: every route lives under /hrb-chatbot, a Spring Boot-style
 # context path - lets compute.rvsree.dev host more than one project by
 # path later, each with its own prefix, no per-project domain/App
-# Runner cost. routes_health.router is included TWICE during rollout -
-# once at the new prefix, once still at the old root paths - so App
-# Runner's own live HealthCheckConfiguration (still pointed at the old
-# /health) keeps passing through this deploy with zero gap. The root
-# registration is removed in a follow-up push, once App Runner's own
-# config has been switched to the new path and confirmed healthy there.
+# Runner cost. The temporary dual root+prefix health registration used
+# during rollout is gone now - App Runner's own HealthCheckConfiguration
+# has been switched to /hrb-chatbot/health and confirmed healthy there.
 app.include_router(routes_health.router, prefix="/hrb-chatbot")
-app.include_router(routes_health.router)
 
 app.include_router(ingest_document.router_ingest_document, prefix="/hrb-chatbot/v1/genai-rag/ingest-document")
 app.include_router(retrieve_document.router_retrieve_document, prefix="/hrb-chatbot/v1/genai-rag/retrieve-document")

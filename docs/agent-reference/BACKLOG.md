@@ -1126,3 +1126,23 @@ Needed `hrb-chatbot-github-actions-deploy`'s IAM policy extended
 (`ecr:*` on the `hrb-chatbot-lambda` repo, `lambda:UpdateFunctionCode`/
 `GetFunctionConfiguration` on the one function) - a manual IAM step,
 same as every other credential change this project does by hand.
+
+## `GET /health` with no query params silently checks the wrong backends on AWS (found Phase 92, 2026-10-06, pre-existing)
+
+Not caused by Phase 92 - found while verifying it, confirmed present on
+an App Runner instance that started *before* that phase's own push.
+`api/dependencies.py`'s `METADATA_PROVIDER_QUERY`/`VECTOR_PROVIDER_QUERY`
+hardcode `default=MetadataStore.SQLITE`/`default=VectorDB.CHROMADB` -
+their own descriptions even say `"'sqlite' (the active store)"` /
+`"'chromadb' (the active store)"`, which was true when written but is
+stale now that `ACTIVE_VECTOR_DB`/`RAG_METADATA_STORE` make Postgres/
+Pinecone the real active backends on AWS (Phase 31 onward). A plain
+`GET /health` on production reports `"healthy"` for chromadb/sqlite -
+backends that aren't even the ones serving real traffic - while never
+touching Pinecone/Postgres at all unless the caller explicitly passes
+`?metadata_provider=postgres&vector_provider=pinecone`. Confirmed the
+real backends ARE healthy by passing those params explicitly - this is
+a misleading-default bug, not a production incident. Real fix: these
+two defaults should resolve dynamically via `get_active_vector_db()`/
+the metadata-store equivalent, not a hardcoded Enum literal - not done
+here, out of scope for a path-prefix-only phase.

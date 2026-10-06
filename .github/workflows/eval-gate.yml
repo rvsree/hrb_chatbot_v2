@@ -93,7 +93,7 @@ jobs:
         run: |
           python -m uvicorn src.hrb_chatbot.main:app --port 8093 > app.log 2>&1 &
           for i in $(seq 1 30); do
-            curl -sf http://127.0.0.1:8093/ping && exit 0
+            curl -sf http://127.0.0.1:8093/hrb-chatbot/ping && exit 0
             sleep 1
           done
           echo "App never became healthy" >&2
