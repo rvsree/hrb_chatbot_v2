@@ -1107,3 +1107,21 @@ that doesn't validate a key at all (a local/fake embed model) before
 level `os.environ.setdefault("OPENAI_API_KEY", "sk-test-dummy")` -
 exactly the same category of fix Phase 82/83/85/86 already applied for
 other CI-only gaps, just not diagnosable blind.
+
+## No CI/CD automation deploys the Lambda - a manual step every time (found Phase 89, 2026-10-06)
+
+`deploy.yml` rebuilds and redeploys the main App Runner image on every
+push to `master` - it has no idea `hrb-chatbot-index-document` (the
+Phase 88 Lambda) exists, and nothing else redeploys it automatically
+either. Every Lambda deploy so far (Phase 88's own fixes, now Phase 89)
+has been a manual `docker buildx build --provenance=false --sbom=false
+... -f Dockerfile.lambda` + ECR push + `aws lambda update-function-code`,
+run by hand. Phase 89's own live verification caught exactly the failure
+mode this risks: pushed real code, App Runner's deploy went green, and
+the Lambda silently kept running the *previous* version (confirmed via
+its `LastModified` timestamp) until the manual steps were run separately
+- a live test happened to catch it this time, but a future change could
+easily ship looking "done" while the Lambda quietly doesn't have it.
+Worth extending `deploy.yml` (or a second, Lambda-specific workflow) to
+rebuild/push/update the Lambda whenever `src/hrb_chatbot/lambda_handlers/
+**` or `Dockerfile.lambda` changes - not started.

@@ -412,7 +412,7 @@ no change needed there either, it already matches this exercise's pattern:
 ```
 `/ping`: `{"status": "ok"}`, unchanged - it's deliberately minimal (no provider calls).
 
-## POST /v1/genai-rag/ingest-document/documents/presigned-upload — Pending (Phase 89, spec'd not implemented)
+## POST /v1/genai-rag/ingest-document/documents/presigned-upload — Finalized (Phase 89)
 
 **Additive, confirmed with the user 2026-10-06 - does not replace, and
 nothing changes about, the existing `POST .../documents` above.** Single

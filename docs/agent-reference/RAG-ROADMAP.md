@@ -160,7 +160,7 @@ reviewed before that phase's code starts.
 | 86 — Found while closing out Milestone 2: eval-gate.yml never had the Phase 82 Spacy fix, and the gate itself silently PASSed with zero cases scored | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 87 — Found during full AWS verification sweep: multi-turn memory bypassed on zero-chunk follow-ups; production metadata store resets on every redeploy (ephemeral SQLite) | Claude Code | ✅ Done, verified, 2026-10-06 | ✅ Spec'd and implemented - see detail below |
 | 88 — User-directed, Milestone 3 part 1: S3 → SQS → Lambda async indexing pipeline, wired but not cut over to the live API yet | Claude Code | ✅ Done, verified live on AWS, 2026-10-06 - real end-to-end + idempotency + failure-path tests, cold-start init-timeout finding noted (non-blocking) | ✅ Spec'd and implemented - see detail below |
-| 89 — User-directed, Milestone 3 part 2: presigned-upload endpoint, additive alongside the existing synchronous upload (confirmed with the user, not a replacement) | Claude Code | 📋 Planned, added 2026-10-06 - not started | ✅ Spec'd - see detail below |
+| 89 — User-directed, Milestone 3 part 2: presigned-upload endpoint, additive alongside the existing synchronous upload (confirmed with the user, not a replacement) | Claude Code | ✅ Done, verified live on AWS, 2026-10-06 - real bug found and fixed along the way (Lambda is a separate deployable, deploy.yml never redeploys it) | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -7071,9 +7071,9 @@ Explicitly deferred to a later, separate wave - not part of the above:
     10-observability-howto.html` for exactly what LangSmith/CloudWatch
     *do* show today, step by step, for local/App Runner/Lambda.
 
-- [ ] **Phase 89 (planned, not started) — User-directed, Milestone 3 part 2:
-  presigned-upload endpoint, additive alongside the existing synchronous
-  upload.**
+- [x] **Phase 89 (done, verified live on AWS, 2026-10-06) — User-directed,
+  Milestone 3 part 2: presigned-upload endpoint, additive alongside the
+  existing synchronous upload.**
 
   **Spec:**
   - **Context:** Phase 88 built and proved the S3 → SQS → Lambda trigger
@@ -7196,6 +7196,52 @@ Explicitly deferred to a later, separate wave - not part of the above:
     same pattern as every Phase 88 live test.
   - **Open questions:** none - the one real decision (additive vs.
     replace) is confirmed above.
+
+  **Built and verified live on AWS, 2026-10-06:**
+  - New: `common/clients/storage_client/s3_upload_client.py` (plain
+    function, not a Gateway - only one storage provider exists),
+    `models/documents.py`'s `PresignedUploadRequest`/
+    `PresignedUploadResponse`, `documents_service.request_presigned_upload()`,
+    the route itself, a `pending_overrides` column on both metadata
+    clients, and the Lambda handler's `_pending_overrides_kwargs()`.
+    7 new/updated tests (6 route, 1 handler) - full suite 290 passed.
+  - IAM: `s3:PutObject` (scoped to the bucket) added to
+    `hrb-chatbot-apprunner-instance-role`. App Runner's own config got
+    two new env vars (`S3_UPLOAD_BUCKET`, `S3_PRESIGNED_URL_EXPIRY_SECONDS`).
+  - **Real bug found during live verification, not hypothetical: two
+    separate deployables, only one got redeployed.** `deploy.yml`
+    rebuilds and redeploys the main App Runner image on every push to
+    master - it has no idea the Lambda (`hrb-chatbot-index-document`)
+    even exists, and nothing else redeploys the Lambda automatically
+    either (Phase 88 always did it by hand). After pushing Phase 89 and
+    confirming App Runner's own deploy went green, the first live
+    override test came back `indexed` but with **none** of the
+    requested overrides applied (`chunk_size` stayed `1000`, not `800`;
+    `doc_category` stayed the LLM's own guess, not `"benefits"`) - traced
+    via CloudWatch to the Lambda's `LastModified` timestamp still showing
+    the *previous* (asyncio-fix) deploy, confirming it was still running
+    pre-Phase-89 code the whole time. Fixed by doing what Phase 88's own
+    manual process always required: rebuild (`docker buildx build
+    --provenance=false --sbom=false ... -f Dockerfile.lambda`), push to
+    the `hrb-chatbot-lambda` ECR repo, `update-function-code`. Re-ran the
+    identical live test afterward: `chunk_size: 800`, `chunk_overlap:
+    100`, `doc_category: "benefits"`, `department: "HR"`,
+    `doc_description: "Phase 89 live AWS test"` - every override applied
+    correctly. **No CI/CD automation exists yet for the Lambda path at
+    all** - every Lambda deploy this project has ever done was a manual
+    `docker buildx build` + `update-function-code`, same as this one.
+    Worth a real fix (extend `deploy.yml`, or a second workflow) before
+    Phase 89/future Lambda changes become routine enough that forgetting
+    this becomes a recurring failure mode rather than a one-off caught by
+    luck (this phase's own live test happened to catch it immediately -
+    a less careful check could have shipped this looking "done").
+  - **Full real verification, cleaned up afterward each time:** a
+    presigned-upload request with real `chunk_info`/`document_metadata`
+    overrides, a real `PUT` using App Runner's own temporary STS
+    credentials (confirmed the IAM policy addition actually works, not
+    just that the URL generates), the Lambda applying every override
+    correctly (above), and a live `422`/`INVALID_FILE_TYPE` check for a
+    non-PDF content type.
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
