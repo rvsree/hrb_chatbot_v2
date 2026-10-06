@@ -268,3 +268,37 @@ happens to check `curl /ping` by hand.
 | A/B practical-significance bar (once Phase 8 exists) | ≥ 5 point average improvement, no single-case regression > 10 points | Not wired up yet - guidance only |
 | A/B formal significance (once dataset ≥ ~50/variant) | paired test, α = 0.05 | Not wired up yet - guidance only |
 | Deployment health check | new container reaches `RUNNING` + `/ping` returns 200 | `deploy.yml`, post-deploy steps |
+| Lambda deployment health check | `LastUpdateStatus` reaches `Successful` | `deploy-lambda.yml`, post-deploy step |
+
+## Lambda deploys are separate from the App Runner deploy (added Phase 89-follow-up, 2026-10-06)
+
+`deploy.yml` only ever knew about the main App Runner image - it has no
+idea `hrb-chatbot-index-document` (the Phase 88 async-ingestion Lambda)
+exists. Every Lambda deploy before `deploy-lambda.yml` existed was a
+manual `docker buildx build` + ECR push + `aws lambda update-function-code`,
+run by hand - this already caused a real bug once: Phase 89 shipped real
+code changes, `deploy.yml`'s own deploy went green, and the Lambda
+silently kept running the *previous* version until the manual steps were
+run separately (caught only because that phase's own live test checked
+the actual override values, not just the HTTP status code).
+
+`deploy-lambda.yml` closes this gap - triggered on push to `master`,
+scoped via `paths:` to `src/hrb_chatbot/**`/`Dockerfile.lambda`/
+`requirements.txt` (the whole tree, not just `lambda_handlers/`, since
+`Dockerfile.lambda` bundles all of `src/hrb_chatbot` into the image - a
+change to shared pipeline code affects the Lambda exactly the same way
+it affects the main app). It rebuilds with the same
+`--provenance=false --sbom=false` flags `deploy.yml` already needs (same
+root cause, see Phase 88/10's own entries in `RAG-ROADMAP.md`), pushes
+to the `hrb-chatbot-lambda` ECR repo, calls `update-function-code`, and
+polls `LastUpdateStatus` until `Successful` before the job ends - same
+"don't just trust the API call returned, confirm it actually finished"
+pattern `deploy.yml` already uses for App Runner's `RUNNING` status.
+
+Needs `hrb-chatbot-github-actions-deploy`'s IAM policy extended with
+`ecr:*` on the `hrb-chatbot-lambda` repo and `lambda:UpdateFunctionCode`/
+`lambda:GetFunctionConfiguration` scoped to this one function - a real
+AWS IAM change, not something applied automatically here (the same
+category of action as every other IAM/credential change this session,
+done by hand with the exact policy document recorded in this commit's
+history).

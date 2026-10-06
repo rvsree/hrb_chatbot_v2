@@ -1108,20 +1108,21 @@ level `os.environ.setdefault("OPENAI_API_KEY", "sk-test-dummy")` -
 exactly the same category of fix Phase 82/83/85/86 already applied for
 other CI-only gaps, just not diagnosable blind.
 
-## No CI/CD automation deploys the Lambda - a manual step every time (found Phase 89, 2026-10-06)
+## ~~No CI/CD automation deploys the Lambda~~ - resolved 2026-10-06, `.github/workflows/deploy-lambda.yml`
 
-`deploy.yml` rebuilds and redeploys the main App Runner image on every
-push to `master` - it has no idea `hrb-chatbot-index-document` (the
-Phase 88 Lambda) exists, and nothing else redeploys it automatically
-either. Every Lambda deploy so far (Phase 88's own fixes, now Phase 89)
-has been a manual `docker buildx build --provenance=false --sbom=false
-... -f Dockerfile.lambda` + ECR push + `aws lambda update-function-code`,
-run by hand. Phase 89's own live verification caught exactly the failure
-mode this risks: pushed real code, App Runner's deploy went green, and
-the Lambda silently kept running the *previous* version (confirmed via
-its `LastModified` timestamp) until the manual steps were run separately
-- a live test happened to catch it this time, but a future change could
-easily ship looking "done" while the Lambda quietly doesn't have it.
-Worth extending `deploy.yml` (or a second, Lambda-specific workflow) to
-rebuild/push/update the Lambda whenever `src/hrb_chatbot/lambda_handlers/
-**` or `Dockerfile.lambda` changes - not started.
+Found Phase 89: `deploy.yml` rebuilds and redeploys the main App Runner
+image on every push to `master` but has no idea
+`hrb-chatbot-index-document` (the Phase 88 Lambda) exists - every Lambda
+deploy had been a manual `docker buildx build` + ECR push + `aws lambda
+update-function-code`, and this already caused a real bug once (Phase 89
+shipped code the Lambda silently never got, caught only by a live test
+checking real values, not just HTTP status).
+
+**Fixed**: new `deploy-lambda.yml`, triggered on push to `master`,
+`paths:`-scoped to `src/hrb_chatbot/**`/`Dockerfile.lambda`/
+`requirements.txt` (the whole tree, not just `lambda_handlers/` - see
+`docs/agent-reference/CICD-BRANCHING-STRATEGY.md`'s new section for why).
+Needed `hrb-chatbot-github-actions-deploy`'s IAM policy extended
+(`ecr:*` on the `hrb-chatbot-lambda` repo, `lambda:UpdateFunctionCode`/
+`GetFunctionConfiguration` on the one function) - a manual IAM step,
+same as every other credential change this project does by hand.
