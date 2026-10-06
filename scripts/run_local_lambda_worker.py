@@ -12,22 +12,21 @@ Deploying for real still means pushing to the Lambda (now automated via
 .github/workflows/deploy-lambda.yml) - this script is for local
 iteration only, never meant to replace that.
 
-**Before running this: disable the real Lambda's SQS trigger, or it will
-race this script for the same messages** - confirmed live (2026-10-06):
-both consumers poll the identical real queue, and AWS's own event source
-mapping is almost always faster, silently stealing messages meant for
-local testing (and writing to the real Postgres/Pinecone instead of your
-local SQLite/Chroma) with zero error on either side.
-    aws lambda update-event-source-mapping --uuid <uuid> --no-enabled --region us-east-1
-Also confirmed live: AWS reports the mapping's State as "Disabled"
-before its poller fleet has actually fully stopped - there's a real
-drain delay (minutes, not seconds) during which it can still grab a
-message even after the API says Disabled. Wait a few minutes after
-disabling before relying on exclusive local delivery. Get the UUID with
-`aws lambda list-event-source-mappings --function-name
-hrb-chatbot-index-document --region us-east-1`. Re-enable the same way
-(`--enabled` instead of `--no-enabled`) once done, or production stops
-processing real uploads.
+**Points at its own separate dev bucket/queue, not production's** -
+`.env`'s S3_UPLOAD_BUCKET`/`SQS_INGEST_QUEUE_URL` are
+`hrb-chatbot-kb-uploads-dev`/`hrb-chatbot-ingest-queue-dev` (-dev suffix
+on both), completely separate AWS resources from the real
+`hrb-chatbot-kb-uploads`/`hrb-chatbot-ingest-queue` App Runner and the
+real Lambda use. This is the fix for a real bug found and then properly
+root-caused on 2026-10-06: an earlier version of this script pointed at
+the SAME real queue production uses, and the real deployed Lambda's own
+SQS trigger almost always won the race for each message (confirmed:
+disabling the event source mapping wasn't even reliable - AWS reports
+"Disabled" before its poller fleet has actually drained, so even a
+disable-then-retry could still lose). Giving local testing its own
+queue/bucket removes the race entirely, rather than working around it -
+there is nothing to disable or wait for now; this script and the real
+Lambda simply never compete for the same message.
 
 Usage (from the repo root, with AWS credentials already configured -
 run as a module, not a plain script, so `from src.hrb_chatbot...`

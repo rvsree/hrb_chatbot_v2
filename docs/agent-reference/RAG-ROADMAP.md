@@ -161,7 +161,7 @@ reviewed before that phase's code starts.
 | 87 — Found during full AWS verification sweep: multi-turn memory bypassed on zero-chunk follow-ups; production metadata store resets on every redeploy (ephemeral SQLite) | Claude Code | ✅ Done, verified, 2026-10-06 | ✅ Spec'd and implemented - see detail below |
 | 88 — User-directed, Milestone 3 part 1: S3 → SQS → Lambda async indexing pipeline, wired but not cut over to the live API yet | Claude Code | ✅ Done, verified live on AWS, 2026-10-06 - real end-to-end + idempotency + failure-path tests, cold-start init-timeout finding noted (non-blocking) | ✅ Spec'd and implemented - see detail below |
 | 89 — User-directed, Milestone 3 part 2: presigned-upload endpoint, additive alongside the existing synchronous upload (confirmed with the user, not a replacement) | Claude Code | ✅ Done, verified live on AWS, 2026-10-06 - real bug found and fixed along the way (Lambda is a separate deployable, deploy.yml never redeploys it) | ✅ Spec'd and implemented - see detail below |
-| 90 — User-directed: local Lambda worker (`scripts/run_local_lambda_worker.py`) + `deploy-lambda.yml` CI/CD, so Phases 88-89 can be developed against real S3/SQS from localhost without paying for Lambda compute | Claude Code | ✅ Done, verified live, 2026-10-06 - found and fixed a real race condition (local worker vs. the live Lambda competing for the same queue) along the way | N/A - scripts/+.github/ only, spec_gate doesn't apply to either; full rationale recorded inline below |
+| 90 — User-directed: local Lambda worker (`scripts/run_local_lambda_worker.py`) + `deploy-lambda.yml` CI/CD, so Phases 88-89 can be developed against real S3/SQS from localhost without paying for Lambda compute | Claude Code | ✅ Done, verified live, 2026-10-06 - real race condition found (local worker vs. the live Lambda competing for one queue), permanently fixed with separate `-dev` S3/SQS resources (the user's own suggestion) rather than a disable-and-wait workaround | N/A - scripts/+.github/ only, spec_gate doesn't apply to either; full rationale recorded inline below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -7312,6 +7312,32 @@ Explicitly deferred to a later, separate wave - not part of the above:
   blocked by the safety classifier when attempted directly here, left
   for the user to apply (exact policy JSON given, not yet confirmed
   applied as of this entry).
+
+  **Follow-up, same day: the disable-and-wait workaround above was never
+  the right fix - the user's own suggestion was.** Asked directly why
+  not just give local testing its own queue (same idea as any
+  dev/prod environment split), rather than fighting over the one real
+  queue. That's the actual fix - provisioned a **second, completely
+  separate set of AWS resources for local dev only**:
+  `hrb-chatbot-kb-uploads-dev` (S3 bucket, 7-day object-expiry lifecycle
+  rule so test uploads don't silently accumulate), `hrb-chatbot-ingest-
+  queue-dev` + `hrb-chatbot-ingest-dlq-dev` (SQS, same redrive policy as
+  production), wired together the same way as the real ones, plus a
+  matching `hrb-chatbot-ingest-dlq-depth-dev` CloudWatch alarm. `.env`'s
+  `S3_UPLOAD_BUCKET`/`SQS_INGEST_QUEUE_URL` now point at these `-dev`
+  resources by default - production's bucket/queue/Lambda are never
+  touched by local testing again, full stop. No more disabling anything,
+  no more waiting out a drain delay, no more race to even think about.
+  **Re-verified live** with production's event source mapping left
+  `Enabled` the whole time: real presigned-upload → real S3 PUT (to the
+  dev bucket) → real SQS delivery (on the dev queue) → local worker
+  processes it with zero contention, `chunk_size`/`chunk_overlap`
+  overrides applied correctly, `vector_db: chromadb` confirming local
+  indexing. (One harmless surprise along the way: the very first message
+  the dev queue ever delivered was AWS's own automatic `s3:TestEvent`,
+  sent the moment the bucket's notification was first configured - the
+  handler's existing `_parse_s3_event()` skip-case, written for exactly
+  this in Phase 88, handled it with zero code changes needed.)
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
