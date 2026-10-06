@@ -120,10 +120,11 @@ up, rather than marking it done in place here.
   build command has caused three real, hard-to-diagnose failures before
   (see `AWS-DEVOPS-RUNBOOK.md`), so this needs its own isolated test
   before going anywhere near that line again.
-- **GitHub repo settings not configured.** Default branch is still
-  `hrb_rag_pipelines`, not `master` - a Settings → Branches action, not a
-  `git push`. No branch protection rules exist either (nothing requires
-  CI to pass, or a review, before a merge into `develop`/`master`).
+- ~~**GitHub default branch not set to `master`.**~~ Resolved - confirmed
+  live via `gh repo view` (2026-10-06) that the default branch is
+  `master`. **Still open**: no branch protection rules exist (nothing
+  requires CI to pass, or a review, before a merge into
+  `develop`/`master`).
 
 ## API hardening (same shape as the sibling project's NFR backlog)
 
@@ -1146,3 +1147,48 @@ a misleading-default bug, not a production incident. Real fix: these
 two defaults should resolve dynamically via `get_active_vector_db()`/
 the metadata-store equivalent, not a hardcoded Enum literal - not done
 here, out of scope for a path-prefix-only phase.
+
+## Codebase cleanup findings (Phase 93, 2026-10-06)
+
+Two independent Explore-agent audits run first, rather than guessing -
+one for real golden-dataset eval numbers (separate finding, see
+"Release gate follow-up" above), one specifically for dead code/
+duplicate logic/stray files. Headline result: **this codebase has very
+little actual dead code** - no unused `.py` files, no unreachable
+functions, no 5+ line commented-out blocks found anywhere in `src/`.
+One real duplicate found and fixed (see RAG-ROADMAP.md Phase 93 - a
+`common/utils/content_hash.py` helper replacing an identical
+`hashlib.sha256(...).hexdigest()` line independently written in both
+`documents_service.py` and `index_document_handler.py`).
+
+**Not touched, flagged instead:**
+- **`requirements.txt` possibly-unused packages** - a direct-import grep
+  flagged `presidio-analyzer`/`presidio-anonymizer`, `prometheus-client`,
+  `structlog`, `pyjwt`, `sqlalchemy`, and others as having no `import`
+  site in `src/`. **Confirmed at least one of these is wrong**: Presidio
+  is a real, load-bearing *transitive* dependency of NeMo Guardrails'
+  "mask sensitive data" rail (Phase 7/82) - pulled in via its own colang
+  config, never a direct Python import. A plain unused-import grep can't
+  safely clear any of these - needs a real one-package-at-a-time audit,
+  not a bulk prune based on this finding alone.
+- **Stray untracked files** (confirmed via `git status` - not committed,
+  not something to silently delete): `scratch_gates.txt` (looks like a
+  scrape/paste leftover), `docs/dev-reference/production-readiness-
+  scorecard.html` (a real, styled page - not obviously disposable),
+  `docs/ik-fde-course-docs/` (a whole directory of unrelated IK FDE
+  course material, one 820KB notebook). None of these are something
+  this session created - flagged for the user's own call.
+- **`docs/dev-reference/hrb-chatbot-github-actions-deploy_accessKeys.csv`
+  re-confirmed still present and still contains a live-looking plaintext
+  AWS key.** The user already stated explicitly (2026-10-05) this file
+  was added intentionally and they'd handle it themselves - re-flagging
+  here only because a cleanup pass specifically went looking for exactly
+  this kind of risk and it's still sitting there; not touched.
+
+**Also found while cross-checking, unrelated to the audit itself**:
+this file's own "GitHub repo settings not configured... Default branch
+is still `hrb_rag_pipelines`" entry (under "CI/CD & branch strategy")
+is now stale - confirmed live via `gh repo view` that the default
+branch is `master`, not `hrb_rag_pipelines`. Worth a cleanup pass on
+this file's own older entries at some point - several read as still-
+open but are actually resolved, just never struck through.

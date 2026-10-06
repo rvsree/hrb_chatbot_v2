@@ -164,6 +164,7 @@ reviewed before that phase's code starts.
 | 90 — User-directed: local Lambda worker (`scripts/run_local_lambda_worker.py`) + `deploy-lambda.yml` CI/CD, so Phases 88-89 can be developed against real S3/SQS from localhost without paying for Lambda compute | Claude Code | ✅ Done, verified live, 2026-10-06 - real race condition found (local worker vs. the live Lambda competing for one queue), permanently fixed with separate `-dev` S3/SQS resources (the user's own suggestion) rather than a disable-and-wait workaround | N/A - scripts/+.github/ only, spec_gate doesn't apply to either; full rationale recorded inline below |
 | 91 — User-directed: custom domain, `rvsree.dev` registered and `compute.rvsree.dev` associated with the App Runner service | User (registration) + Claude Code (App Runner association, DNS records) | ✅ Done, verified live, 2026-10-06 - real HTTPS 200 from `compute.rvsree.dev` and `www.compute.rvsree.dev` | N/A - AWS console/CLI only, no src/ touched |
 | 92 — User-directed: `/hrb-chatbot` context-path prefix on every endpoint, so `compute.rvsree.dev` can host multiple future projects by path | Claude Code | ✅ Done, verified live on AWS, 2026-10-06 - full endpoint sweep passed; hit and recovered from a real ~20-min App Runner health-check incident (MSYS path-mangling, self-healed, zero production impact) | ✅ Spec'd and implemented - see detail below |
+| 93 — User-directed: codebase cleanup pass (dead code/duplicate logic survey, two Explore-agent audits, one real duplicate found and extracted) | Claude Code | ✅ Done, 2026-10-06 - 293 tests passing, very little dead code found codebase-wide | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -7536,7 +7537,46 @@ Explicitly deferred to a later, separate wave - not part of the above:
     first and the misleadingly-"healthy" chromadb/sqlite response stood
     out.
 
-1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
+- [x] **Phase 93 (done, 2026-10-06) — User-directed: codebase cleanup pass.**
+
+  **Spec:**
+  - **Context:** directly requested - "clean up unwanted files, dead code,
+    duplicate logic" as part of a broader review before UI work starts.
+    Two independent Explore-agent audits run first (dead-code/duplicate-
+    logic survey; a separate one for real eval-metric numbers, unrelated
+    to this phase) rather than guessing at what's actually unused.
+  - **Finding: this codebase has very little actual dead code.** No
+    unused `.py` files, no unreachable functions, no 5+ line commented-
+    out blocks found anywhere in `src/`. One real, small, genuine
+    duplicate: `hashlib.sha256(content).hexdigest()` written out
+    independently in both `services/documents_service.py` (Phase 16) and
+    `lambda_handlers/index_document_handler.py` (Phase 88) for the exact
+    same purpose - document content-hash dedup. Extracted into a new
+    `common/utils/content_hash.py` (`compute_content_hash(bytes) -> str`),
+    both call sites updated to use it - pure extraction, no behavior
+    change, same pattern as Phase 54's `write_chunks()` extract-method.
+  - **Explicitly NOT touched, flagged instead (see BACKLOG.md):**
+    `requirements.txt` - several packages look unimported by a direct
+    `import` grep (`presidio-analyzer`/`presidio-anonymizer`,
+    `prometheus-client`, `structlog`, `pyjwt`, `sqlalchemy`, others) but
+    at least one of those (Presidio) is a confirmed real, load-bearing
+    *transitive* dependency - NeMo Guardrails' "mask sensitive data"
+    rail (Phase 7/82) pulls it in via its own colang config, not a
+    direct Python import anywhere in `src/`, so a plain unused-import
+    grep can't safely clear any of these for removal. Needs a more
+    careful audit than this pass, one package at a time, not guessed at.
+  - **Stray untracked files** - found via the same audit, confirmed via
+    `git status`: `scratch_gates.txt`, `docs/dev-reference/production-
+    readiness-scorecard.html`, `docs/ik-fde-course-docs/`. None of these
+    are mine to delete unilaterally - pre-existing files in the user's
+    own working tree, not something this session created - flagged for
+    the user's own call rather than deleted outright. One, `docs/
+    dev-reference/hrb-chatbot-github-actions-deploy_accessKeys.csv`,
+    contains a live-looking plaintext AWS key - the user already stated
+    explicitly (2026-10-05) this was intentional and they'd handle it
+    themselves; re-confirmed still present, re-flagged, not touched.
+  - **Testing plan:** full local suite green after the extraction (no
+    behavior change expected or found).
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
    document id returned, file in `data/uploads/`, SQLite row exists. **Done**,
    including the batch partial-success case.

@@ -4,7 +4,6 @@ ai/doc_processing/pipeline.py's existing index_document() unchanged - see
 RAG-ROADMAP.md Phase 88."""
 
 import asyncio
-import hashlib
 import json
 import logging
 from pathlib import Path
@@ -13,6 +12,7 @@ import boto3
 
 from src.hrb_chatbot.ai.doc_processing import pipeline
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
+from src.hrb_chatbot.common.utils.content_hash import compute_content_hash
 
 TMP_DIRECTORY = Path("/tmp")
 
@@ -101,7 +101,7 @@ async def _index_one(bucket: str, key: str) -> None:
         # fallback path, still useful for manual testing. Phase 89's real
         # presigned-upload endpoint always creates this row first.
         content = local_path.read_bytes()
-        content_hash = hashlib.sha256(content).hexdigest()
+        content_hash = compute_content_hash(content)
         await metadata_store.create_document(document_id, filename, str(local_path), len(content), content_hash)
         index_kwargs = {}
     else:

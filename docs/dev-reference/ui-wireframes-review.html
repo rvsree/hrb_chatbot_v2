@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UI Wireframes — Review</title>
+<link rel="stylesheet" href="deployment-guide/style.css">
+</head>
+<body>
+<div class="wrap">
+<div class="crumbs"><a href="deployment-guide/07-reactjs-ui.html">&larr; React UI plan</a></div>
+
+<h1>UI Wireframes — for review, not yet implemented</h1>
+<p class="subtitle">Published 2026-10-06 as a visual wireframe set (5 screens) for sign-off before any React build starts. Captures the feature list as the user described it directly — a standard chatbot UI plus feedback, conversation history, an explainability popup, batch document upload, and OAuth/JWT login.</p>
+
+<div class="flag"><strong>Do not implement from this without explicit sign-off.</strong> This page and the linked wireframes are a design artifact only - no React code exists yet. See <a href="deployment-guide/07-reactjs-ui.html">07-reactjs-ui.html</a> for the build-plan/architecture side (monorepo decision, Angular/ASP.NET → React concept mapping) once the wireframes themselves are approved.</div>
+
+<h2>The 5 screens</h2>
+<table>
+<tr><th>#</th><th>Screen</th><th>What it captures</th></tr>
+<tr><td>1</td><td>Login</td><td>OAuth 2.0/OIDC sign-in (Google Workspace / Microsoft Entra ID shown as examples), with a plain-language note on how the JWT flow would work - this is a wireframe of a feature that doesn't exist yet (see "Open gaps" below, human-to-app OAuth is still design-only).</td></tr>
+<tr><td>2</td><td>Chat (main screen)</td><td>Conversation history sidebar, user info footer, a real 401(k)-match example thread with inline citations, per-message "Helpful"/"Not quite" feedback buttons, an "Explainability" link per message, and a top-bar link to document upload.</td></tr>
+<tr><td>3</td><td>Feedback popup</td><td>Opened from a message's "Not quite" button - reason tags, optional free-text, explicit note that feedback is attributed (not anonymous).</td></tr>
+<tr><td>4</td><td>Explainability popup</td><td>Opened from a message's "Explainability" link - cost, token counts, latency, a numbered call trace (retrieval → embedding → generation, each with real timing), citations with real relevance scores, and guardrail pass/fail status.</td></tr>
+<tr><td>5</td><td>Document upload (batch)</td><td>Drag-and-drop multi-file PDF upload, optional batch-level metadata override, a per-file queue showing upload/indexing progress and a real rejected-file case (wrong file type).</td></tr>
+</table>
+
+<h2>Direct mapping to real backend contracts</h2>
+<p>Every number and field shown is traceable to something this project's backend already returns for real, not invented:</p>
+<ul>
+<li>The chat thread's citations (filename, chunk index) match <code>retrieval_info.sources</code> from <code>POST /hrb-chatbot/v1/genai-rag/retrieve-document/query</code>'s real response shape.</li>
+<li>The explainability popup's cost/token/latency numbers match the shape <code>common/logging/call_logger.py</code>'s <code>log_backend_call()</code> already logs per call (model, duration, token counts) - today this is in server logs only, not surfaced to any API response; a real UI would need a new endpoint or response field to carry it, not just a frontend change (see "Open gaps" below).</li>
+<li>The upload page's per-file states (uploading/indexed/rejected) match <code>DocumentUploadResult.status</code> (<code>"uploaded"</code>/<code>"duplicate"</code>/<code>"rejected"</code>) from the real upload endpoint, and the batch-metadata fields match <code>ChunkInfoInput</code>/<code>DocumentMetadataInput</code>.</li>
+</ul>
+
+<h2>Open gaps this surfaced - real, not cosmetic</h2>
+<table>
+<tr><th>Gap</th><th>Why it matters for this UI</th></tr>
+<tr><td>No real human-to-app OAuth/JWT exists yet</td><td><code>api/gateway/rbac.py</code>'s <code>require_role()</code> still reads a self-asserted, unsigned <code>user_profile</code> straight from the request body - a deliberate placeholder (<code>common/clients/auth_client/oauth_client.py</code> is empty). The login screen wireframes the <em>intended</em> flow, not something that exists today - a real login page needs this built first or alongside.</td></tr>
+<tr><td>No API surfaces cost/token/tool-call data today</td><td>It's logged, not returned. The explainability popup needs either a new response field on the query endpoints or a new "trace" endpoint keyed by request/conversation id.</td></tr>
+<tr><td>Rate limiting is IP-keyed, not identity-keyed</td><td>Once real auth exists, this should probably switch to limiting by the authenticated identity, not the caller's IP - flagged in BACKLOG.md, unrelated to this UI work specifically but adjacent.</td></tr>
+</table>
+
+<h2>What was deliberately left out of this round</h2>
+<ul>
+<li>No settings/admin page, no role-switcher, no dark mode - kept to exactly the features named.</li>
+<li>Single/multi-agentic-rag mode switching isn't shown - the wireframe assumes one chat surface; whether a user ever explicitly picks a "mode" (vs. the backend deciding) is an open product question, not decided here.</li>
+<li>Mobile/responsive layout not wireframed separately - noted as a build-time requirement, not a separate screen.</li>
+</ul>
+
+<p style="margin-top: 28px"><em>Live wireframes (interactive, Claude Artifact canvas):</em><br>
+<a href="https://claude.ai/artifact/VTBGFjDfLNSxaGesmkU6Kg">https://claude.ai/artifact/VTBGFjDfLNSxaGesmkU6Kg</a></p>
+
+</div>
+</body>
+</html>

@@ -1,6 +1,5 @@
 """Saves uploaded files to disk and records their metadata - rejections are data, not raised."""
 
-import hashlib
 import json
 import shutil
 import uuid
@@ -16,6 +15,7 @@ from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
 from src.hrb_chatbot.common.clients.storage_client.s3_upload_client import generate_presigned_upload_url
 from src.hrb_chatbot.common.config.settings import read_setting
 from src.hrb_chatbot.common.logging.logger import get_logger
+from src.hrb_chatbot.common.utils.content_hash import compute_content_hash
 from src.hrb_chatbot.models.documents import (
     ALLOWED_CONTENT_TYPE,
     MAX_FILE_SIZE_BYTES,
@@ -99,7 +99,7 @@ async def save_upload(
         )
 
     # Same bytes = same document, regardless of filename - catches any upload of identical content, any time.
-    content_hash = hashlib.sha256(content).hexdigest()
+    content_hash = compute_content_hash(content)
     existing = await get_db_gateway().metadata_store().find_by_content_hash(content_hash)
     if existing is not None:
         logger.info(
