@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 
 from src.hrb_chatbot.api.admin import routes_health
 from src.hrb_chatbot.api.agentic_rag import query_agent
@@ -35,6 +36,19 @@ app = FastAPI(
     version="0.1.0",
     description="An HR benefits chatbot backed by a RAG pipeline over the JPMC benefits knowledge base.",
     lifespan=lifespan,
+)
+
+# Phase 95: hrb_chatbot_ui (a separate React/Vite repo) calls this API
+# straight from the browser - without CORS headers, the browser blocks
+# the call before it reaches any route below, regardless of this API's
+# own logic. No cookie-based session exists to protect against CSRF, so
+# allow_credentials is safe here.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:4173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Phase 94: the /hrb-chatbot context path (Phase 92) is gone - the

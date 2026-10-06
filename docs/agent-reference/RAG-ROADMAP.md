@@ -166,6 +166,7 @@ reviewed before that phase's code starts.
 | 92 — User-directed: `/hrb-chatbot` context-path prefix on every endpoint, so `compute.rvsree.dev` can host multiple future projects by path | Claude Code | ✅ Done, verified live on AWS, 2026-10-06 - full endpoint sweep passed; hit and recovered from a real ~20-min App Runner health-check incident (MSYS path-mangling, self-healed, zero production impact) | ✅ Spec'd and implemented - see detail below |
 | 93 — User-directed: codebase cleanup pass (dead code/duplicate logic survey, two Explore-agent audits, one real duplicate found and extracted) | Claude Code | ✅ Done, 2026-10-06 - 293 tests passing, very little dead code found codebase-wide | ✅ Spec'd and implemented - see detail below |
 | 94 — User-directed: domain rename `compute.rvsree.dev/hrb-chatbot` → `hrb-chatbot.rvsree.dev` (subdomain-per-project, not a shared path-routed one), first real adoption of the documented `feature → develop → master` flow | Claude Code | ✅ Done, 2026-10-06, pushed to `feature-hrb-chatbot-subdomain` (not merged - see Out of scope) | ✅ Spec'd - see detail below |
+| 95 — User-directed: CORS middleware, the one backend change allowed while the new `hrb_chatbot_ui` React project builds against this API (everything else blocked unless critical, per the user's own instruction) | Claude Code | ✅ Done, 2026-10-06, same branch as Phase 94 (not master - see detail below for why) | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -7678,6 +7679,54 @@ Explicitly deferred to a later, separate wave - not part of the above:
     `JPMC Healthcare Benefits.pdf, chunk 11.0` (MetLife/Delta Dental).
   - Done on `feature-hrb-chatbot-subdomain`, pushed, **not merged** into
     `develop`/`master` - per this phase's own declared scope.
+
+- [x] **Phase 95 (done, 2026-10-06) — User-directed: CORS middleware.**
+
+  **Spec:**
+  - **Context:** a separate React project (`hrb_chatbot_ui`, its own
+    repo, Vite + React + TypeScript, per `docs/dev-reference/deployment-
+    guide/07-reactjs-ui.html`) starts building against this API. The
+    user's instruction for this first UI-build phase: don't change any
+    backend feature unless it's critical/blocking - log everything else
+    as planned work instead. `CORSMiddleware` doesn't exist in `main.py`
+    today (confirmed by grep) - without it, every browser-based call
+    from the React dev server (`localhost:5173`) to this API is blocked
+    by the browser itself before it ever reaches a route. That's not a
+    missing feature, it's a hard stop on testing anything in the browser
+    - the one change in this round that qualifies as critical.
+  - **Why this commit lives on `feature-hrb-chatbot-subdomain`, not
+    `master`:** `master` still has Phase 94's old `/hrb-chatbot`-
+    prefixed routes (Phase 94 isn't merged yet, by its own declared
+    scope) - but the *live* AWS service is running Phase 94's build
+    (manually deployed, per Phase 94's own testing plan). Committing
+    this small fix to `master` directly, per the usual small-fix-goes-
+    direct convention, would have pushed stale pre-Phase-94 routes to
+    `master` and triggered `deploy.yml`'s auto-deploy on push - silently
+    reverting the live subdomain cutover. Caught before committing;
+    this fix is added on top of Phase 94's own branch instead, where
+    the checked-out routes actually match what's live.
+  - **Scope:** add FastAPI's built-in `CORSMiddleware` to `main.py`.
+    Allowed origins: `http://localhost:5173` (Vite's default dev port)
+    and `http://localhost:4173` (Vite's `preview` port) for local dev -
+    the deployed UI's real CloudFront origin gets added once that
+    domain exists (not yet - no new AWS resource created this phase).
+    Allow credentials, all standard methods/headers - this API has no
+    cookie-based session to protect against CSRF, and identity is a
+    self-asserted JSON body field already, not a cookie.
+  - **Explicitly not done this phase** (logged as planned backend work
+    instead, see `BACKLOG.md`): a `GET` list/detail endpoint for
+    conversation history (today's `api/conversations/` only has
+    `DELETE`), a feedback-submission endpoint, and a way to surface
+    per-call cost/token/trace data through the API instead of only to
+    server logs. None of these block the UI from being built - the UI
+    mocks or omits those specific pieces, clearly labeled, until the
+    backend work lands.
+  - **Testing plan:** full local suite green (no existing test exercises
+    CORS headers, none needed to break); manual check - start the API
+    locally, start the Vite dev server, confirm a real fetch from the
+    browser succeeds instead of failing on the CORS preflight. Live AWS
+    redeploy follows the same manual process Phase 94 used (feature
+    branch, no CI trigger).
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,

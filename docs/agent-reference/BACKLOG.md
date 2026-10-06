@@ -1192,3 +1192,41 @@ is now stale - confirmed live via `gh repo view` that the default
 branch is `master`, not `hrb_rag_pipelines`. Worth a cleanup pass on
 this file's own older entries at some point - several read as still-
 open but are actually resolved, just never struck through.
+
+## UI backend-gap findings (Phase 95, 2026-10-06)
+
+Found while re-reviewing `docs/dev-reference/ui-wireframes-review.html`
+against this project's actual current backend code, ahead of starting
+`hrb_chatbot_ui` (the separate React project). Per the user's explicit
+instruction for this first UI-build phase: don't change a backend
+feature unless it's critical/blocking (CORS was - see RAG-ROADMAP.md
+Phase 95); everything else below is deliberately deferred, logged here
+instead of implemented.
+
+- **No way to list or fetch conversation history.**
+  `api/conversations/manage_conversations.py` has exactly one endpoint:
+  `DELETE /{conversation_id}`. There is no `GET` for a caller's own
+  conversation list or for one conversation's turns. `enable_conversation_memory`
+  + `conversation_id` on the query endpoints keep history server-side for
+  context continuation, but nothing reads it back out. The wireframed
+  "Conversation History" sidebar can't be populated from the backend
+  today - the UI's first phase holds conversation state in browser-only
+  storage (one browser, one device, lost on clear) and labels it as
+  such, rather than faking a real history feature.
+- **No feedback-submission endpoint at all.** Nothing in `src/` stores
+  or accepts a "Helpful"/"Not quite" signal from a chat message. The
+  wireframed feedback popup has nowhere to send its payload - the UI's
+  first phase accepts the input but doesn't persist it past the
+  browser tab, clearly labeled as not yet wired to the backend.
+- **No API surfaces cost/token/tool-call/trace data.** Confirmed again:
+  `common/logging/call_logger.py`'s `log_backend_call()` logs this per
+  call, but no response field or endpoint returns it. The explainability
+  popup can show real `model_used` and real retrieval sources/scores
+  (both already in `RagQueryResponse`), but cost/tokens/latency/call-trace
+  fields show as "not available yet" rather than being invented client-side.
+
+None of these block building the UI - each is a real, scoped,
+independently doable backend phase (a conversations list/detail `GET`
+endpoint; a feedback table + `POST` endpoint; a trace/metrics response
+field or endpoint) to pick up later, each wanting its own `**Spec:**`
+block before implementation, same as every other phase.
