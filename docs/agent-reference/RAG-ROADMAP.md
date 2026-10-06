@@ -158,7 +158,7 @@ reviewed before that phase's code starts.
 | 84 — User-directed, Milestone 2: Redis-backed caching (answer cache, embedding cache, rate limiter), Upstash-hosted | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 85 — Found while closing out Milestone 2: SQLiteClient never created its own parent directory, breaking the golden-dataset gate on a fresh runner | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 86 — Found while closing out Milestone 2: eval-gate.yml never had the Phase 82 Spacy fix, and the gate itself silently PASSed with zero cases scored | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
-| 87 — Found during full AWS verification sweep: multi-turn memory bypassed on zero-chunk follow-ups; production metadata store resets on every redeploy (ephemeral SQLite) | Claude Code | 🚧 In progress - code done, AWS deploy pending | ✅ Spec'd and implemented - see detail below |
+| 87 — Found during full AWS verification sweep: multi-turn memory bypassed on zero-chunk follow-ups; production metadata store resets on every redeploy (ephemeral SQLite) | Claude Code | ✅ Done, verified, 2026-10-06 | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -6757,6 +6757,28 @@ Explicitly deferred to a later, separate wave - not part of the above:
   switching AWS's metadata store, so the re-ingest that follows starts
   both systems from a consistent, empty baseline - not two stores
   silently out of sync.
+
+  **Deployed and verified live on AWS, 2026-10-06:**
+  - App Runner's `RAG_METADATA_STORE` flipped to `postgres`, confirmed via
+    a fresh redeploy reaching `RUNNING`.
+  - Real KB re-ingested (`scripts.ingest_kb_docs` against the live URL) -
+    all 6 documents `"uploaded"` (not `"duplicate"`, confirming a genuinely
+    clean start). `GET /documents` (with the correct `hr_support` role -
+    an `employee` role 403s, which is correct RBAC behavior, not a bug)
+    now correctly lists all 6 with real IDs/timestamps/`"indexed"` status
+    - the exact thing that returned 0 before this phase.
+  - Bonus, unplanned fix: the `filename: "unknown"` cosmetic bug noted in
+    Phase 83's BACKLOG entry is also resolved by this clean re-ingest -
+    confirmed live, every retrieved source now carries the real PDF name.
+  - Real 2-turn conversation on AWS: turn 1 answered normally, turn 2
+    ("What did I just ask you about?") correctly answered **"You just
+    asked about the 401(k) match percentage"** from conversation memory
+    alone - the exact case that returned the canned no-context answer
+    before this phase. Conversation cleaned up afterward via the delete
+    endpoint (4 turns).
+  - Golden-dataset gate re-run against the fully updated production
+    config: `recall: 0.955`, `groundedness: 0.983`, `completeness: 0.862`,
+    **PASS**, all 24 cases scored - no regression from either fix.
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,

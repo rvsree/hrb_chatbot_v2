@@ -982,14 +982,15 @@ golden-dataset release gate once it also exercises Pinecone (see
 question on extending `eval-gate.yml` beyond ChromaDB) rather than a
 one-off manual check like this one.
 
-## Chunk metadata's `filename` field reads `"unknown"` in Pinecone (found Phase 83, 2026-10-05)
+## ~~Chunk metadata's `filename` field reads `"unknown"` in Pinecone~~ - resolved incidentally, Phase 87, 2026-10-06
 
-Confirmed via a real retrieval response: every source chunk returned
-`"filename": "unknown"` instead of the real PDF name, even though
-`document_id` and the chunk's actual text content are both correct and
-citations work. Minor, not blocking - cosmetic only until something
-actually displays `filename` to a user (a future React UI would). Not
-investigated further - likely a metadata-key mismatch between what the
-LlamaIndex-based indexer writes and what the LangChain-based retriever
-reads back out, similar in shape to Phase 83's dependency gap but a
-separate, smaller bug.
+Found Phase 83 (2026-10-05): every source chunk returned `"filename":
+"unknown"` instead of the real PDF name. Resolved as a side effect of
+Phase 87's clean Pinecone-namespace-clear + full re-ingest (done to fix
+the metadata-store switch, not to fix this) - confirmed live, every
+retrieved source now carries the real PDF name. Never root-caused
+directly; most likely the original "unknown" values came from documents
+ingested under an earlier code path (before some metadata-patching change
+landed) and never got backfilled - a fresh ingest under current code
+simply doesn't have the bug. Not worth further investigation now that
+it's confirmed gone.
