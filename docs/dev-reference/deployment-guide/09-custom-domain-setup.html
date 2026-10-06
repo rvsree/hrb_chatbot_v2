@@ -10,7 +10,7 @@
 <div class="wrap">
 <div class="crumbs"><a href="index.html">&larr; Deployment Guide</a></div>
 
-<h1>Custom Domain Setup — rvsree-labs.dev</h1>
+<h1>Custom Domain Setup — rvsree.dev</h1>
 <p class="subtitle">Manual steps to register the domain via the AWS Console, turn off auto-renewal immediately, and (once registered) point it at this project's App Runner service. Do this directly yourself — it needs your real contact/billing info.</p>
 
 <div class="flag"><strong>Billing reality, stated plainly:</strong> this is a real ~$17 charge for a full year, paid upfront, generally non-refundable. There is no "pay and cancel for a refund" — what you <em>can</em> do is register it, then immediately turn off auto-renewal so it simply expires after 12 months and never charges again. Confirm AWS's exact refund policy on their own billing page if that matters to you before paying - don't take my word for it.</div>
@@ -21,7 +21,7 @@
 <li>In the top search bar, type <strong>Route 53</strong> → open the Route 53 service</li>
 <li>Left sidebar → <strong>Registered domains</strong></li>
 <li>Click <strong>Register domains</strong></li>
-<li>In the search box, type <code>rvsree-labs.dev</code> → click <strong>Search</strong></li>
+<li>In the search box, type <code>rvsree.dev</code> → click <strong>Search</strong></li>
 <li>Confirm it shows as available with a price around <strong>$17.00/yr</strong> → click <strong>Add to cart</strong></li>
 <li>Click <strong>Continue</strong></li>
 </ol>
@@ -46,7 +46,7 @@
 
 <h2>Part 2 — Turn off auto-renewal (do this right after, don't skip)</h2>
 <ol>
-<li>Route 53 → <strong>Registered domains</strong> → click <strong>rvsree-labs.dev</strong></li>
+<li>Route 53 → <strong>Registered domains</strong> → click <strong>rvsree.dev</strong></li>
 <li>Find <strong>Auto renew</strong> (usually near the top of the domain's detail page)</li>
 <li>Toggle it to <strong>Disabled</strong> / click <strong>Disable auto renew</strong></li>
 <li>Confirm the change</li>
@@ -56,13 +56,13 @@
 <h2>Part 3 — What happens next (I'll do this part)</h2>
 <p>Once the domain shows as registered, let me know and I'll associate it with this project's App Runner service:</p>
 <ul class="checklist">
-<li><code>aws apprunner associate-custom-domain</code> — tells App Runner about the domain, e.g. as <code>hrb-chatbot.rvsree-labs.dev</code> (a subdomain, keeping the bare domain free for other projects later, per the earlier plan)</li>
+<li><code>aws apprunner associate-custom-domain</code> — tells App Runner about the domain, as <code>compute.rvsree.dev</code> (a subdomain, keeping the bare domain free for other projects later - <code>compute</code> chosen as a generic, reusable label rather than this one project's name, matching the whole point of a shared personal domain)</li>
 <li>AWS hands back a few DNS records (validation + routing) to add</li>
 <li>Since the domain is already in Route 53, I can add those DNS records directly via the CLI — no manual DNS editing needed on your end</li>
 <li>AWS auto-issues an SSL certificate for the new domain - no separate cert work</li>
 <li>Takes a few minutes to a few hours to fully validate and go live</li>
 </ul>
-<p>After that, <code>https://hrb-chatbot.rvsree-labs.dev</code> works as a clean alias for the existing <code>https://mrgysvt6ye.us-east-1.awsapprunner.com</code> URL - both will keep working.</p>
+<p>After that, <code>https://compute.rvsree.dev</code> works as a clean alias for the existing <code>https://mrgysvt6ye.us-east-1.awsapprunner.com</code> URL - both will keep working.</p>
 
 <div class="pager">
 <a href="08-milestone-plan.html">&larr; Milestone Plan &amp; Golden Dataset Gate</a>
