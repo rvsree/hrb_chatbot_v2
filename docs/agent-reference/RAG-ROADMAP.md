@@ -163,7 +163,7 @@ reviewed before that phase's code starts.
 | 89 — User-directed, Milestone 3 part 2: presigned-upload endpoint, additive alongside the existing synchronous upload (confirmed with the user, not a replacement) | Claude Code | ✅ Done, verified live on AWS, 2026-10-06 - real bug found and fixed along the way (Lambda is a separate deployable, deploy.yml never redeploys it) | ✅ Spec'd and implemented - see detail below |
 | 90 — User-directed: local Lambda worker (`scripts/run_local_lambda_worker.py`) + `deploy-lambda.yml` CI/CD, so Phases 88-89 can be developed against real S3/SQS from localhost without paying for Lambda compute | Claude Code | ✅ Done, verified live, 2026-10-06 - real race condition found (local worker vs. the live Lambda competing for one queue), permanently fixed with separate `-dev` S3/SQS resources (the user's own suggestion) rather than a disable-and-wait workaround | N/A - scripts/+.github/ only, spec_gate doesn't apply to either; full rationale recorded inline below |
 | 91 — User-directed: custom domain, `rvsree.dev` registered and `compute.rvsree.dev` associated with the App Runner service | User (registration) + Claude Code (App Runner association, DNS records) | ✅ Done, verified live, 2026-10-06 - real HTTPS 200 from `compute.rvsree.dev` and `www.compute.rvsree.dev` | N/A - AWS console/CLI only, no src/ touched |
-| 92 — User-directed: `/hrb-chatbot` context-path prefix on every endpoint, so `compute.rvsree.dev` can host multiple future projects by path | Claude Code | 📋 Planned, added 2026-10-06 - not started | ✅ Spec'd - see detail below |
+| 92 — User-directed: `/hrb-chatbot` context-path prefix on every endpoint, so `compute.rvsree.dev` can host multiple future projects by path | Claude Code | ✅ Done, verified live on AWS, 2026-10-06 - full endpoint sweep passed; hit and recovered from a real ~20-min App Runner health-check incident (MSYS path-mangling, self-healed, zero production impact) | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -7385,7 +7385,7 @@ Explicitly deferred to a later, separate wave - not part of the above:
     unchanged - nothing about the service itself changed, only a new
     way to reach it.
 
-- [ ] **Phase 92 (planned, not started) — User-directed: `/hrb-chatbot`
+- [x] **Phase 92 (done, verified live on AWS, 2026-10-06) — User-directed: `/hrb-chatbot`
   context-path prefix on every endpoint.**
 
   **Spec:**
@@ -7466,6 +7466,75 @@ Explicitly deferred to a later, separate wave - not part of the above:
     conversations delete, `/ping`, `/health?deep=true` - matching the
     user's own explicit "test all AWS endpoints" instruction, not just
     a smoke test on one or two.
+
+  **Built and verified live on AWS, 2026-10-06, both rollout stages:**
+  - **Stage 1** (dual health registration): `main.py`'s 6
+    `include_router()` calls all moved under `/hrb-chatbot`;
+    `routes_health.router` registered twice (root + prefix) so App
+    Runner's still-root-pointed live health check kept passing with zero
+    gap. ~86 test-file literal-path occurrences updated across 7 files
+    (one file the original survey missed -
+    `tests/hrb_chatbot/api/test_error_handling.py`, caught immediately
+    by the first post-change test run, fixed before commit), plus
+    `scripts/ingest_kb_docs.py`, `CLAUDE.md` (6 refs),
+    `endpoint-request-response-contracts.md` (10 refs), both Postman
+    environments. 290 tests passed locally before every push. `deploy.yml`
+    and the brand-new `deploy-lambda.yml` both succeeded - the first
+    real, fully-automated Lambda deploy this project has ever had.
+  - **Health-check cutover - a real incident, not a clean sequence:**
+    switching App Runner's `HealthCheckConfiguration.Path` to
+    `/hrb-chatbot/health` hit the exact same Git Bash MSYS path-mangling
+    bug this session had already hit twice before with CloudWatch log
+    group names (`/hrb-chatbot/health` silently rewritten into a bogus
+    Windows path, e.g. `C:/Program Files/Git/hrb-chatbot/health`, before
+    the AWS CLI ever saw it) - `update-service` accepted it without
+    complaint (`OPERATION_IN_PROGRESS`) and then **hung for ~20 minutes**
+    before AWS safely auto-reverted to the previous working `/health`
+    config on its own - confirmed via `describe-service` and
+    `list-operations` that the operation never actually failed or
+    errored, it just silently rolled back once it could never pass a
+    real health check against the garbled path. **Production traffic
+    was never affected** - confirmed `/ping` returning real `200`s
+    throughout the entire 20-minute window, checked repeatedly, not
+    assumed. Retried with `MSYS_NO_PATHCONV=1`, succeeded in under a
+    minute this time, confirmed `Status: RUNNING` with the correct path.
+  - **Stage 2** (cutover complete): removed the temporary root health
+    registration; `Dockerfile`'s `HEALTHCHECK`, `deploy.yml`'s smoke
+    test, and `eval-gate.yml`'s readiness check all moved to
+    `/hrb-chatbot/ping`. Confirmed locally (old root now 404s, new path
+    works) before pushing. `deploy.yml` succeeded, smoke test passed
+    against the new path - full end-to-end proof the App Runner health
+    check and the CI smoke test both now agree on the same prefixed URL.
+  - **Full live endpoint sweep, every category hit for real against
+    `https://compute.rvsree.dev/hrb-chatbot`, matching the user's own
+    "test all AWS endpoints" instruction exactly:** `GET /ping`
+    (`200`); `GET /health` with real backend query params (`200`,
+    confirmed real Pinecone `total_vector_count: 227` and real Postgres
+    `documents_stored: 6`, not the misleading no-params default - see
+    the BACKLOG entry below); `POST .../retrieve-document/query` (real
+    401(k)-match question, real grounded answer with citations); `GET
+    .../ingest-document/documents` (real 6-document list); `POST
+    .../presigned-upload` + `GET .../cleanup/preview` (real document
+    created and correctly flagged as test noise, cleaned up after);
+    `POST /v1/single-agentic-rag/query` (real PTO question, real tool
+    calls - `GetLeaveBalance`/`SearchKnowledgeBase` - 3 iterations);
+    `POST /v1/multi-agentic-rag/query` (real combined 401(k)+PTO
+    question, real multi-agent dispatch - `vector_kb_agent` +
+    `lms_ops_agent` - real synthesized answer); `DELETE
+    /v1/conversations/{id}` (unknown id, real `200`/`turns_deleted: 0` -
+    idempotent-delete semantics, not a 404, confirmed as the real
+    behavior). Every old unprefixed path (`/ping`, `/health`,
+    `/v1/genai-rag/...`) confirmed `404` afterward - the cutover is
+    complete, nothing reachable at the old paths anymore.
+  - **Found along the way, flagged not fixed, pre-existing and
+    unrelated to this phase's own scope:** `GET /health` with no query
+    params silently checks `sqlite`/`chromadb` instead of the real
+    active Postgres/Pinecone - see BACKLOG.md. Confirmed present on an
+    App Runner instance that started *before* this phase's own first
+    push, so not a regression introduced here - caught only because
+    this phase's own verification pass happened to hit plain `/health`
+    first and the misleadingly-"healthy" chromadb/sqlite response stood
+    out.
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
