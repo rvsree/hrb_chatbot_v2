@@ -165,6 +165,7 @@ reviewed before that phase's code starts.
 | 91 — User-directed: custom domain, `rvsree.dev` registered and `compute.rvsree.dev` associated with the App Runner service | User (registration) + Claude Code (App Runner association, DNS records) | ✅ Done, verified live, 2026-10-06 - real HTTPS 200 from `compute.rvsree.dev` and `www.compute.rvsree.dev` | N/A - AWS console/CLI only, no src/ touched |
 | 92 — User-directed: `/hrb-chatbot` context-path prefix on every endpoint, so `compute.rvsree.dev` can host multiple future projects by path | Claude Code | ✅ Done, verified live on AWS, 2026-10-06 - full endpoint sweep passed; hit and recovered from a real ~20-min App Runner health-check incident (MSYS path-mangling, self-healed, zero production impact) | ✅ Spec'd and implemented - see detail below |
 | 93 — User-directed: codebase cleanup pass (dead code/duplicate logic survey, two Explore-agent audits, one real duplicate found and extracted) | Claude Code | ✅ Done, 2026-10-06 - 293 tests passing, very little dead code found codebase-wide | ✅ Spec'd and implemented - see detail below |
+| 94 — User-directed: domain rename `compute.rvsree.dev/hrb-chatbot` → `hrb-chatbot.rvsree.dev` (subdomain-per-project, not a shared path-routed one), first real adoption of the documented `feature → develop → master` flow | Claude Code | 📋 In progress, added 2026-10-06, on `feature-hrb-chatbot-subdomain` | ✅ Spec'd - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -7577,6 +7578,69 @@ Explicitly deferred to a later, separate wave - not part of the above:
     themselves; re-confirmed still present, re-flagged, not touched.
   - **Testing plan:** full local suite green after the extraction (no
     behavior change expected or found).
+
+- [ ] **Phase 94 (in progress) — User-directed: subdomain rename +
+  first real feature-branch adoption.**
+
+  **Spec:**
+  - **Context:** Phase 91/92 associated `compute.rvsree.dev` with a
+    `/hrb-chatbot` path prefix, reasoning that a shared "compute"
+    subdomain plus per-project paths would let `rvsree.dev` host future
+    unrelated projects cheaply. That reasoning had a real gap, caught by
+    the user: `compute.rvsree.dev` is a CNAME pointed directly at *this*
+    one App Runner service - a second project sharing it by path would
+    need an actual reverse-proxy/gateway layer (CloudFront or an ALB
+    with path-based routing) that doesn't exist. **Corrected plan,
+    confirmed with the user**: one dedicated subdomain per project
+    (`hrb-chatbot.rvsree.dev` for this one), each CNAME'd directly to
+    its own hosting - no shared routing layer, no stutter in the path.
+    With the subdomain itself identifying the project, the `/hrb-chatbot`
+    path prefix becomes redundant and comes back out - routes return to
+    bare `/v1/...` (and `/ping`/`/health` back to root), the exact
+    inverse of Phase 92's own change.
+  - **Also confirmed, separately**: this project's own documented
+    branch model (`docs/agent-reference/CICD-BRANCHING-STRATEGY.md`) is
+    `feature-<name>` → PR → `develop` → PR → `master` - every phase
+    since the session that adopted it has actually gone straight to
+    `master`, then fast-forwarded `develop` to match, a real deviation
+    never flagged as such until now. This phase is the first real
+    adoption of the documented flow: done on `feature-hrb-chatbot-
+    subdomain`, not `master` directly - useful on its own for sharing a
+    specific feature branch during a code review/demo, independent of
+    team size.
+  - **Scope:**
+    1. `main.py`'s 6 `include_router()` calls lose the `/hrb-chatbot`
+       prefix - exact inverse of Phase 92 stage 1/2's diff.
+    2. Every test-file literal path reverted (same ~86 occurrences,
+       same files, Phase 92 touched).
+    3. `Dockerfile`'s `HEALTHCHECK`, `deploy.yml`'s smoke test,
+       `eval-gate.yml`'s readiness check, `CLAUDE.md`,
+       `endpoint-request-response-contracts.md` all revert too.
+    4. New AWS work: register `hrb-chatbot.rvsree.dev` as a subdomain
+       of the already-owned `rvsree.dev` (free, no separate
+       registration), associate it with the same App Runner service
+       (3 cert-validation CNAMEs + 2 routing CNAMEs, same mechanism as
+       Phase 91), staged health-check cutover identical in spirit to
+       Phase 92's (dual registration during rollout, `MSYS_NO_PATHCONV=1`
+       used correctly from the first attempt this time, not reactively
+       after a repeat incident).
+    5. `compute.rvsree.dev` stays associated, not removed - lower risk
+       (nothing breaks if it was shared anywhere already) than tearing
+       it down now; the user can ask for its removal once confident
+       nothing points at it.
+  - **Testing plan:** since `deploy.yml` only triggers on a push to
+    `master` (by its own documented design), this branch's code is
+    deployed and verified live by hand (the same manual
+    `docker buildx build` + `aws apprunner`/`aws lambda` commands
+    already used throughout this session for infra work) - not through
+    the automated pipeline, which stays correctly scoped to `master`.
+    Full live endpoint sweep against the new domain, matching Phase
+    92's own verification depth, before anything is considered done.
+  - **Out of scope:** merging this branch into `develop`/`master` -
+    this phase ends with the branch pushed and verified, not merged;
+    that's a separate, later decision.
+
+1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
    document id returned, file in `data/uploads/`, SQLite row exists. **Done**,
    including the batch partial-success case.
