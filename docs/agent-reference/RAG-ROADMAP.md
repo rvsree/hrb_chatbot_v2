@@ -160,6 +160,7 @@ reviewed before that phase's code starts.
 | 86 — Found while closing out Milestone 2: eval-gate.yml never had the Phase 82 Spacy fix, and the gate itself silently PASSed with zero cases scored | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 87 — Found during full AWS verification sweep: multi-turn memory bypassed on zero-chunk follow-ups; production metadata store resets on every redeploy (ephemeral SQLite) | Claude Code | ✅ Done, verified, 2026-10-06 | ✅ Spec'd and implemented - see detail below |
 | 88 — User-directed, Milestone 3 part 1: S3 → SQS → Lambda async indexing pipeline, wired but not cut over to the live API yet | Claude Code | ✅ Done, verified live on AWS, 2026-10-06 - real end-to-end + idempotency + failure-path tests, cold-start init-timeout finding noted (non-blocking) | ✅ Spec'd and implemented - see detail below |
+| 89 — User-directed, Milestone 3 part 2: presigned-upload endpoint, additive alongside the existing synchronous upload (confirmed with the user, not a replacement) | Claude Code | 📋 Planned, added 2026-10-06 - not started | ✅ Spec'd - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -7069,6 +7070,132 @@ Explicitly deferred to a later, separate wave - not part of the above:
     not duplicating). See `docs/dev-reference/deployment-guide/
     10-observability-howto.html` for exactly what LangSmith/CloudWatch
     *do* show today, step by step, for local/App Runner/Lambda.
+
+- [ ] **Phase 89 (planned, not started) — User-directed, Milestone 3 part 2:
+  presigned-upload endpoint, additive alongside the existing synchronous
+  upload.**
+
+  **Spec:**
+  - **Context:** Phase 88 built and proved the S3 → SQS → Lambda trigger
+    half of this milestone, exercised only by a direct `aws s3 cp` - no
+    real client has ever used it. This phase is the other half: a real
+    API endpoint that hands a client a presigned S3 URL instead of
+    accepting the file body directly, per
+    `docs/dev-reference/deployment-guide/05-rag-ingestion-batch.html`'s
+    design.
+  - **Cutover decision, confirmed with the user, 2026-10-06, overriding
+    this design's own original intent:**
+    `docs/agent-reference/S3-ASYNC-UPLOAD-DESIGN.md` originally said this
+    "would replace, not sit beside" the synchronous endpoint. Given what
+    Phase 88's own testing just found (no input validation anywhere in
+    the async path yet, no local test path, a still-flaky cold start),
+    asked the user directly whether to actually replace the live,
+    **Finalized** `POST /v1/genai-rag/ingest-document/documents` contract
+    now - answer: **no, additive**. The new endpoint is a completely
+    separate route; the existing synchronous endpoint, its Postman
+    requests, `tests/hrb_chatbot/api/rag/test_routes_documents.py`,
+    `eval-gate.yml`'s ingestion step, and `scripts/ingest_kb_docs.py` are
+    **not touched at all** by this phase.
+  - **New endpoint:** `POST /v1/genai-rag/ingest-document/documents/
+    presigned-upload`. JSON body (not multipart, since there's no file
+    yet):
+    ```json
+    {
+      "user_profile": { "employee_id": "...", "full_name": "...", "role": "hr_support" },
+      "filename": "401k-policy.pdf",
+      "content_type": "application/pdf",
+      "chunk_info": { "chunking_strategy": null, "chunk_size": null, "chunk_overlap": null },
+      "document_metadata": { "supersedes_document_id": null, "doc_category": null, "...": "..." }
+    }
+    ```
+    `chunk_info`/`document_metadata` are the exact same optional sub-
+    objects the synchronous endpoint already accepts - same fields, same
+    nullability, same meaning. Response, `200`:
+    ```json
+    { "document_id": "...", "upload_url": "https://...", "expires_in_seconds": 300, "status": "pending_upload" }
+    ```
+    This is a **new, separate response model** - not
+    `DocumentUploadResponse` - since nothing has been indexed yet at
+    response time; the client polls the existing
+    `GET /documents/{id}` afterward for the real result, exactly like
+    Phase 88's own manual tests already do.
+  - **Scope, single-file only - no batch presigned upload this phase.**
+    The synchronous endpoint's `files: list[UploadFile]` batch support
+    has no clean presigned-URL equivalent (it would mean requesting N
+    URLs up front, naming N files before any exist) - deliberately cut
+    for now per "start simple"; the synchronous endpoint still handles
+    batch uploads today, unaffected. A batch variant is a candidate for
+    a later phase if ever actually needed.
+  - **Validation added here, closing part of the gap Phase 88 flagged -
+    deliberately, since this is where it belongs, not the Lambda:**
+    reuses `validate_file()`'s content-type/extension check (minus the
+    size check, since there are no bytes yet) and the existing
+    `supersedes_document_id`-must-exist check from `save_upload()` -
+    same `error_codes.INVALID_FILE_TYPE`/`SUPERSEDES_TARGET_NOT_FOUND`,
+    no new error codes needed. Role gate: `HR_SUPPORT` only, same as the
+    synchronous endpoint. Rate limit: `enforce_rate_limit()`, same as
+    every other mutating route.
+  - **How overrides reach the Lambda - new `pending_overrides` column,
+    not S3 object metadata:** the route generates `document_id`, calls
+    the existing `create_document()` (defaults to `status='uploaded'`),
+    then `update_status(document_id, "pending_upload")`, then a new
+    `set_pending_overrides(document_id, json_blob)` storing
+    `chunk_info`/`document_metadata` as one JSON column - a new
+    `documents.pending_overrides TEXT` column via the existing
+    `ALTER TABLE IF NOT EXISTS` migration list (`postgres_client.py`
+    *and* `sqlite_client.py`, for local/AWS parity, even though the real
+    Lambda only ever talks to Postgres). `BaseMetadataClient` gets the
+    new abstract method alongside the others. Chosen over encoding
+    overrides into the presigned URL's S3 object metadata headers
+    because it reuses the metadata store's existing row the Lambda
+    already reads (`get_document()`), rather than inventing a second,
+    S3-side channel for the same data.
+  - **Lambda handler change, small:** `index_document_handler.py`'s
+    existing `if existing is None: create_document(...)` branch becomes
+    the *fallback* path (still useful for Phase-88-style manual S3-put
+    testing) - the *normal* path now finds the row this new endpoint
+    already created, reads `pending_overrides` if present, passes it
+    through to `pipeline.index_document()` as
+    `chunking_strategy`/`chunk_size`/`chunk_overlap`/
+    `document_metadata_override` (unpacked, not a new parameter shape),
+    and clears the column after a successful index.
+  - **Presigned URL mechanism:** a presigned **PUT**, not a presigned
+    POST policy - `s3.generate_presigned_url("put_object", Params=
+    {"Bucket": ..., "Key": f"{document_id}/{filename}", "ContentType":
+    "application/pdf"}, ExpiresIn=300)`, matching the exact code sample
+    already written in `05-rag-ingestion-batch.html`. Simpler than a
+    presigned POST (one URL string, no multi-field form/policy
+    document); the tradeoff is no native max-size enforcement at the S3
+    level the way a POST policy's `Conditions` could provide - accepted
+    for now since this bucket already blocks all public access and only
+    an authenticated caller of this new endpoint can ever obtain a URL.
+  - **IAM:** add one `s3:PutObject` statement, scoped to
+    `hrb-chatbot-kb-uploads/*`, to the **existing**
+    `hrb-chatbot-apprunner-instance-role` - the same role
+    `bedrock_client.py` already uses for its own boto3 calls (Phase 9),
+    so this is a policy addition, not a new role or new credential
+    plumbing.
+  - **Does this run locally?** The endpoint itself - yes, generating a
+    presigned URL needs only valid AWS credentials (already configured
+    locally for every `aws` CLI command used this session) and no
+    special infra. What still doesn't run locally: anything consuming
+    that upload afterward (same already-documented Phase 88 limitation -
+    no SQS/Lambda/LocalStack locally), so a full local round-trip test
+    stops at "got a valid presigned URL back," not "and it got indexed."
+  - **Explicitly out of scope:** removing/deprecating the synchronous
+    endpoint, batch presigned upload, any UI/client change, EventBridge
+    fan-out.
+  - **Testing plan:** unit tests for the new route (fake S3 client for
+    presigned-URL generation, matching this project's existing fake-
+    based convention - no real AWS call); then one real live test -
+    call the new endpoint for real, `PUT` a real throwaway test PDF to
+    the returned URL, confirm the Lambda picks up the stashed
+    `chunk_info`/`document_metadata` overrides correctly (not just the
+    defaults Phase 88's manual tests exercised), poll
+    `GET /documents/{id}` for the real result, clean up afterward -
+    same pattern as every Phase 88 live test.
+  - **Open questions:** none - the one real decision (additive vs.
+    replace) is confirmed above.
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,

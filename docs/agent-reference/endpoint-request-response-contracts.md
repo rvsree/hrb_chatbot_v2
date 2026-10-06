@@ -411,3 +411,46 @@ no change needed there either, it already matches this exercise's pattern:
 { "status": "healthy", "app": "HRB Chatbot", "checks": { "llm": {...}, "vector_database": {...}, "metadata_database": {...} } }
 ```
 `/ping`: `{"status": "ok"}`, unchanged - it's deliberately minimal (no provider calls).
+
+## POST /v1/genai-rag/ingest-document/documents/presigned-upload — Pending (Phase 89, spec'd not implemented)
+
+**Additive, confirmed with the user 2026-10-06 - does not replace, and
+nothing changes about, the existing `POST .../documents` above.** Single
+file only, no batch variant this phase.
+
+Request, JSON (not multipart - no file bytes exist yet):
+```json
+{
+  "user_profile": { "employee_id": "EMP051", "full_name": "Hana Support", "role": "hr_support" },
+  "filename": "401k-policy.pdf",
+  "content_type": "application/pdf",
+  "chunk_info": { "chunking_strategy": null, "chunk_size": null, "chunk_overlap": null },
+  "document_metadata": {
+    "supersedes_document_id": null, "doc_category": "benefits", "department": "HR",
+    "doc_description": "401k", "owner": null, "purpose": null, "effective_date": null,
+    "audience": null, "confidentiality_level": null, "author": null, "doc_date": null, "doc_version": null
+  }
+}
+```
+`chunk_info`/`document_metadata` are the exact same sub-objects the
+synchronous endpoint above already accepts - identical fields, identical
+optional/nullable behavior. Validated the same way the synchronous
+endpoint validates a file: content-type/extension check
+(`error_codes.INVALID_FILE_TYPE`), `supersedes_document_id` must
+reference a real document if given (`error_codes.
+SUPERSEDES_TARGET_NOT_FOUND`). Role gate and rate limit unchanged from
+every other mutating route (`hr_support` only).
+
+Response — `200`:
+```json
+{ "document_id": "d3f1...", "upload_url": "https://hrb-chatbot-kb-uploads.s3.amazonaws.com/...", "expires_in_seconds": 300, "status": "pending_upload" }
+```
+A **new, separate response shape** - not `DocumentUploadResponse` above -
+since nothing has been chunked/embedded/indexed yet when this responds.
+The client `PUT`s the file body directly to `upload_url` (plain HTTP, no
+AWS SDK, no credentials needed client-side - see `docs/dev-reference/
+deployment-guide/05-rag-ingestion-batch.html`'s "Presigned URLs" section),
+then polls the existing `GET /v1/genai-rag/ingest-document/documents/{id}`
+above for the real indexing result once Phase 88's S3 → SQS → Lambda
+pipeline picks it up - same response shape that endpoint already returns
+today, no change there either.
