@@ -167,30 +167,43 @@ url = s3.generate_presigned_url(
 </table>
 <p>See <a href="06-nfr-reliability-resilience.html">the NFR &amp; Resilience page</a> for the whole-system view — rate limiting, retry/backoff on LLM calls, and load balancing are cross-cutting concerns, not specific to this milestone, so they're covered there rather than duplicated here.</p>
 
-<h2>Implementation plan</h2>
+<h2>Implementation plan — status as of Phase 88, 2026-10-06</h2>
+<div class="flag"><strong>Half done, on purpose.</strong> Phase 88 built and verified the S3 → SQS → Lambda trigger half end to end. The presigned-upload endpoint (the row still unchecked below) is Phase 89 — until it lands, the live ingest endpoint is completely untouched and the only way to exercise this path is a direct S3 <code>put-object</code>, not a real client upload.</div>
 <ul class="checklist">
-<li>Write the Phase spec first (per this project's own spec-first convention) — this page plus <code>docs/agent-reference/S3-ASYNC-UPLOAD-DESIGN.md</code> already cover 90% of it</li>
-<li>Create the S3 bucket (one object per <code>document_id</code>, matching the existing metadata model)</li>
-<li>Add a new endpoint (or extend the existing ingest endpoint) to generate a presigned POST URL instead of accepting the file body directly</li>
-<li>Write the Lambda handler — thin wrapper calling <code>ai/doc_processing/pipeline.py</code>'s existing chunk/embed/index functions unchanged</li>
-<li>Create the SQS queue, configured as the S3 <code>ObjectCreated</code> event target (not Lambda directly)</li>
-<li>Wire Lambda's SQS trigger (event source mapping) — AWS-managed polling, no custom consumer code to write</li>
-<li>Configure the queue's redrive policy (<code>maxReceiveCount</code>) pointing at a dead-letter queue, plus a CloudWatch alarm on DLQ depth — not optional, the standard pattern for this architecture</li>
-<li>Switch metadata <code>update_status</code> calls to the <code>pending_upload</code> &rarr; <code>indexing</code> &rarr; <code>indexed</code>/<code>failed</code> state machine</li>
-<li>Set Lambda reserved concurrency to a sane cap, protecting Pinecone/Postgres from a large batch upload spike</li>
-<li>IAM: a scoped role for the Lambda (S3 read, Pinecone network egress, Postgres write) — same least-privilege pattern as <code>hrb-chatbot-github-actions-deploy</code></li>
-<li>Switch Lambda's own logging to structured JSON from day one</li>
+<li class="done">Write the Phase spec first (per this project's own spec-first convention) — this page plus <code>docs/agent-reference/S3-ASYNC-UPLOAD-DESIGN.md</code> already cover 90% of it</li>
+<li class="done">Create the S3 bucket (one object per <code>document_id</code>, matching the existing metadata model) — <code>hrb-chatbot-kb-uploads</code>, versioned, public access fully blocked</li>
+<li class="pending">Add a new endpoint (or extend the existing ingest endpoint) to generate a presigned POST URL instead of accepting the file body directly — <strong>Phase 89, not started</strong></li>
+<li class="done">Write the Lambda handler — thin wrapper calling <code>ai/doc_processing/pipeline.py</code>'s existing chunk/embed/index functions unchanged — <code>src/hrb_chatbot/lambda_handlers/index_document_handler.py</code></li>
+<li class="done">Create the SQS queue, configured as the S3 <code>ObjectCreated</code> event target (not Lambda directly) — <code>hrb-chatbot-ingest-queue</code></li>
+<li class="done">Wire Lambda's SQS trigger (event source mapping) — AWS-managed polling, no custom consumer code to write — batch size 5, <code>ReportBatchItemFailures</code></li>
+<li class="done">Configure the queue's redrive policy (<code>maxReceiveCount</code>) pointing at a dead-letter queue, plus a CloudWatch alarm on DLQ depth — <code>maxReceiveCount: 3</code>, DLQ <code>hrb-chatbot-ingest-dlq</code>, alarm <code>hrb-chatbot-ingest-dlq-depth</code></li>
+<li class="done">Switch metadata <code>update_status</code> calls to the <code>pending_upload</code> &rarr; <code>indexing</code> &rarr; <code>indexed</code>/<code>failed</code> state machine — reuses the existing column, <code>write_chunks()</code> already flips to <code>indexed</code> on success unchanged</li>
+<li class="pending">Set Lambda reserved concurrency to a sane cap, protecting Pinecone/Postgres from a large batch upload spike — <strong>could not</strong>: this AWS account's total Lambda concurrency pool is only 10, below the floor needed to reserve any amount. Needs an AWS limit-increase request, not a code change — see <code>docs/agent-reference/BACKLOG.md</code></li>
+<li class="done">IAM: a scoped role for the Lambda (S3 read, Pinecone network egress, Postgres write) — <code>hrb-chatbot-lambda-execution-role</code>, inline policy scoped to <code>GetObject</code> on this one bucket only</li>
+<li class="done">Switch Lambda's own logging to structured JSON from day one</li>
 </ul>
 
-<h2>Testing considerations</h2>
+<h2>Testing considerations — what was actually run, not just planned</h2>
 <ul class="checklist">
-<li><strong>Unit test the Lambda handler</strong> with a synthetic S3 event payload (a fixture, not a real S3 call) — confirms the handler parses the event and calls <code>pipeline.py</code> correctly, matching this project's existing fake-based test convention</li>
-<li><strong>Integration test</strong> against a real (or LocalStack-emulated) S3 bucket — upload a real PDF via presigned URL, confirm the Lambda fires and the document reaches <code>indexed</code> status</li>
-<li><strong>Idempotency test</strong> — invoke the handler twice for the same object key, confirm no duplicate chunks land in Pinecone (content-hash dedup holds)</li>
-<li><strong>Chaos/failure test</strong> — force a failure (e.g., a malformed PDF, or a temporarily unreachable Pinecone), confirm the message lands in the DLQ and the document's status becomes <code>failed</code> with a real error message, not a silent drop</li>
-<li><strong>Full endpoint matrix from <a href="03-pinecone-standard.html">the Pinecone page</a></strong> still applies — now exercised via the async upload path, not just the synchronous one</li>
-<li><strong>Golden dataset gate</strong> — run <code>eval-gate.yml</code> after a batch of real documents has been ingested through this new path, confirming retrieval quality holds when documents arrive via Lambda instead of the synchronous endpoint</li>
+<li class="done"><strong>Unit tests</strong> — 6 tests in <code>tests/hrb_chatbot/lambda_handlers/</code>, all faked (no real AWS call), including a regression test for the asyncio bug found below</li>
+<li class="done"><strong>Real integration test, no presigned URL yet</strong> (that's Phase 89) — a direct <code>aws s3 cp</code> to the bucket, confirmed via CloudWatch logs <em>and</em> independently via the live production API that the Lambda wrote to the exact same Postgres/Pinecone the running app reads from</li>
+<li class="done"><strong>Idempotency test</strong> — re-uploaded to the same key; <code>chunk_count</code> stayed at 1, not 2 (<code>document_version</code> incremented instead) — a clean re-index, not a duplicate</li>
+<li class="done"><strong>Failure-path test</strong> — direct <code>aws lambda invoke</code> with a nonexistent S3 key; handler reported a clean <code>batchItemFailures</code> entry, no crash. The full redrive-to-DLQ timing (3 retries × 360s ≈ 18 min) itself was not run to completion — only the per-attempt failure signal was confirmed.</li>
+<li class="done"><strong>Concurrency/multi-document test, run twice</strong> — 3 documents uploaded within the same second. SQS batched 2 of the 3 into one invocation; that invocation processed its records <strong>sequentially</strong>, not in parallel (a plain <code>for</code> loop) — this project doesn't control SQS's own batching, only a <code>batch_size</code> cap. First run found a real bug (below); fixed, rebuilt, and the identical test re-run clean the second time.</li>
+<li class="pending"><strong>Golden dataset gate</strong> run after ingesting through this path — not done yet; natural to bundle with Phase 89 once there's a real client-facing path to test end to end</li>
 </ul>
+
+<div class="flag">
+<strong>Real bug found by the concurrency test, fixed same day:</strong> the handler originally called <code>asyncio.run()</code> once <em>per SQS record</em>. The Redis-backed embedding cache caches its client on a long-lived singleton (<code>DBGateway</code>), which outlives any single <code>asyncio.run()</code> call — the second call's fresh event loop left that cached client pointing at the now-closed first loop, raising <code>RuntimeError: Event loop is closed</code> on every record after the first in a batch. Phase 84's own fail-open wrapping caught it (logged a warning, fell back to a real OpenAI call) — <strong>no document failed, no data was wrong</strong>, but the cache was silently dead for 2nd+ records and every occurrence logged at ERROR level. Fixed by wrapping the <em>whole batch</em> in one <code>asyncio.run()</code> instead of one per record. Re-ran the identical live test afterward: zero errors. Full writeup in <a href="../../agent-reference/RAG-ROADMAP.md">RAG-ROADMAP.md</a>'s Phase 88 entry.
+</div>
+
+<div class="flag">
+<strong>Two more things found, not fixed here, by design:</strong>
+<ul>
+<li><strong>No input validation.</strong> The Lambda doesn't check file type, size, or cross-document content-hash dedup — it indexes whatever's at the S3 key. Low risk today since nothing can reach this bucket except a direct AWS call; Phase 89's presigned-upload endpoint is the right place to add this, not this handler.</li>
+<li><strong>Doesn't run locally.</strong> Unlike the main app (fully offline against SQLite/Chroma), this pipeline's entire premise is three real AWS services — there's no LocalStack or SAM Local wiring here, so exercising the real flow means hitting real AWS, every time. The unit tests cover the handler's own logic with zero AWS calls, but that's not the same thing.</li>
+</ul>
+</div>
 
 <div class="pager">
 <a href="04-redis-cache.html">&larr; Redis Cache</a>

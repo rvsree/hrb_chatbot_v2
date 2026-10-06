@@ -6957,6 +6957,119 @@ Explicitly deferred to a later, separate wave - not part of the above:
     tuning pass (more memory for faster init, or Lambda SnapStart) could
     reduce/eliminate it if it ever becomes a real problem at volume.
 
+  **Follow-up round, 2026-10-06 - the user asked directly whether multi-
+  document uploads were tested and whether ingestion runs concurrently;
+  they hadn't been, so this is that test, plus honest answers on
+  retry/validation/local-dev/LangSmith:**
+  - **Real concurrency test, 3 documents uploaded within the same
+    second:** result was NOT 3 parallel Lambda executions. SQS's poller
+    batched 2 of the 3 messages into one Lambda invocation (my handler's
+    batch size is 5); that invocation processed its 2 records
+    **sequentially**, one after another in a plain `for` loop - not
+    concurrently. The 3rd message's fate on the *second* run below shows
+    this isn't fixed either way - sometimes 2 land in one invocation and
+    1 in a separate one, sometimes other splits; this project does not
+    control SQS's batching, only `batch_size` (a cap, not a promise).
+    **Real bug found by this test, not hypothetical:** processing
+    record 2 immediately raised `RuntimeError: Event loop is closed`
+    inside `embedding_cache.get_many()`. Root cause: the handler called
+    `asyncio.run()` once *per record* - the Redis-backed `EmbeddingCache`
+    caches its client on `self._client`, and that `EmbeddingCache`
+    instance lives on `DBGateway`'s singleton, which outlives a single
+    `asyncio.run()` call. The *second* `asyncio.run()` makes a brand-new
+    event loop; the cached Redis client is still bound to the *first*
+    (now-closed) one. The bug was caught by the embedding cache's own
+    Phase 84 fail-open wrapping (logged a warning, fell back to a real
+    OpenAI call), so **no document failed and no data was wrong** - but
+    the cache was silently useless for every record after the first one
+    in a warm container, and every occurrence logged at ERROR level.
+    **Fixed**: `lambda_handler()` now wraps the *whole* batch in one
+    `asyncio.run()` (a new `_process_batch()` coroutine), so every record
+    in an invocation shares one event loop; processing stays sequential,
+    only the event-loop lifecycle changed. Added a regression test
+    (`test_a_batch_of_several_records_runs_on_one_shared_event_loop`) with
+    a fake that raises the exact same `RuntimeError` if it's ever called
+    from a second event loop - full suite (283 passed) still green.
+    Rebuilt, re-pushed, `update-function-code`'d, and **re-ran the exact
+    same 3-document concurrency test live**: same SQS batching pattern (2
+    landed together again), zero errors this time, all 3 reached
+    `indexed` with `chunk_count: 1` each (confirmed via both CloudWatch
+    logs and the live API) - cleaned up afterward.
+  - **The cold-start init-timeout from the single-document test above is
+    not a one-off - it recurred on this round too**, on both of the two
+    separate invocations this test triggered (new function code means no
+    warm containers survived the update). Both self-healed via SQS
+    redelivery exactly like before. This is now confirmed as a real,
+    repeatable characteristic of this handler's cold start, not a fluke -
+    worth real tuning (more memory, since Lambda's CPU share scales with
+    it, or SnapStart) if this pipeline ever sees enough cold-start
+    frequency for the redelivery delay to matter. Not fixed here -
+    tracked in `docs/agent-reference/BACKLOG.md`.
+  - **Retry logic: entirely SQS-native, no custom code.** `maxReceiveCount:
+    3` + the redrive policy to the DLQ is the only retry mechanism - there
+    is no application-level retry/backoff anywhere in the handler itself.
+    Confirmed working for the *transient cold-start* case (above, self-
+    heals within one retry) and for the *permanent failure* case (the
+    direct-invoke test earlier: a bad message is reported via
+    `batchItemFailures` so SQS redelivers it, and after `maxReceiveCount`
+    is exhausted it moves to the DLQ) - but the full redrive-to-DLQ timing
+    itself (3 retries × the 360s visibility timeout ≈ 18 minutes) was
+    never run to completion live; only the per-attempt failure-signaling
+    mechanism was confirmed.
+  - **Validation logic: there is none in this handler, by omission, not
+    by design decision.** `documents_service.validate_file()` (content-
+    type check, empty-file check, the `MAX_FILE_SIZE_BYTES` limit) is
+    never called here - the handler downloads whatever object the S3 key
+    names and hands it straight to `pipeline.index_document()`. It also
+    never checks content-hash dedup against a *different* existing
+    document the way `save_upload()` does - only whether *this exact*
+    `document_id` already has a row. Today this is low-risk only because
+    nothing can reach this bucket except a direct, authenticated AWS
+    call (no public upload path exists yet) - but Phase 89's presigned-
+    upload endpoint is the right place to add real validation (file type/
+    size, via the presigned POST's own `Conditions`, and/or a check before
+    issuing the URL at all), not this handler. Flagged in BACKLOG.md.
+  - **Does this run locally? No - and it structurally can't, the way the
+    main app's synchronous upload path does.** The main FastAPI app runs
+    fully offline locally (SQLite, optionally Chroma, no AWS needed at
+    all). This pipeline's entire premise is three real AWS services (S3
+    event notifications, SQS, Lambda) - there is no LocalStack or SAM
+    Local wiring in this project, so the only way to exercise the real
+    S3 → SQS → Lambda flow, today, is against the real AWS resources this
+    phase provisioned. What *does* run locally with zero AWS calls: the
+    5 (now 6) unit tests, which fake every boundary - that's unit-level
+    coverage of the handler's own logic, not of the real pipeline. AWS's
+    Lambda Runtime Interface Emulator (bundled in the `public.ecr.aws/
+    lambda/python` base image) could let someone `docker run` this image
+    locally and `curl` a synthetic event at it for faster iteration
+    without a real redeploy - a real, AWS-documented technique, but not
+    set up or tried here; noted as a possible future convenience, not a
+    claim that it works today.
+  - **LangSmith: currently invisible for this pipeline, for two
+    independent reasons, both confirmed by reading the code, not
+    assumed:**
+    1. `enable_tracing_if_configured()` (`common/observability/
+       langsmith_tracing.py`) is only ever called from `main.py`'s module
+       top level (line 20) - the Lambda handler never imports `main.py`
+       and never calls it, so `LANGCHAIN_TRACING_V2` never gets set
+       inside the Lambda regardless of the `LANGSMITH_ENABLED`/
+       `LANGSMITH_API_KEY` env vars this phase copied into it.
+    2. Even if it were called, it wouldn't matter for *this* pipeline
+       specifically: LangSmith's LangChain auto-instrumentation only
+       traces real LangChain `Runnable`s, and both of ingestion's LLM
+       calls (`OpenAIEmbeddingClient`/`OpenAIChatClient` in
+       `embedding_generator.py`/`document_metadata_extractor.py`) go
+       through this project's own raw-`openai`-SDK wrapper, never a
+       LangChain class - the exact same root cause already tracked for
+       genai-rag's own generation calls in BACKLOG.md's "Observability
+       gap" entry (confirmed Phase 79). Fixing either would need wrapping
+       the raw `openai.OpenAI` client with `langsmith.wrappers
+       .wrap_openai()` - not started, same backlog entry now covers both.
+    Not fixed here (bundling it with the already-tracked Phase 79 gap,
+    not duplicating). See `docs/dev-reference/deployment-guide/
+    10-observability-howto.html` for exactly what LangSmith/CloudWatch
+    *do* show today, step by step, for local/App Runner/Lambda.
+
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
    document id returned, file in `data/uploads/`, SQLite row exists. **Done**,

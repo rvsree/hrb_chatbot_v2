@@ -1016,3 +1016,46 @@ Lambda pipeline:
    CLI call in this project should pass `--region us-east-1` explicitly;
    worth fixing the shell/profile's actual default at some point so this
    stops being something every session has to remember by hand.
+
+## Phase 88 follow-ups round 2: no input validation on the async path; cold-start init-timeout is recurring, not a fluke (2026-10-06)
+
+Found while answering direct questions about multi-document/concurrent
+uploads - see `docs/agent-reference/RAG-ROADMAP.md`'s Phase 88 entry for
+the full test evidence (one real bug found and fixed there too - an
+`asyncio.run()`-per-record pattern that broke the Redis embedding cache
+across records in the same batch).
+
+1. **`src/hrb_chatbot/lambda_handlers/index_document_handler.py` has no
+   file-type/size validation and no cross-document content-hash dedup.**
+   `documents_service.validate_file()` and the content-hash check in
+   `save_upload()` are both specific to the synchronous upload path and
+   were never ported here - the handler will chunk/embed/index whatever
+   object sits at the given S3 key, including a 0-byte file, a non-PDF,
+   or a huge file. Low risk only because nothing can write to this
+   bucket today except a direct, authenticated AWS call - no public
+   upload path exists until Phase 89. **Phase 89 (the presigned-upload
+   endpoint) is the right place to add this**, not the Lambda - either
+   via the presigned POST's own `Conditions` (content-type, size range)
+   or a check before issuing the URL at all.
+2. **The cold Lambda init-phase timeout noted once in Phase 88's first
+   round recurred on the second round too**, on both invocations a fresh
+   deploy triggered. SQS's automatic redelivery self-healed it both
+   times (no message lost, no DLQ hit) - but this is now confirmed a
+   repeatable characteristic of this handler's cold start (heavy
+   langchain/llama-index/pinecone-client imports), not a one-off. Worth
+   a real tuning pass (more memory - Lambda's CPU allocation scales with
+   it - or Lambda SnapStart) if this pipeline ever sees enough cold-start
+   frequency for the redelivery delay (seconds, today) to matter at
+   real volume.
+3. **LangSmith shows nothing for this pipeline, for two independent
+   reasons**: the Lambda handler never calls `enable_tracing_if_
+   configured()` (only `main.py`'s module top level does, and the
+   handler never imports `main.py`), and even if it did, ingestion's own
+   OpenAI calls go through this project's raw-SDK wrapper, never a
+   LangChain `Runnable` - the exact same root cause as the "Observability
+   gap" entry above (confirmed Phase 79) for genai-rag's generation
+   calls. Not a new gap, a second symptom of the same one - fixing
+   `wrap_openai()` around the raw `openai.OpenAI` client (as that entry
+   already proposes) would fix both at once. See `docs/dev-reference/
+   deployment-guide/10-observability-howto.html` for what LangSmith/
+   CloudWatch actually show today, step by step.

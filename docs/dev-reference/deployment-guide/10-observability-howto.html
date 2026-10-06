@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checking LangSmith &amp; CloudWatch</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .path { font-family: var(--mono); font-size: 0.85rem; background: var(--code-bg); padding: 2px 6px; border-radius: 4px; }
+  table.status td, table.status th { font-size: 0.9rem; }
+  td.yes { color: var(--ok); }
+  td.no { color: var(--bad); }
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="crumbs"><a href="index.html">&larr; Deployment Guide</a></div>
+
+<h1>Checking LangSmith &amp; CloudWatch</h1>
+<p class="subtitle">Written 2026-10-06, after Phase 88's live testing raised the question directly: where does tracing/logging actually show up today, for each of this project's three running surfaces (local, App Runner, the new Phase 88 Lambda)? Answered by reading the code and checking the real dashboards, not assumed.</p>
+
+<div class="flag"><strong>The one-line answer, stated up front:</strong> LangSmith shows real traces for genai-rag/single-agentic-rag/multi-agentic-rag's <em>query-side</em> chains (local and App Runner, whenever <code>LANGSMITH_ENABLED=true</code>) — but shows <strong>nothing</strong> for the ingestion pipeline, anywhere, including the new Lambda path, for two separate, confirmed reasons below. CloudWatch is the real, working way to see what the Lambda ingestion pipeline is doing today.</div>
+
+<h2>LangSmith — what actually gets traced, and why</h2>
+<table class="status">
+<tr><th>Surface</th><th>Traced?</th><th>Why</th></tr>
+<tr><td>Local <code>uvicorn</code>, genai-rag query</td><td class="yes">Yes</td><td><code>response_generator.py</code>'s <code>RAG_PROMPT | llm | ...</code> is a real LangChain <code>Runnable</code> — LangSmith's auto-instrumentation traces it directly</td></tr>
+<tr><td>App Runner, genai-rag query</td><td class="yes">Yes</td><td>Same chain, same mechanism — <code>LANGSMITH_ENABLED=true</code> is already live in App Runner's config</td></tr>
+<tr><td>Single/multi-agentic-rag (local or AWS)</td><td class="yes">Yes</td><td>The LangGraph <code>StateGraph</code> nodes and tool calls are real LangChain/LangGraph constructs too</td></tr>
+<tr><td>Token/cost counts on genai-rag's own answer generation</td><td class="no">No</td><td>Already-tracked gap (<code>docs/agent-reference/BACKLOG.md</code>, "Observability gap", confirmed Phase 79) — <code>OpenAIChatClient.ask()</code> calls the raw <code>openai</code> SDK directly, discarding the real response object before anything could read <code>usage</code> from it</td></tr>
+<tr><td>Ingestion — local, App Runner's synchronous upload, <em>and</em> the new Lambda path</td><td class="no">No</td><td>Two reasons, both below</td></tr>
+</table>
+
+<h3>Why ingestion is invisible to LangSmith, reason 1: the Lambda never turns tracing on</h3>
+<p><code>common/observability/langsmith_tracing.py</code>'s <code>enable_tracing_if_configured()</code> is the only thing that sets <code>LANGCHAIN_TRACING_V2</code>/<code>LANGCHAIN_API_KEY</code>/<code>LANGCHAIN_PROJECT</code> — and it's called from exactly one place: <span class="path">main.py</span>, line 20, at module import time. That only runs when <code>src.hrb_chatbot.main</code> gets imported — i.e. when the FastAPI app itself starts (local <code>uvicorn</code> or App Runner). <code>lambda_handlers/index_document_handler.py</code> never imports <code>main.py</code> and never calls this function — so even though the Lambda's environment variables include <code>LANGSMITH_ENABLED=true</code> and a real <code>LANGSMITH_API_KEY</code> (copied from App Runner's own config when the function was provisioned), they're inert. No LangChain env var ever gets set inside the Lambda.</p>
+
+<h3>Why ingestion is invisible to LangSmith, reason 2: even the FastAPI app's ingestion path wouldn't show much</h3>
+<p>LangSmith's auto-instrumentation only traces real LangChain <code>Runnable</code>s. Ingestion's two LLM calls — <code>OpenAIEmbeddingClient</code> (embeddings, in <code>embedding_generator.py</code>) and <code>OpenAIChatClient</code> (document-metadata extraction, in <code>document_metadata_extractor.py</code>) — both go through this project's own raw-<code>openai</code>-SDK wrapper, never a LangChain class. So turning tracing on for the Lambda (fixing reason 1 alone) would still show nothing for ingestion specifically — the same root cause as the already-tracked genai-rag token-count gap above. Fixing it for real means wrapping the raw <code>openai.OpenAI</code> client with <code>langsmith.wrappers.wrap_openai()</code>, which would fix both gaps at once — not done, tracked in BACKLOG.md.</p>
+
+<h2>LangSmith — how to actually check it</h2>
+<h3>Local</h3>
+<ol>
+<li>Confirm <code>.env</code> has <code>LANGSMITH_ENABLED=true</code>, a real <code>LANGSMITH_API_KEY</code>, and <code>LANGSMITH_PROJECT=hrb_chatbot_v2</code></li>
+<li>Start the app: <code>.venv\Scripts\python.exe -m uvicorn src.hrb_chatbot.main:app --reload --port 8093</code> — the startup log line <code>"LangSmith tracing is on"</code> confirms it took effect</li>
+<li>Run any real genai-rag query (<code>POST /v1/genai-rag/retrieve-document/query</code>) or single/multi-agentic-rag call</li>
+<li>Open <a href="https://smith.langchain.com">smith.langchain.com</a>, select the <code>hrb_chatbot_v2</code> project in the left sidebar, and the trace appears under Runs — usually within a few seconds</li>
+</ol>
+<h3>AWS App Runner</h3>
+<p>Same steps, no local setup needed — <code>LANGSMITH_ENABLED=true</code> is already live in App Runner's runtime config today. Hit the real URL (<code>https://mrgysvt6ye.us-east-1.awsapprunner.com/v1/genai-rag/retrieve-document/query</code>) with a real query, then check the same <code>hrb_chatbot_v2</code> project on smith.langchain.com. Nothing distinguishes a local trace from an App Runner one in the dashboard today (no environment tag) — if that distinction ever matters, it'd need adding a tag/metadata field to the traced calls, not done here.</p>
+<h3>Lambda (ingestion)</h3>
+<p>Nothing to check — confirmed above, tracing is never enabled there regardless of the env vars present. Use CloudWatch (below) instead.</p>
+
+<h2>CloudWatch — console steps</h2>
+<ol>
+<li>AWS Console → CloudWatch → Log groups (left sidebar, under Logs)</li>
+<li>For the Lambda ingestion pipeline: <span class="path">/aws/lambda/hrb-chatbot-index-document</span> — this project's own plain-text logs (<code>get_logger()</code> format) interleaved with the handler's own JSON-formatted lines, one log stream per container instance, named by date and a cold-start id</li>
+<li>For the main app (App Runner): two separate log groups exist —
+  <span class="path">/aws/apprunner/hrb-chatbot/f957548202f343aa8ca91f341d71d85a/application</span> (this project's own app logs — what <code>get_logger()</code> writes, same format as local) and
+  <span class="path">/aws/apprunner/hrb-chatbot/f957548202f343aa8ca91f341d71d85a/service</span> (App Runner's own operational logs — deployments, health check results, container start/stop — not this project's code)</li>
+<li>For the DLQ-depth alarm: CloudWatch → Alarms → <code>hrb-chatbot-ingest-dlq-depth</code> — fires if any message ever lands in the dead-letter queue</li>
+<li>For queue depth generally: SQS console → <code>hrb-chatbot-ingest-queue</code> / <code>hrb-chatbot-ingest-dlq</code> → Monitoring tab has the same metrics graphed</li>
+</ol>
+
+<h2>CloudWatch — CLI steps, with the real gotchas this hit</h2>
+<div class="flag"><strong>Two real gotchas on Windows Git Bash, both hit live while verifying Phase 88 — worth knowing before copy-pasting these:</strong>
+<ol>
+<li>Git Bash auto-converts any argument starting with <code>/</code> into a Windows path, which mangles a log group name like <span class="path">/aws/lambda/...</span> into garbage before the AWS CLI ever sees it. Fix: prefix the command with <code>MSYS_NO_PATHCONV=1</code>.</li>
+<li>Some log lines contain characters the Windows console's default codepage can't display, crashing the AWS CLI's own output formatting with <code>'charmap' codec can't encode characters...</code> — happens with <code>--output text</code>/<code>json</code> printed straight to the terminal. Fix: redirect to a file (doesn't fully dodge it either, since the CLI still tries to format for the console first) or, more reliably, use a small <code>boto3</code> script that writes the file itself with <code>encoding="utf-8"</code> explicitly — see the pattern below.</li>
+</ol>
+</div>
+
+<pre><code># Find the most recent log stream for the Lambda:
+MSYS_NO_PATHCONV=1 aws logs describe-log-streams \
+  --log-group-name /aws/lambda/hrb-chatbot-index-document \
+  --order-by LastEventTime --descending --max-items 1 \
+  --region us-east-1 --query 'logStreams[0].logStreamName' --output text
+
+# Reliable way to read events (sidesteps the charmap crash entirely):
+python -c "
+import boto3
+client = boto3.client('logs', region_name='us-east-1')
+response = client.get_log_events(
+    logGroupName='/aws/lambda/hrb-chatbot-index-document',
+    logStreamName='&lt;paste the stream name from above&gt;',
+    startFromHead=True,
+)
+with open('lambda_log.txt', 'w', encoding='utf-8') as f:
+    for event in response['events']:
+        f.write(event['message'])
+"
+
+# Or search the last few minutes across EVERY stream at once (useful after
+# a multi-document test, where several streams/invocations may exist):
+python -c "
+import boto3, time
+client = boto3.client('logs', region_name='us-east-1')
+now_ms = int(time.time() * 1000)
+response = client.filter_log_events(
+    logGroupName='/aws/lambda/hrb-chatbot-index-document',
+    startTime=now_ms - 3*60*1000, endTime=now_ms,
+)
+with open('recent.txt', 'w', encoding='utf-8') as f:
+    for event in response['events']:
+        f.write(f\"{event['timestamp']} | {event['logStreamName']} | {event['message']}\")
+"</code></pre>
+
+<p>Queue/DLQ depth from the CLI, no gotchas (plain numeric output):</p>
+<pre><code>aws sqs get-queue-attributes --region us-east-1 \
+  --queue-url https://sqs.us-east-1.amazonaws.com/418884736369/hrb-chatbot-ingest-dlq \
+  --attribute-names ApproximateNumberOfMessages</code></pre>
+
+<div class="pager">
+<a href="09-custom-domain-setup.html">&larr; Custom Domain Setup</a>
+</div>
+
+</div>
+</body>
+</html>

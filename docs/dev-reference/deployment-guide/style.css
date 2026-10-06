@@ -51,6 +51,9 @@ tr:last-child td { border-bottom: none; }
 .checklist li { padding: 6px 0 6px 28px; position: relative; border-bottom: 1px dashed var(--border); }
 .checklist li:last-child { border-bottom: none; }
 .checklist li::before { content: "\2610"; position: absolute; left: 0; color: var(--accent); font-size: 1.1em; }
+.checklist li.done::before { content: "\2611"; color: var(--ok); }
+.checklist li.pending::before { content: "\26A0"; color: var(--warn); font-size: 1em; }
+.checklist li.pending { color: var(--muted); }
 .flag { background: var(--accent-soft); border-left: 3px solid var(--accent); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 12px 0; font-size: 0.93rem; }
 .flag strong { color: var(--accent); }
 footer { margin-top: 50px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.82rem; }

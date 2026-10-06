@@ -94,20 +94,33 @@ async def _index_one(bucket: str, key: str) -> None:
         raise
 
 
-def lambda_handler(event: dict, context) -> dict:
-    """One invocation may carry a batch of SQS messages. Reports per-message
-    failures via batchItemFailures (AWS's documented partial-batch-failure
-    pattern) so one bad document retries/DLQs without blocking the rest."""
+async def _process_batch(records: list[dict]) -> list[dict]:
+    """Processes every record in one SQS batch on the SAME event loop, one
+    at a time - not asyncio.run() per record. Found live (Phase 88's
+    concurrency test): the Redis-backed embedding cache caches its client
+    on the DBGateway singleton, which outlives a single asyncio.run() call -
+    a second asyncio.run() closes that loop out from under the cached
+    client, raising "Event loop is closed" on every record after the
+    first in a warm container. One shared loop for the whole batch fixes
+    it; processing stays sequential, same as before."""
     failures = []
-    for record in event.get("Records", []):
+    for record in records:
         try:
             parsed = _parse_s3_event(record)
             if parsed is None:
                 continue
             bucket, key = parsed
-            asyncio.run(_index_one(bucket, key))
+            await _index_one(bucket, key)
         except Exception:
             logger.error("Failed to process SQS message %s", record.get("messageId"), exc_info=True)
             failures.append({"itemIdentifier": record["messageId"]})
 
+    return failures
+
+
+def lambda_handler(event: dict, context) -> dict:
+    """One invocation may carry a batch of SQS messages. Reports per-message
+    failures via batchItemFailures (AWS's documented partial-batch-failure
+    pattern) so one bad document retries/DLQs without blocking the rest."""
+    failures = asyncio.run(_process_batch(event.get("Records", [])))
     return {"batchItemFailures": failures}

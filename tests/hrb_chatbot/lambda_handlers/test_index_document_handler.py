@@ -4,6 +4,7 @@ over pipeline.index_document(), so these cover the adapter logic only
 transitions, batchItemFailures reporting) - no real AWS call, matching
 this project's existing fake-based test convention."""
 
+import asyncio
 import json
 
 import pytest
@@ -92,6 +93,37 @@ def test_s3_test_event_is_skipped_not_treated_as_a_failure(monkeypatch):
     record = {"messageId": "msg-3", "body": json.dumps(test_event_body)}
 
     result = index_document_handler.lambda_handler({"Records": [record]}, context=None)
+
+    assert result == {"batchItemFailures": []}
+
+
+def test_a_batch_of_several_records_runs_on_one_shared_event_loop(monkeypatch):
+    # Regression for a real bug found during Phase 88's live concurrency
+    # test: calling asyncio.run() once PER record closes the loop a
+    # long-lived async resource (the Redis embedding cache's cached
+    # client) was created on, raising "Event loop is closed" starting on
+    # the second record. This fake raises that same way if it's ever
+    # called from a different running loop than the one it first saw.
+    seen_loop = {}
+
+    async def _index_document(document_id, file_path, **kwargs):
+        current_loop = asyncio.get_running_loop()
+        if "loop" not in seen_loop:
+            seen_loop["loop"] = current_loop
+        elif seen_loop["loop"] is not current_loop:
+            raise RuntimeError("Event loop is closed")
+        return {"action": "insert", "chunks_indexed": 1, "chunks_removed": 0}
+
+    _wire_fakes(monkeypatch, index_document=_index_document)
+    event = {
+        "Records": [
+            _s3_event_sqs_record("hrb-chatbot-kb-uploads", "doc-1/a.pdf", message_id="msg-1"),
+            _s3_event_sqs_record("hrb-chatbot-kb-uploads", "doc-2/b.pdf", message_id="msg-2"),
+            _s3_event_sqs_record("hrb-chatbot-kb-uploads", "doc-3/c.pdf", message_id="msg-3"),
+        ]
+    }
+
+    result = index_document_handler.lambda_handler(event, context=None)
 
     assert result == {"batchItemFailures": []}
 

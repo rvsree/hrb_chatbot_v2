@@ -1,9 +1,19 @@
 # S3 + Lambda async upload — design for a future phase
 
-**Status: design only, not implemented.** This is what "upload → index" would
-look like built the way a production system handles it, for a later phase -
-see `docs/agent-reference/RAG-ROADMAP.md` for what's actually built today (synchronous,
-local disk, a FastAPI route calling the pipeline directly).
+**Status, updated 2026-10-06: half implemented.** The S3 → Lambda trigger
+half of this design is real and live as of Phase 88 - **but revised to
+S3 → SQS → Lambda**, not the direct S3 → Lambda event notification this
+document originally drafted (see "The flow" below, still showing the
+superseded direct-trigger version - `docs/dev-reference/deployment-guide/
+05-rag-ingestion-batch.html` has the current, as-built diagram with SQS as
+the primary trigger, not just a failure bucket). The upload-side half -
+the presigned-POST endpoint that would actually replace today's
+synchronous `POST /v1/genai-rag/ingest-document/documents` - is **not**
+built yet (Phase 89). Until Phase 89 lands, the only way to exercise the
+Lambda path is a direct S3 `put-object`, not a real client upload - see
+`docs/agent-reference/RAG-ROADMAP.md`'s Phase 88 entry for everything
+actually built, the real bugs hit provisioning it, and the concurrency/
+validation/retry findings from live testing.
 
 ## Why this design exists
 
