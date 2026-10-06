@@ -104,6 +104,11 @@ class ConversationStore:
             return await asyncio.to_thread(self._load_turns_sync, conversation_id)
 
     def _save_turn_sync(self, conversation_id: str, employee_id: str | None, role: str, content: str) -> None:
+        # Postgres TEXT columns hard-reject any embedded NUL byte - some
+        # PDFs extract ligatures (e.g. "offers" -> "o\x00ers") with one in
+        # place of the real character, which rides into an LLM answer that
+        # echoes that span verbatim (Phase 97, psycopg.DataError found live).
+        content = content.replace("\x00", "")
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO conversation_turns (conversation_id, employee_id, role, content) "

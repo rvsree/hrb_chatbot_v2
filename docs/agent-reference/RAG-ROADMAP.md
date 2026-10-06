@@ -168,6 +168,7 @@ reviewed before that phase's code starts.
 | 94 — User-directed: domain rename `compute.rvsree.dev/hrb-chatbot` → `hrb-chatbot.rvsree.dev` (subdomain-per-project, not a shared path-routed one), first real adoption of the documented `feature → develop → master` flow | Claude Code | ✅ Done, 2026-10-06, pushed to `feature-hrb-chatbot-subdomain` (not merged - see Out of scope) | ✅ Spec'd - see detail below |
 | 95 — User-directed: CORS middleware, the one backend change allowed while the new `hrb_chatbot_ui` React project builds against this API (everything else blocked unless critical, per the user's own instruction) | Claude Code | ✅ Done, 2026-10-06, same branch as Phase 94 (not master - see detail below for why) | ✅ Spec'd and implemented - see detail below |
 | 96 — User-directed: query-param identity for GET-only routes (`list_documents`/`get_document`/`preview_test_noise_documents`) - a real browser can't send a body on GET at all (confirmed via Fetch spec + a live test), blocking `hrb_chatbot_ui`'s document-list feature entirely | Claude Code | ✅ Done, 2026-10-06, same branch as Phase 94/95 | ✅ Spec'd and implemented - see detail below |
+| 97 — User-directed: root-cause and fix the multi-agentic-rag conversation-memory 500 (PDF-ligature NUL bytes reaching a Postgres TEXT column) - BACKLOG.md's logged-not-fixed bug, now actually fixed | Claude Code | ✅ Done, 2026-10-06, same branch as Phase 94/95/96 | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -7780,6 +7781,59 @@ Explicitly deferred to a later, separate wave - not part of the above:
     check both locally and against AWS: a real `fetch()` GET call with
     query-param identity succeeds where the old body-based shape would
     have thrown before ever reaching the network.
+
+- [x] **Phase 97 (done, 2026-10-06) — User-directed: fix the
+  multi-agentic-rag conversation-memory 500 (BACKLOG.md-logged bug, now
+  root-caused and fixed).**
+
+  **Spec:**
+  - **Context:** BACKLOG.md logged this as a found-not-fixed bug earlier
+    today - multi-agentic-rag 500s whenever `enable_conversation_memory`
+    is true. The user then explicitly asked for a real fix, not just the
+    UI-side workaround. Reproduced locally with a full traceback (not
+    guessed at): `psycopg.DataError: PostgreSQL text fields cannot
+    contain NUL (0x00) bytes`, raised from
+    `conversation_store.py::_save_turn_sync()`'s `INSERT`, saving the
+    **answer** text (the human-turn insert for the same call succeeded
+    first - confirmed in the log, `conversation.save_turn succeeded`
+    immediately followed by `conversation.save_turn failed` for the
+    second of the two inserts `conversation_memory.save_turn()` makes).
+  - **Root cause:** some PDFs in `resources/kb_docs/` extract ligatures
+    (e.g. "offers" → "o\x00ers", already visible in earlier live
+    responses this session, like "JPMorgan Chase o\x00ers two dental
+    plan options") with an embedded NUL byte instead of the real
+    character - a PDF-text-extraction artifact, not a new bug. When an
+    LLM's generated answer happens to quote or closely echo that exact
+    span verbatim, the NUL byte rides along into the final answer text,
+    and Postgres `TEXT` columns hard-reject any embedded NUL byte -
+    this isn't a configurable constraint, it's universal to Postgres.
+    genai-rag/single-agentic-rag apparently haven't hit this in testing
+    today only because their specific answers didn't happen to echo an
+    affected span verbatim - same latent exposure, not a different bug.
+  - **Decision:** sanitize at the actual boundary where the constraint
+    is real - `common/clients/db_client/conversation_store.py`'s
+    `_save_turn_sync()`, stripping `\x00` from `content` immediately
+    before the `INSERT`. Not fixed in `ai/pre_processing/
+    conversation_memory.py` (one layer up, shared by all three
+    pipelines) - `conversation_store.py` is where "Postgres can't store
+    NUL bytes" is actually true, matching this project's own layering
+    convention (a backend's own quirks are handled by that backend's
+    own client, see `CODING-STANDARDS.md`'s error-handling-by-layer
+    table). Protects all three pipelines at once, not just
+    multi-agentic-rag, since they all funnel through this one function.
+  - **Also reverted in `hrb_chatbot_ui`'s own commit:** the mode
+    switcher's `enable_conversation_memory: false` workaround for
+    multi-agentic-rag, now that the real cause is fixed - no longer
+    needed, not left in place as unnecessary belt-and-suspenders code.
+  - **Testing plan:** new `tests/hrb_chatbot/common/clients/db_client/
+    test_conversation_store.py` - `_connect()` monkeypatched to a fake
+    connection recording what `execute()` was called with (no real
+    Postgres, matching this project's zero-network-call test
+    guarantee), asserting a NUL byte in `content` never reaches the SQL
+    call. Full suite green after. Manual re-verification, both locally
+    and on AWS: the exact request that 500'd before (`enable_
+    conversation_memory: true` against a query whose answer echoes the
+    known NUL-containing span) now returns 200.
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
