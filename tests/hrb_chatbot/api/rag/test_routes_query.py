@@ -1,4 +1,4 @@
-"""Tests for POST /v1/genai-rag/retrieve-document/query (api/rag/retrieve_document.py). The real
+"""Tests for POST /v1/genai-rag-retrieval/query (api/rag/retrieve_document.py). The real
 pipeline exists now (ai/rag_pipeline/), so well-formed-request tests
 monkeypatch pipeline.answer_query() to a canned response - this file
 tests the ROUTE's contract (status codes, response shape), not retrieval/
@@ -53,7 +53,7 @@ def test_well_formed_query_returns_a_grounded_answer(monkeypatch):
     monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _fake_answer_query)
 
     response = client.post(
-        "/v1/genai-rag/retrieve-document/query", json=_body(query="How many weeks of parental leave do I get?")
+        "/v1/genai-rag-retrieval/query", json=_body(query="How many weeks of parental leave do I get?")
     )
 
     assert response.status_code == 200
@@ -65,21 +65,21 @@ def test_well_formed_query_returns_a_grounded_answer(monkeypatch):
 
 
 def test_empty_query_string_is_rejected_before_reaching_the_pipeline():
-    response = client.post("/v1/genai-rag/retrieve-document/query", json=_body(query=""))
+    response = client.post("/v1/genai-rag-retrieval/query", json=_body(query=""))
 
     assert response.status_code == 422
 
 
 def test_missing_query_field_is_rejected():
     response = client.post(
-        "/v1/genai-rag/retrieve-document/query", json={"user_profile": EMPLOYEE_USER_PROFILE}
+        "/v1/genai-rag-retrieval/query", json={"user_profile": EMPLOYEE_USER_PROFILE}
     )
 
     assert response.status_code == 422
 
 
 def test_top_k_above_the_maximum_is_rejected():
-    response = client.post("/v1/genai-rag/retrieve-document/query", json=_body(search_options={"top_k": 100}))
+    response = client.post("/v1/genai-rag-retrieval/query", json=_body(search_options={"top_k": 100}))
 
     assert response.status_code == 422
 
@@ -90,7 +90,7 @@ def test_optional_generation_fields_are_accepted_and_passed_through(monkeypatch)
     monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _fake_answer_query)
 
     response = client.post(
-        "/v1/genai-rag/retrieve-document/query",
+        "/v1/genai-rag-retrieval/query",
         json=_body(generation_options={"model_name": "gpt-4.1-mini", "temperature": 0.5, "max_tokens": 200}),
     )
 
@@ -99,7 +99,7 @@ def test_optional_generation_fields_are_accepted_and_passed_through(monkeypatch)
 
 
 def test_temperature_out_of_range_is_rejected():
-    response = client.post("/v1/genai-rag/retrieve-document/query", json=_body(generation_options={"temperature": 5.0}))
+    response = client.post("/v1/genai-rag-retrieval/query", json=_body(generation_options={"temperature": 5.0}))
 
     assert response.status_code == 422
 
@@ -108,7 +108,7 @@ def test_search_strategy_field_is_accepted_and_passed_through(monkeypatch):
     monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _fake_answer_query)
 
     response = client.post(
-        "/v1/genai-rag/retrieve-document/query", json=_body(search_options={"search_strategy": "mmr"})
+        "/v1/genai-rag-retrieval/query", json=_body(search_options={"search_strategy": "mmr"})
     )
 
     assert response.status_code == 200
@@ -118,14 +118,14 @@ def test_search_strategy_field_is_accepted_and_passed_through(monkeypatch):
 def test_dedicated_mmr_endpoint_no_longer_exists():
     # Phase 21 removed it - MMR is selected via search_strategy in the body
     # of POST /query instead (see test_search_strategy_field_is_accepted_and_passed_through).
-    response = client.post("/v1/genai-rag/retrieve-document/query/mmr", json=_body())
+    response = client.post("/v1/genai-rag-retrieval/query/mmr", json=_body())
 
     assert response.status_code == 404
 
 
 def test_unknown_search_strategy_is_a_422_naming_the_valid_options():
     response = client.post(
-        "/v1/genai-rag/retrieve-document/query", json=_body(search_options={"search_strategy": "made-up"})
+        "/v1/genai-rag-retrieval/query", json=_body(search_options={"search_strategy": "made-up"})
     )
 
     assert response.status_code == 422
@@ -141,7 +141,7 @@ def test_use_multi_query_and_use_self_query_are_accepted_and_passed_through(monk
     monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _capturing_fake)
 
     response = client.post(
-        "/v1/genai-rag/retrieve-document/query",
+        "/v1/genai-rag-retrieval/query",
         json=_body(
             query="what's my 401k vesting schedule",
             search_options={"use_multi_query": True, "use_self_query": True, "llm_provider": "anthropic"},
@@ -164,7 +164,7 @@ def test_use_multi_query_and_use_self_query_default_to_false(monkeypatch):
 
     monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _capturing_fake)
 
-    response = client.post("/v1/genai-rag/retrieve-document/query", json=_body())
+    response = client.post("/v1/genai-rag-retrieval/query", json=_body())
 
     assert response.status_code == 200
     assert captured["params"].use_multi_query is False
@@ -175,14 +175,14 @@ def test_use_multi_query_and_use_self_query_default_to_false(monkeypatch):
 
 def test_unknown_llm_provider_is_a_422_naming_the_valid_options():
     response = client.post(
-        "/v1/genai-rag/retrieve-document/query", json=_body(search_options={"llm_provider": "made-up"})
+        "/v1/genai-rag-retrieval/query", json=_body(search_options={"llm_provider": "made-up"})
     )
 
     assert response.status_code == 422
 
 
 def test_retrieval_without_any_identity_is_a_401():
-    response = client.post("/v1/genai-rag/retrieve-document/query", json={"query": "test"})
+    response = client.post("/v1/genai-rag-retrieval/query", json={"query": "test"})
 
     assert response.status_code == 401
     assert response.json()["code"] == "UNAUTHENTICATED"
@@ -193,7 +193,7 @@ def test_retrieval_accepts_all_three_roles(monkeypatch):
 
     for role in ("employee", "manager", "hr_support"):
         response = client.post(
-            "/v1/genai-rag/retrieve-document/query",
+            "/v1/genai-rag-retrieval/query",
             json=_body(user_profile={"employee_id": "MGR006", "full_name": "Someone", "role": role}),
         )
         assert response.status_code == 200, role
@@ -204,7 +204,7 @@ def test_unknown_role_in_the_payload_is_a_401_not_a_422():
     # validation problem - must match the query-param path's own 401,
     # not fall through to Pydantic's automatic 422 for a bad enum value.
     response = client.post(
-        "/v1/genai-rag/retrieve-document/query",
+        "/v1/genai-rag-retrieval/query",
         json=_body(user_profile={"employee_id": "EMP052", "full_name": "Eddy Employee", "role": "made-up-role"}),
     )
 
@@ -220,7 +220,7 @@ def test_unexpected_pipeline_failure_returns_a_clean_500(monkeypatch):
 
     monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _raise)
 
-    response = client.post("/v1/genai-rag/retrieve-document/query", json=_body())
+    response = client.post("/v1/genai-rag-retrieval/query", json=_body())
 
     assert response.status_code == 500
     assert "error" in response.json()

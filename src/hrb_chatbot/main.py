@@ -60,9 +60,11 @@ app.add_middleware(
 app.include_router(routes_health.router)
 
 app.include_router(ingest_document.router_ingest_document, prefix="/v1/genai-rag/ingest-document")
-app.include_router(retrieve_document.router_retrieve_document, prefix="/v1/genai-rag/retrieve-document")
-app.include_router(query_agent.router_query_agent, prefix="/v1/single-agentic-rag")
-app.include_router(multi_query_agent.router_query_agent, prefix="/v1/multi-agentic-rag")
+# Phase 99: retrieval paths renamed to a consistent -retrieval suffix -
+# ingestion above is untouched, not part of that rename.
+app.include_router(retrieve_document.router_retrieve_document, prefix="/v1/genai-rag-retrieval")
+app.include_router(query_agent.router_query_agent, prefix="/v1/single-agentic-rag-retrieval")
+app.include_router(multi_query_agent.router_query_agent, prefix="/v1/multi-agentic-rag-retrieval")
 app.include_router(manage_conversations.router_manage_conversations, prefix="/v1/conversations")
 
 @app.exception_handler(RequestValidationError)

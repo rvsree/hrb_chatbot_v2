@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "HRB Chatbot API",
-    "description": "There are 10 real endpoints, organized into folders by resource, not by folder-per-endpoint: Health (ping/health), rag-ingestion (upload, list/get/delete, cleanup - shared across every retrieval mode), and one folder per retrieval mode. Today only genai-rag has real endpoints; single-agentic-rag and multi-agentic-rag are reserved, empty folders for when those modes ship (see CLAUDE.md's routing-scheme notes) - their presence here is a placeholder for planned work, not a claim those endpoints exist. Each resource folder holds happy-path/functional requests only - edge-case requests (validation/not-found/auth failures) were deliberately removed on 2026-09-20 while retrieval-mode phases are still actively changing, to cut maintenance churn; every one of those edge cases still has a real, passing pytest (tests/hrb_chatbot/api/rag/), so coverage isn't lost, just not duplicated here for now. Re-add them to Postman once the phases stabilize.\n\n0. GET /ping — is the process up (no provider calls; what an automated probe should use)\n1. GET /health — is the service and its backends up (real provider calls; a by-hand diagnostic)\n2. POST /v1/genai-rag/ingest-document/documents — upload a PDF (identical content re-uploaded is detected and not duplicated - see folder note)\n3. GET /v1/genai-rag/ingest-document/documents[/{id}] — list or fetch documents; DELETE /v1/genai-rag/ingest-document/documents/{id} — full delete (vectors + metadata + file)\n4. DELETE /v1/genai-rag/ingest-document/documents — delete every document completely (vectors + metadata + file), not just one\n5. GET /v1/genai-rag/ingest-document/documents/cleanup/preview — list test-noise documents (file_size_bytes below TEST_NOISE_MAX_FILE_SIZE_BYTES) without deleting them\n6. DELETE /v1/genai-rag/ingest-document/documents/cleanup — delete exactly the test-noise documents the preview lists\n7. POST /v1/genai-rag/retrieve-document/query — ask a question against indexed content; real retrieval + grounded generation (MVP), not a stub\n\nSetup: set `base_url` (local: http://127.0.0.1:8093, or the deployed App Runner URL). Run folder 2's first request once, then copy `results[0].document_id` from the response into the `document_id` variable — folder 3 needs it (delete-all in folder 3 does not).\n\nFile uploads (folder 2): the `kb_docs_dir` variable holds the absolute path to resources/kb_docs/ on disk - Postman can't use a relative path there the way curl can, because it has no concept of \"run from the repo root\". Update that one variable if this repo lives somewhere else on your machine. If a file field still shows empty/red after that, click it and re-browse to the PDF by hand - that's a normal Postman re-attach, not a bug.\n\nIdentity (Phase 45, 2026-09-20): every endpoint that does RBAC takes identity as JSON, not headers - `X-Employee-Id`/`X-Full-Name`/`X-Role` headers are gone entirely. POST /documents carries it in the `payload` form field's `user_profile` sub-object (JSON string, alongside `files`); every other endpoint (including GET/DELETE - a deliberate, non-standard-HTTP choice, see docs/agent-reference/endpoint-request-response-contracts.md) carries it as a plain JSON body: `{\"user_profile\": {...}}`. This is unsigned and trivially spoofable, same placeholder status headers had - just a different transport.",
+    "description": "There are 10 real endpoints, organized into folders by resource, not by folder-per-endpoint: Health (ping/health), rag-ingestion (upload, list/get/delete, cleanup - shared across every retrieval mode), and one folder per retrieval mode. Today only genai-rag has real endpoints; single-agentic-rag and multi-agentic-rag are reserved, empty folders for when those modes ship (see CLAUDE.md's routing-scheme notes) - their presence here is a placeholder for planned work, not a claim those endpoints exist. Each resource folder holds happy-path/functional requests only - edge-case requests (validation/not-found/auth failures) were deliberately removed on 2026-09-20 while retrieval-mode phases are still actively changing, to cut maintenance churn; every one of those edge cases still has a real, passing pytest (tests/hrb_chatbot/api/rag/), so coverage isn't lost, just not duplicated here for now. Re-add them to Postman once the phases stabilize.\n\n0. GET /ping — is the process up (no provider calls; what an automated probe should use)\n1. GET /health — is the service and its backends up (real provider calls; a by-hand diagnostic)\n2. POST /v1/genai-rag/ingest-document/documents — upload a PDF (identical content re-uploaded is detected and not duplicated - see folder note)\n3. GET /v1/genai-rag/ingest-document/documents[/{id}] — list or fetch documents; DELETE /v1/genai-rag/ingest-document/documents/{id} — full delete (vectors + metadata + file)\n4. DELETE /v1/genai-rag/ingest-document/documents — delete every document completely (vectors + metadata + file), not just one\n5. GET /v1/genai-rag/ingest-document/documents/cleanup/preview — list test-noise documents (file_size_bytes below TEST_NOISE_MAX_FILE_SIZE_BYTES) without deleting them\n6. DELETE /v1/genai-rag/ingest-document/documents/cleanup — delete exactly the test-noise documents the preview lists\n7. POST /v1/genai-rag-retrieval/query — ask a question against indexed content; real retrieval + grounded generation (MVP), not a stub\n\nSetup: set `base_url` (local: http://127.0.0.1:8093, or the deployed App Runner URL). Run folder 2's first request once, then copy `results[0].document_id` from the response into the `document_id` variable — folder 3 needs it (delete-all in folder 3 does not).\n\nFile uploads (folder 2): the `kb_docs_dir` variable holds the absolute path to resources/kb_docs/ on disk - Postman can't use a relative path there the way curl can, because it has no concept of \"run from the repo root\". Update that one variable if this repo lives somewhere else on your machine. If a file field still shows empty/red after that, click it and re-browse to the PDF by hand - that's a normal Postman re-attach, not a bug.\n\nIdentity (Phase 45, 2026-09-20): every endpoint that does RBAC takes identity as JSON, not headers - `X-Employee-Id`/`X-Full-Name`/`X-Role` headers are gone entirely. POST /documents carries it in the `payload` form field's `user_profile` sub-object (JSON string, alongside `files`); every other endpoint (including GET/DELETE - a deliberate, non-standard-HTTP choice, see docs/agent-reference/endpoint-request-response-contracts.md) carries it as a plain JSON body: `{\"user_profile\": {...}}`. This is unsigned and trivially spoofable, same placeholder status headers had - just a different transport.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -807,21 +807,20 @@
       "description": "Decompose -> retrieve -> generate, no agent loop. The only retrieval mode implemented today.",
       "item": [
         {
-          "name": "Query — POST /v1/genai-rag/retrieve-document/query",
+          "name": "Query — POST /v1/genai-rag-retrieval/query",
           "item": [
             {
               "name": "Well-formed query (real grounded answer)",
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
+                  "raw": "{{base_url}}/v1/genai-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "genai-rag",
-                    "retrieve-document",
+                    "genai-rag-retrieval",
                     "query"
                   ]
                 },
@@ -843,14 +842,13 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
+                  "raw": "{{base_url}}/v1/genai-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "genai-rag",
-                    "retrieve-document",
+                    "genai-rag-retrieval",
                     "query"
                   ]
                 },
@@ -872,14 +870,13 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
+                  "raw": "{{base_url}}/v1/genai-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "genai-rag",
-                    "retrieve-document",
+                    "genai-rag-retrieval",
                     "query"
                   ]
                 },
@@ -901,14 +898,13 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
+                  "raw": "{{base_url}}/v1/genai-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "genai-rag",
-                    "retrieve-document",
+                    "genai-rag-retrieval",
                     "query"
                   ]
                 },
@@ -930,14 +926,13 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
+                  "raw": "{{base_url}}/v1/genai-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "genai-rag",
-                    "retrieve-document",
+                    "genai-rag-retrieval",
                     "query"
                   ]
                 },
@@ -959,14 +954,13 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
+                  "raw": "{{base_url}}/v1/genai-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "genai-rag",
-                    "retrieve-document",
+                    "genai-rag-retrieval",
                     "query"
                   ]
                 },
@@ -994,14 +988,13 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{base_url}}/v1/genai-rag/retrieve-document/query",
+                  "raw": "{{base_url}}/v1/genai-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "genai-rag",
-                    "retrieve-document",
+                    "genai-rag-retrieval",
                     "query"
                   ]
                 },
@@ -1021,20 +1014,20 @@
       "description": "Tool-calling agent (Phase 55) - the LLM itself picks which of 3 tools to call (SearchKnowledgeBase, GetLeaveBalance, GetLeaveHistory), not a keyword list like genai-rag's MCP routing. Live since 2026-09-24.",
       "item": [
         {
-          "name": "Query — POST /v1/single-agentic-rag/query",
+          "name": "Query — POST /v1/single-agentic-rag-retrieval/query",
           "item": [
             {
               "name": "Leave balance question (routes to GetLeaveBalance)",
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/single-agentic-rag/query",
+                  "raw": "{{base_url}}/v1/single-agentic-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "single-agentic-rag",
+                    "single-agentic-rag-retrieval",
                     "query"
                   ]
                 },
@@ -1056,13 +1049,13 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/single-agentic-rag/query",
+                  "raw": "{{base_url}}/v1/single-agentic-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "single-agentic-rag",
+                    "single-agentic-rag-retrieval",
                     "query"
                   ]
                 },
@@ -1084,13 +1077,13 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/single-agentic-rag/query",
+                  "raw": "{{base_url}}/v1/single-agentic-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "single-agentic-rag",
+                    "single-agentic-rag-retrieval",
                     "query"
                   ]
                 },
@@ -1112,13 +1105,13 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/single-agentic-rag/query",
+                  "raw": "{{base_url}}/v1/single-agentic-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "single-agentic-rag",
+                    "single-agentic-rag-retrieval",
                     "query"
                   ]
                 },
@@ -1140,13 +1133,13 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/single-agentic-rag/query",
+                  "raw": "{{base_url}}/v1/single-agentic-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "single-agentic-rag",
+                    "single-agentic-rag-retrieval",
                     "query"
                   ]
                 },
@@ -1174,13 +1167,13 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{base_url}}/v1/single-agentic-rag/query",
+                  "raw": "{{base_url}}/v1/single-agentic-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "single-agentic-rag",
+                    "single-agentic-rag-retrieval",
                     "query"
                   ]
                 },
@@ -1200,20 +1193,20 @@
       "description": "Phase 64 - real implementation. Planner Agent classifies/decomposes the query, Orchestration Agent dispatches tasks to domain agents in parallel via a real LangGraph StateGraph (Send() fan-out), Reviewer Agent merges results. vector_kb_agent and lms_ops_agent are real (reuse single-agentic-rag's existing tools); sql_db_agent and lms_analytics_agent are honest stubs - no structured HR database or historical analytics dataset exists yet, so they report that plainly instead of inventing a result.",
       "item": [
         {
-          "name": "Query — POST /v1/multi-agentic-rag/query",
+          "name": "Query — POST /v1/multi-agentic-rag-retrieval/query",
           "item": [
             {
               "name": "Multi-part query (two domain agents, parallel dispatch)",
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/multi-agentic-rag/query",
+                  "raw": "{{base_url}}/v1/multi-agentic-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "multi-agentic-rag",
+                    "multi-agentic-rag-retrieval",
                     "query"
                   ]
                 },
@@ -1235,13 +1228,13 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/multi-agentic-rag/query",
+                  "raw": "{{base_url}}/v1/multi-agentic-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "multi-agentic-rag",
+                    "multi-agentic-rag-retrieval",
                     "query"
                   ]
                 },
@@ -1263,13 +1256,13 @@
               "request": {
                 "method": "POST",
                 "url": {
-                  "raw": "{{base_url}}/v1/multi-agentic-rag/query",
+                  "raw": "{{base_url}}/v1/multi-agentic-rag-retrieval/query",
                   "host": [
                     "{{base_url}}"
                   ],
                   "path": [
                     "v1",
-                    "multi-agentic-rag",
+                    "multi-agentic-rag-retrieval",
                     "query"
                   ]
                 },

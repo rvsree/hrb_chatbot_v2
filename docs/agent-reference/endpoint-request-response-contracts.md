@@ -188,7 +188,7 @@ file in a batch doesn't fail the good ones (unchanged from today).
 
 ---
 
-## POST /v1/genai-rag/retrieve-document/query — Finalized
+## POST /v1/genai-rag-retrieval/query — Finalized
 
 Same `payload`-as-JSON-string-in-multipart pattern doesn't apply here -
 this endpoint has no file, so it can be a real JSON body, no wrapper trick
@@ -251,7 +251,7 @@ Response:
 }
 ```
 
-## POST /v1/single-agentic-rag/query — Finalized (Phase 55)
+## POST /v1/single-agentic-rag-retrieval/query — Finalized (Phase 55)
 
 Same identity-in-payload pattern as `genai-rag`'s query endpoint. No
 `search_options`/`generation_options` - the agent decides retrieval/tool
@@ -296,7 +296,7 @@ Response:
 response - a tool-calling agent's grounding varies per tool, not always a
 vector-store chunk list, so it isn't forced into that shape here.
 
-## POST /v1/multi-agentic-rag/query — Finalized (Phase 61, scaffold only)
+## POST /v1/multi-agentic-rag-retrieval/query — Finalized (Phase 61, scaffold only)
 
 Same identity-in-payload/RBAC/rate-limiting pattern as every other query
 endpoint. **The pipeline itself is stubbed** (Phase 61) - this contract is

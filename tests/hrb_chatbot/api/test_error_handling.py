@@ -72,7 +72,7 @@ def test_a_multipart_body_on_a_json_endpoint_is_a_clean_422_not_a_crash():
 
     with TestClient(app, raise_server_exceptions=False) as test_client:
         response = test_client.post(
-            "/v1/genai-rag/retrieve-document/query",
+            "/v1/genai-rag-retrieval/query",
             content=non_utf8_multipart_body,
             headers={"Content-Type": "multipart/form-data; boundary=boundary"},
         )
@@ -86,7 +86,7 @@ def test_query_longer_than_the_max_length_is_rejected():
     too_long_query = "a" * 2001
 
     response = client.post(
-        "/v1/genai-rag/retrieve-document/query",
+        "/v1/genai-rag-retrieval/query",
         json={"user_profile": EMPLOYEE_USER_PROFILE, "query": too_long_query},
     )
 
@@ -116,7 +116,7 @@ def test_query_at_exactly_the_max_length_is_accepted_by_validation(monkeypatch):
     exactly_max_length_query = "a" * 2000
 
     response = client.post(
-        "/v1/genai-rag/retrieve-document/query",
+        "/v1/genai-rag-retrieval/query",
         json={"user_profile": EMPLOYEE_USER_PROFILE, "query": exactly_max_length_query},
     )
 

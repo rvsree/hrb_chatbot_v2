@@ -117,7 +117,7 @@ curl -F "files=@resources/kb_docs/JPMC Healthcare Benefits.pdf;type=application/
 # embedding call + one real chat completion). Evaluations and guardrails
 # are still hand-written and not built yet - see docs/agent-reference/RAG-ROADMAP.md for
 # exactly what's in and what's deliberately deferred
-curl -X POST http://127.0.0.1:8093/v1/genai-rag/retrieve-document/query -H "Content-Type: application/json" -d "{\"user_profile\": {\"employee_id\": \"EMP052\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"}, \"query\": \"How many weeks of parental leave do I get?\"}"
+curl -X POST http://127.0.0.1:8093/v1/genai-rag-retrieval/query -H "Content-Type: application/json" -d "{\"user_profile\": {\"employee_id\": \"EMP052\", \"full_name\": \"Eddy Employee\", \"role\": \"employee\"}, \"query\": \"How many weeks of parental leave do I get?\"}"
 ```
 
 Idempotency (the `Idempotency-Key` header) and content-hash duplicate-upload

@@ -170,6 +170,7 @@ reviewed before that phase's code starts.
 | 96 — User-directed: query-param identity for GET-only routes (`list_documents`/`get_document`/`preview_test_noise_documents`) - a real browser can't send a body on GET at all (confirmed via Fetch spec + a live test), blocking `hrb_chatbot_ui`'s document-list feature entirely | Claude Code | ✅ Done, 2026-10-06, same branch as Phase 94/95 | ✅ Spec'd and implemented - see detail below |
 | 97 — User-directed: root-cause and fix the multi-agentic-rag conversation-memory 500 (PDF-ligature NUL bytes reaching a Postgres TEXT column) - BACKLOG.md's logged-not-fixed bug, now actually fixed | Claude Code | ✅ Done, 2026-10-06, same branch as Phase 94/95/96 | ✅ Spec'd and implemented - see detail below |
 | 98 — User-directed: shared guarded-pipeline core (`ai/rag_core/guarded_pipeline.py`) - fixes a real finding from a full code review (single-agentic-rag has zero guardrails) by reuse, not a second implementation | Claude Code | ✅ Done, 2026-10-06, zero-regression proof via a real golden-dataset release-gate re-run (recall 0.818 exact match), same branch as Phase 94-97 | ✅ Spec'd and implemented - see detail below |
+| 99 — User-directed: rename the three retrieval query paths to a consistent `-retrieval` suffix (`genai-rag-retrieval`/`single-agentic-rag-retrieval`/`multi-agentic-rag-retrieval`) | Claude Code | ✅ Done, 2026-10-06, verified both locally and on AWS (new paths 200, old paths 404), same branch as Phase 94-98 | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -7992,6 +7993,89 @@ Explicitly deferred to a later, separate wave - not part of the above:
     `multi-agentic-rag` migration onto the shared core; eval-gate parity
     for single/multi-agentic-rag; the Tavily/MCP-tool logging gap - none
     of these were silently expanded into this phase.
+
+- [x] **Phase 99 (done, 2026-10-06) — User-directed: rename the three
+  retrieval query paths to a consistent `-retrieval` suffix.**
+
+  **Spec:**
+  - **Context:** the three retrieval modes' paths were named
+    inconsistently as each was built - `genai-rag`'s own query endpoint
+    additionally nests under `/retrieve-document` (a resource-style
+    segment, matching this project's REST convention elsewhere), while
+    `single-agentic-rag`/`multi-agentic-rag` don't have an equivalent
+    segment at all. User-directed cleanup for consistency, explicitly
+    scoped by the user's own example:
+    - `POST /v1/genai-rag/retrieve-document/query` → `POST /v1/genai-rag-retrieval/query`
+    - `POST /v1/single-agentic-rag/query` → `POST /v1/single-agentic-rag-retrieval/query`
+    - `POST /v1/multi-agentic-rag/query` → `POST /v1/multi-agentic-rag-retrieval/query`
+  - **Explicitly out of scope:** `genai-rag`'s ingestion path
+    (`/v1/genai-rag/ingest-document/...`) - not mentioned in the user's
+    own example, stays exactly as-is. `/v1/conversations/{id}` also
+    untouched - unrelated to retrieval.
+  - **Scope:** `main.py`'s three `include_router(..., prefix=...)` calls;
+    every test file asserting against the old paths
+    (`test_routes_query.py`, `test_error_handling.py`, `test_query_agent.py`,
+    `test_multi_agentic_rag_query_agent.py`); `postman/
+    hrb_chatbot.postman_collection.json`'s three query folders;
+    `hrb_chatbot_ui`'s `api/client.ts` (a separate repo, its own commit).
+    Current-truth docs also updated, since a wrong path there actively
+    misleads rather than just being incomplete: `CLAUDE.md`,
+    `docs/agent-reference/endpoint-request-response-contracts.md`,
+    `docs/agent-reference/HANDOFF.md`, `README.md`, and the golden
+    dataset JSON files' own descriptive text (`description`/
+    `how_to_grade` fields only - these aren't real HTTP calls, the
+    harness calls `pipeline.answer_query()` directly in Python).
+  - **Explicitly NOT rewritten:** `RAG-ROADMAP.md`'s own historical phase
+    entries (Phase 45/92/94/etc.) describing what was true path-wise at
+    the time - this file's own stated convention is "historical, not
+    updated retroactively." `docs/dev-reference/**` also untouched -
+    explicitly documented elsewhere in `CLAUDE.md` as not load-bearing,
+    safe to regenerate separately later rather than hand-edited now.
+  - **Testing plan:** full local suite green after the path updates
+    (a transport-path change, not new logic - existing test assertions
+    just need the new path strings). Manual verification both locally
+    and on AWS: all three endpoints respond at their new paths; the old
+    paths return 404 (confirming the rename actually took effect, not
+    just an additive alias).
+
+  **Built and verified:**
+  - `main.py`'s three router prefixes renamed; ingestion's own prefix
+    (`/v1/genai-rag/ingest-document`) confirmed untouched.
+  - 32 test-assertion occurrences renamed across 4 test files
+    (`test_routes_query.py`, `test_error_handling.py`,
+    `test_query_agent.py`, `test_multi_agentic_rag_query_agent.py`).
+    Full suite: **307 passed**, unchanged count - a transport-path
+    rename, not new logic.
+  - Current-truth docs updated: `CLAUDE.md`, `endpoint-request-
+    response-contracts.md`, `HANDOFF.md`, `README.md`, and the golden
+    dataset JSON files' own descriptive `description`/`how_to_grade`
+    text (not real HTTP calls - the harness calls `pipeline.answer_query()`
+    directly in Python, so these were documentation-only, not functional).
+  - Postman collection: both `url.raw` and the separate `url.path` array
+    updated for all 16 affected requests - a real gap caught mid-task,
+    not assumed fixed: a first pass updated `raw` via string substitution
+    but left `path` (`["v1", "genai-rag", "retrieve-document", "query"]`)
+    stale, since Postman stores a URL as both a string and a parsed
+    segment array that a substring replace can't reach across array
+    boundaries. Caught by checking the actual JSON after the first pass,
+    not assumed correct. One new Postman example added in Phase 98
+    (single-agentic-rag's blocked-input case) is included in the rename.
+  - `hrb_chatbot_ui`'s `api/client.ts` - all three `askQuery`/
+    `askAgenticQuery`/`askMultiAgenticQuery` URLs updated (its own
+    separate commit, separate repo); `uploadDocuments`/`listDocuments`/
+    `deleteDocumentById`'s ingestion URLs confirmed untouched. UI build
+    verified clean.
+  - **Live verification, both locally and on AWS:** all three new paths
+    return real answers (`200`); all three old paths return `404`
+    (confirms an actual rename, not an additive alias still listening on
+    the old path too); `GET /v1/genai-rag/ingest-document/documents`
+    confirmed still `200` at its unchanged path.
+  - **Flagged, not fixed (pre-existing, out of this phase's scope):** the
+    Postman collection's own top-level `info.description` text still
+    says "today only genai-rag has real endpoints; single-agentic-rag
+    and multi-agentic-rag are reserved, empty folders" - stale since
+    Phase 55/61 shipped those for real, unrelated to this rename, not
+    touched here.
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
