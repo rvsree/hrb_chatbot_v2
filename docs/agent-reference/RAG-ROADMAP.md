@@ -163,6 +163,7 @@ reviewed before that phase's code starts.
 | 89 — User-directed, Milestone 3 part 2: presigned-upload endpoint, additive alongside the existing synchronous upload (confirmed with the user, not a replacement) | Claude Code | ✅ Done, verified live on AWS, 2026-10-06 - real bug found and fixed along the way (Lambda is a separate deployable, deploy.yml never redeploys it) | ✅ Spec'd and implemented - see detail below |
 | 90 — User-directed: local Lambda worker (`scripts/run_local_lambda_worker.py`) + `deploy-lambda.yml` CI/CD, so Phases 88-89 can be developed against real S3/SQS from localhost without paying for Lambda compute | Claude Code | ✅ Done, verified live, 2026-10-06 - real race condition found (local worker vs. the live Lambda competing for one queue), permanently fixed with separate `-dev` S3/SQS resources (the user's own suggestion) rather than a disable-and-wait workaround | N/A - scripts/+.github/ only, spec_gate doesn't apply to either; full rationale recorded inline below |
 | 91 — User-directed: custom domain, `rvsree.dev` registered and `compute.rvsree.dev` associated with the App Runner service | User (registration) + Claude Code (App Runner association, DNS records) | ✅ Done, verified live, 2026-10-06 - real HTTPS 200 from `compute.rvsree.dev` and `www.compute.rvsree.dev` | N/A - AWS console/CLI only, no src/ touched |
+| 92 — User-directed: `/hrb-chatbot` context-path prefix on every endpoint, so `compute.rvsree.dev` can host multiple future projects by path | Claude Code | 📋 Planned, added 2026-10-06 - not started | ✅ Spec'd - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -7383,6 +7384,88 @@ Explicitly deferred to a later, separate wave - not part of the above:
     `mrgysvt6ye.us-east-1.awsapprunner.com` URL, which keeps working
     unchanged - nothing about the service itself changed, only a new
     way to reach it.
+
+- [ ] **Phase 92 (planned, not started) — User-directed: `/hrb-chatbot`
+  context-path prefix on every endpoint.**
+
+  **Spec:**
+  - **Context:** now that `compute.rvsree.dev` is live (Phase 91), the
+    user wants it structured to host more than just this one project -
+    a Spring Boot-style `server.servlet.context-path` convention, one
+    path segment per application sharing the domain
+    (`compute.rvsree.dev/hrb-chatbot/...` today, room for
+    `compute.rvsree.dev/some-other-project/...` later, no domain/App
+    Runner-per-project cost). Confirmed with the user: health checks
+    (`/ping`, `/health`) are included in the prefix too, not left at
+    root - full scope survey done first (an Explore agent) before
+    writing this spec, to size the real blast radius rather than guess.
+  - **The only real code change:** `main.py`'s 6 `app.include_router()`
+    calls each get `/hrb-chatbot` prepended to their existing prefix
+    (or added fresh, for `routes_health.router`, which currently has
+    none). No route file itself changes - every router's own path
+    decorators (`@router.post("/documents")` etc.) stay exactly as
+    they are; the prefix is assembled once, centrally, same as today.
+  - **Full blast radius, sized by survey, not guessed:**
+    - `tests/` - ~82 inline literal-path occurrences across 6 files
+      (`test_routes_documents.py` 52, `test_routes_query.py` 16,
+      `test_multi_agentic_rag_query_agent.py` 5, `test_query_agent.py`
+      4, `test_manage_conversations.py` 3, `test_routes_health.py` 2) -
+      no shared `BASE_PATH` constant exists anywhere in `tests/` to
+      centralize this through, confirmed by the survey - every one
+      needs its literal string updated directly.
+    - `scripts/ingest_kb_docs.py` - one literal path suffix.
+    - `.github/workflows/eval-gate.yml` - one `/ping` smoke-check.
+    - `postman/environments/local.postman_environment.json` /
+      `aws.postman_environment.json` - **not per-request** - confirmed
+      every Postman request already builds its URL from `{{base_url}}`
+      + a path array, zero raw full-URL literals - so this is exactly
+      2 environment-variable edits, not touching the collection's 111
+      path-array occurrences at all. `aws.postman_environment.json`'s
+      `base_url` also switches to the new `compute.rvsree.dev` custom
+      domain while this is being touched anyway (Phase 91 made it
+      live) - `local` stays `http://localhost:8093`.
+    - `docs/agent-reference/endpoint-request-response-contracts.md` -
+      11 distinct endpoint path headers/examples.
+    - `CLAUDE.md` - 4 inline literal-path references in prose.
+    - `Dockerfile`'s `HEALTHCHECK` + `.github/workflows/deploy.yml`'s
+      smoke test - both currently hit `/ping`.
+    - **App Runner's own live `HealthCheckConfiguration.Path`**
+      (currently `/health`, unprefixed, polled every 10s) - the one
+      genuinely risky piece, see below.
+  - **Health-check rollout, staged to avoid any real-downtime risk -
+    this is the one part of this phase with actual production risk,
+    spelled out explicitly rather than glossed over:**
+    1. Deploy the new code with `routes_health.router` registered
+       **twice** - once at the new `/hrb-chatbot` prefix, once still at
+       the old root paths (temporary, deliberate duplication). App
+       Runner's existing `HealthCheckConfiguration.Path=/health` keeps
+       passing against the *same* running container the whole time -
+       zero gap, zero risk of the service being marked unhealthy
+       mid-deploy. All 5 non-health routers move to the new prefix only
+       in this same deploy (no live infra depends on their exact path,
+       unlike health).
+    2. Once that deployment is confirmed `RUNNING` and healthy, verify
+       the new `/hrb-chatbot/health` path live, then call
+       `aws apprunner update-service` to change
+       `HealthCheckConfiguration.Path` to `/hrb-chatbot/health`. Confirm
+       the service stays healthy afterward (not just that the API call
+       succeeded).
+    3. Only then remove the temporary root-level health registration
+       and update `Dockerfile`'s `HEALTHCHECK`/`deploy.yml`'s smoke test
+       to the new `/hrb-chatbot/ping` path, in a follow-up push -
+       verified live again afterward, same as every other push this
+       session.
+  - **Explicitly out of scope:** any change to the actual route logic,
+    request/response shapes, or RBAC/validation behavior of any
+    endpoint - this phase is a pure path-prefix move, nothing else.
+  - **Testing plan:** full local suite green after the test-file
+    updates (no test should still pass against the old, now-wrong
+    path); then, after each live deploy stage above, exercise every
+    real endpoint against the new AWS URL - genai-rag query, both
+    ingest paths (sync + presigned), single/multi-agentic-rag,
+    conversations delete, `/ping`, `/health?deep=true` - matching the
+    user's own explicit "test all AWS endpoints" instruction, not just
+    a smoke test on one or two.
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
