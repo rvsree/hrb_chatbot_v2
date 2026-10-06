@@ -1245,3 +1245,22 @@ UI-build phase. Likely fix is a Presidio allowlist/exclusion entry for
 "Roth" (a financial term, not a name) rather than disabling the rail -
 needs its own `**Spec:**` block, not a quick inline patch, since
 guardrail config changes affect every response, not just this one term.
+
+## multi-agentic-rag 500s whenever conversation memory is enabled (found 2026-10-06)
+
+Found live, building `hrb_chatbot_ui`'s mode switcher:
+`POST /v1/multi-agentic-rag/query` with `enable_conversation_memory: true`
+returns a 500 `INTERNAL_ERROR` every time - confirmed 100% reproducible
+(tested with memory on and off, alternating, multiple times). The exact
+same request with `enable_conversation_memory: false` returns a normal
+200. genai-rag and single-agentic-rag both handle memory fine - this is
+specific to the multi-agent LangGraph pipeline
+(`ai/agents/workflow_agents/multi_agent_pipeline.py`, Phase 64), not a
+general conversation-memory bug. Not fixed this round (backend change,
+not critical to the UI-build phase per the user's own instruction) - the
+UI works around it by always sending `enable_conversation_memory: false`
+for this one mode specifically, with a visible note that multi-agentic-rag
+answers each question independently as a result. Worth its own
+`**Spec:**` block to actually fix - likely something in how
+`multi_agent_pipeline.py` wires conversation history into the LangGraph
+state across its planner → domain-agent → reviewer hops, not a one-line fix.
