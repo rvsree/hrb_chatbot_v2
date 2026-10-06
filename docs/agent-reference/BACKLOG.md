@@ -1230,3 +1230,18 @@ independently doable backend phase (a conversations list/detail `GET`
 endpoint; a feedback table + `POST` endpoint; a trace/metrics response
 field or endpoint) to pick up later, each wanting its own `**Spec:**`
 block before implementation, same as every other phase.
+
+## Output guardrail false positive: "Roth" masked as a name (found 2026-10-06)
+
+Found live, through the new UI: asking "What is the 401(k) employer
+match?" returned *"JPMorgan Chase matches 100% of employee before-tax
+and/or **\<PERSON\>** contributions..."* - the NeMo Guardrails "mask
+sensitive data on output" rail (Presidio, Phase 7/82) misidentifies the
+word "Roth" as a person's name and redacts it. Confirmed reproducible -
+not a one-off. Real answer-quality bug (the sentence becomes
+nonsensical), but not critical/blocking, so not touched this round per
+the "don't change backend features unless critical" instruction for the
+UI-build phase. Likely fix is a Presidio allowlist/exclusion entry for
+"Roth" (a financial term, not a name) rather than disabling the rail -
+needs its own `**Spec:**` block, not a quick inline patch, since
+guardrail config changes affect every response, not just this one term.
