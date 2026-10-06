@@ -1,13 +1,13 @@
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from pydantic import ValidationError
 
 from src.hrb_chatbot.api.dependencies import json_error
-from src.hrb_chatbot.api.gateway.rbac import require_role
+from src.hrb_chatbot.api.gateway.rbac import identity_from_query_params, require_role
 from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.enums import Role
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rate_limiting.rate_limiter import enforce_rate_limit
-from src.hrb_chatbot.models.common import IdentityPayload
+from src.hrb_chatbot.models.common import IdentityPayload, UserProfile
 from src.hrb_chatbot.models.documents import (
     ALLOWED_CONTENT_TYPE,
     PAYLOAD_MAX_LENGTH,
@@ -130,17 +130,17 @@ async def request_presigned_upload(body: PresignedUploadRequest, request: Reques
 
 
 @router_ingest_document.get("/documents", response_model=DocumentListResponse)
-async def list_documents(identity: IdentityPayload):
+async def list_documents(user_profile: UserProfile | None = Depends(identity_from_query_params)):
     """List every uploaded document and its current status."""
-    require_role(identity.user_profile, Role.HR_SUPPORT)
+    require_role(user_profile, Role.HR_SUPPORT)
     documents = await documents_service.list_documents()
     return DocumentListResponse(count=len(documents), documents=[DocumentRecord.from_row(doc) for doc in documents])
 
 
 @router_ingest_document.get("/documents/cleanup/preview", response_model=TestNoisePreviewResponse)
-async def preview_test_noise_documents(identity: IdentityPayload):
+async def preview_test_noise_documents(user_profile: UserProfile | None = Depends(identity_from_query_params)):
     """Preview only - what DELETE .../documents/cleanup would remove, without removing anything."""
-    require_role(identity.user_profile, Role.HR_SUPPORT)
+    require_role(user_profile, Role.HR_SUPPORT)
     documents = await documents_service.list_test_noise_documents(TEST_NOISE_MAX_FILE_SIZE_BYTES)
     return TestNoisePreviewResponse(
         count=len(documents),
@@ -161,9 +161,9 @@ async def delete_test_noise_documents(identity: IdentityPayload, request: Reques
 
 
 @router_ingest_document.get("/documents/{document_id}", response_model=DocumentRecord)
-async def get_document(document_id: str, identity: IdentityPayload):
+async def get_document(document_id: str, user_profile: UserProfile | None = Depends(identity_from_query_params)):
     """Get one document's metadata by id."""
-    require_role(identity.user_profile, Role.HR_SUPPORT)
+    require_role(user_profile, Role.HR_SUPPORT)
     document = await documents_service.get_document(document_id)
 
     if document is None:

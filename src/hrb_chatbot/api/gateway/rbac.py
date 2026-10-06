@@ -1,9 +1,24 @@
 """Identity + role check for every route - 401 for a missing/invalid identity, 403 for the wrong role."""
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Query
 
 from src.hrb_chatbot.common.enums import Role
 from src.hrb_chatbot.models.common import UserProfile
+
+
+def identity_from_query_params(
+    employee_id: str | None = Query(None),
+    full_name: str | None = Query(None),
+    role: str | None = Query(None),
+) -> UserProfile | None:
+    """Phase 96, GET routes only - the Fetch spec forbids a body on GET/HEAD,
+    so a real browser can never send identity the way every POST/DELETE
+    route does. Returns None (not a 422) when anything's missing, so
+    require_role() still raises its normal 401 - same error behavior,
+    different transport."""
+    if employee_id is None or full_name is None or role is None:
+        return None
+    return UserProfile(employee_id=employee_id, full_name=full_name, role=role)
 
 
 def require_role(user_profile: UserProfile | None, *allowed_roles: Role) -> UserProfile:

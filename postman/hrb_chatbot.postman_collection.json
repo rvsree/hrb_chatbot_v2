@@ -595,7 +595,7 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents",
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents?employee_id=EMP051&full_name=Hana%20Support&role=hr_support",
                   "host": [
                     "{{base_url}}"
                   ],
@@ -604,13 +604,23 @@
                     "genai-rag",
                     "ingest-document",
                     "documents"
+                  ],
+                  "query": [
+                    {
+                      "key": "employee_id",
+                      "value": "EMP051"
+                    },
+                    {
+                      "key": "full_name",
+                      "value": "Hana Support"
+                    },
+                    {
+                      "key": "role",
+                      "value": "hr_support"
+                    }
                   ]
                 },
-                "body": {
-                  "mode": "raw",
-                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"EMP051\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}\n}"
-                },
-                "description": "GET with a JSON body (Phase 45, non-standard HTTP, deliberate) - Postman supports this natively."
+                "description": "GET with a JSON body (Phase 45, non-standard HTTP, deliberate) - Postman supports this natively. Phase 96: identity is query params here, not a body - a real browser client (hrb_chatbot_ui) cannot send a body on GET at all (Fetch spec). POST/DELETE requests elsewhere in this collection are unaffected."
               }
             },
             {
@@ -624,7 +634,7 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents/{{document_id}}",
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents/{{document_id}}?employee_id=EMP051&full_name=Hana%20Support&role=hr_support",
                   "host": [
                     "{{base_url}}"
                   ],
@@ -634,12 +644,23 @@
                     "ingest-document",
                     "documents",
                     "{{document_id}}"
+                  ],
+                  "query": [
+                    {
+                      "key": "employee_id",
+                      "value": "EMP051"
+                    },
+                    {
+                      "key": "full_name",
+                      "value": "Hana Support"
+                    },
+                    {
+                      "key": "role",
+                      "value": "hr_support"
+                    }
                   ]
                 },
-                "body": {
-                  "mode": "raw",
-                  "raw": "{\n  \"user_profile\": {\"employee_id\": \"EMP051\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}\n}"
-                }
+                "description": "Phase 96: identity is query params here, not a body - a real browser client (hrb_chatbot_ui) cannot send a body on GET at all (Fetch spec). POST/DELETE requests elsewhere in this collection are unaffected."
               }
             },
             {
@@ -717,7 +738,7 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents/cleanup/preview",
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents/cleanup/preview?employee_id=EMP051&full_name=Hana%20Support&role=hr_support",
                   "host": [
                     "{{base_url}}"
                   ],
@@ -728,13 +749,23 @@
                     "documents",
                     "cleanup",
                     "preview"
+                  ],
+                  "query": [
+                    {
+                      "key": "employee_id",
+                      "value": "EMP051"
+                    },
+                    {
+                      "key": "full_name",
+                      "value": "Hana Support"
+                    },
+                    {
+                      "key": "role",
+                      "value": "hr_support"
+                    }
                   ]
                 },
-                "body": {
-                  "mode": "raw",
-                  "raw": "{\n  \"user_profile\": {\n    \"employee_id\": \"EMP051\",\n    \"full_name\": \"Hana Support\",\n    \"role\": \"hr_support\"\n  }\n}"
-                },
-                "description": "Lists documents whose file_size_bytes is below TEST_NOISE_MAX_FILE_SIZE_BYTES (test-generated fake PDFs) without deleting them. Registered before GET/DELETE /documents/{id} so \"cleanup\" is never read as a document id."
+                "description": "Lists documents whose file_size_bytes is below TEST_NOISE_MAX_FILE_SIZE_BYTES (test-generated fake PDFs) without deleting them. Registered before GET/DELETE /documents/{id} so \"cleanup\" is never read as a document id. Phase 96: identity is query params here, not a body - a real browser client (hrb_chatbot_ui) cannot send a body on GET at all (Fetch spec). POST/DELETE requests elsewhere in this collection are unaffected."
               }
             },
             {

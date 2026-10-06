@@ -5,7 +5,12 @@ Phase 26: upload now indexes immediately (one endpoint, no separate
 
 Phase 45: identity travels as a JSON payload on every request, including
 GET/DELETE (non-standard HTTP, deliberate - see
-docs/agent-reference/endpoint-request-response-contracts.md) - not headers, not query params."""
+docs/agent-reference/endpoint-request-response-contracts.md) - not headers, not query params.
+
+Phase 96: the three GET routes (list/get-by-id/cleanup-preview) are the one
+exception - a real browser can't send a body on GET at all (Fetch spec),
+so those three read identity from query params instead. POST/DELETE below
+are unaffected."""
 
 import io
 import json
@@ -49,15 +54,14 @@ def _payload(user_profile=None, chunk_info=None, document_metadata=None) -> dict
 
 
 def _identity_body(user_profile=None) -> dict:
-    """Build the JSON body for a GET/DELETE request's identity."""
+    """Build the JSON body for a DELETE request's identity."""
     return {"user_profile": HR_SUPPORT_USER_PROFILE if user_profile is None else user_profile}
 
 
 def _get(url: str, user_profile=None):
-    # TestClient.get() doesn't accept json= (httpx restricts it on the
-    # convenience methods) - .request() does, and a GET/DELETE body is
-    # exactly what Phase 45 deliberately does everywhere.
-    return client.request("GET", url, json=_identity_body(user_profile))
+    # Phase 96: GET identity is query params, not a body - a real browser
+    # can't send a body on GET at all (Fetch spec forbids it).
+    return client.get(url, params=HR_SUPPORT_USER_PROFILE if user_profile is None else user_profile)
 
 
 def _delete(url: str, user_profile=None):
@@ -452,7 +456,7 @@ def test_supersedes_document_id_on_a_valid_target_is_recorded_on_the_new_documen
 
 
 def test_ingestion_without_any_identity_is_a_401():
-    response = client.request("GET", "/v1/genai-rag/ingest-document/documents", json={})
+    response = client.get("/v1/genai-rag/ingest-document/documents")
 
     assert response.status_code == 401
     body = response.json()

@@ -4,7 +4,11 @@ generic, safe message - never raw exception text, which could leak
 internal details (file paths, connection strings, etc.).
 
 Phase 45: identity travels as a JSON body on every request, including
-GET (non-standard HTTP, deliberate), not shared client headers or query params."""
+GET (non-standard HTTP, deliberate), not shared client headers or query params.
+
+Phase 96: GET /documents is the one exception - a real browser can't send
+a body on GET at all (Fetch spec), so that route reads identity from
+query params instead. See tests/hrb_chatbot/api/rag/test_routes_documents.py."""
 
 from fastapi.testclient import TestClient
 
@@ -14,9 +18,7 @@ from src.hrb_chatbot.services import documents_service
 
 client = TestClient(app)
 
-HR_SUPPORT_IDENTITY_BODY = {
-    "user_profile": {"employee_id": "EMP051", "full_name": "Hana Support", "role": "hr_support"}
-}
+HR_SUPPORT_IDENTITY_QUERY_PARAMS = {"employee_id": "EMP051", "full_name": "Hana Support", "role": "hr_support"}
 EMPLOYEE_USER_PROFILE = {"employee_id": "EMP052", "full_name": "Eddy Employee", "role": "employee"}
 
 SECRET_LOOKING_MESSAGE = "connection failed: password=supersecret123 at internal-db-host:5432"
@@ -31,7 +33,7 @@ def test_an_unexpected_exception_never_leaks_its_raw_message_to_the_client(monke
     # raise_server_exceptions=False: otherwise TestClient re-raises the
     # exception instead of returning the handler's real HTTP response.
     with TestClient(app, raise_server_exceptions=False) as test_client:
-        response = test_client.request("GET", "/v1/genai-rag/ingest-document/documents", json=HR_SUPPORT_IDENTITY_BODY)
+        response = test_client.get("/v1/genai-rag/ingest-document/documents", params=HR_SUPPORT_IDENTITY_QUERY_PARAMS)
 
     assert response.status_code == 500
     body_text = response.text
@@ -47,7 +49,7 @@ def test_the_generic_error_response_still_has_the_project_s_standard_shape(monke
     monkeypatch.setattr(documents_service, "list_documents", raise_unexpectedly)
 
     with TestClient(app, raise_server_exceptions=False) as test_client:
-        response = test_client.request("GET", "/v1/genai-rag/ingest-document/documents", json=HR_SUPPORT_IDENTITY_BODY)
+        response = test_client.get("/v1/genai-rag/ingest-document/documents", params=HR_SUPPORT_IDENTITY_QUERY_PARAMS)
 
     # Still {"error": ...} (json_error()'s shape), not FastAPI's default
     # {"detail": ...} - the handler normalizes every error response.

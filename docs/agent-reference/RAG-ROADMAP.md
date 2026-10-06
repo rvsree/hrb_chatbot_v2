@@ -167,6 +167,7 @@ reviewed before that phase's code starts.
 | 93 — User-directed: codebase cleanup pass (dead code/duplicate logic survey, two Explore-agent audits, one real duplicate found and extracted) | Claude Code | ✅ Done, 2026-10-06 - 293 tests passing, very little dead code found codebase-wide | ✅ Spec'd and implemented - see detail below |
 | 94 — User-directed: domain rename `compute.rvsree.dev/hrb-chatbot` → `hrb-chatbot.rvsree.dev` (subdomain-per-project, not a shared path-routed one), first real adoption of the documented `feature → develop → master` flow | Claude Code | ✅ Done, 2026-10-06, pushed to `feature-hrb-chatbot-subdomain` (not merged - see Out of scope) | ✅ Spec'd - see detail below |
 | 95 — User-directed: CORS middleware, the one backend change allowed while the new `hrb_chatbot_ui` React project builds against this API (everything else blocked unless critical, per the user's own instruction) | Claude Code | ✅ Done, 2026-10-06, same branch as Phase 94 (not master - see detail below for why) | ✅ Spec'd and implemented - see detail below |
+| 96 — User-directed: query-param identity for GET-only routes (`list_documents`/`get_document`/`preview_test_noise_documents`) - a real browser can't send a body on GET at all (confirmed via Fetch spec + a live test), blocking `hrb_chatbot_ui`'s document-list feature entirely | Claude Code | ✅ Done, 2026-10-06, same branch as Phase 94/95 | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -7727,6 +7728,58 @@ Explicitly deferred to a later, separate wave - not part of the above:
     browser succeeds instead of failing on the CORS preflight. Live AWS
     redeploy follows the same manual process Phase 94 used (feature
     branch, no CI trigger).
+
+- [x] **Phase 96 (done, 2026-10-06) — User-directed: query-param identity
+  for GET-only routes (`hrb_chatbot_ui`'s document-list feature).**
+
+  **Spec:**
+  - **Context:** building the UI's document-management page (list
+    indexed KB docs, delete one) surfaced a real, confirmed-not-guessed
+    platform limit: Phase 45's identity design reads `user_profile` from
+    a JSON request body on every route, GET/DELETE included
+    ("non-standard HTTP, deliberate... not headers, not query params,
+    both tried and rejected during that phase" - `CLAUDE.md`). That
+    works fine via `curl`/Postman/`httpx` (server-side body parsing
+    doesn't care about method), but the Fetch spec forbids a body on
+    GET/HEAD - confirmed two ways: Node's `fetch()` (same WHATWG
+    implementation browsers use) throws `TypeError: Request with
+    GET/HEAD method cannot have body`, immediately, before any network
+    call. A real browser client can never call `GET /documents` or
+    `GET /documents/{id}` as originally designed - this isn't a bug in
+    the UI, it's a platform-level impossibility. `DELETE` isn't affected
+    (confirmed working, no spec restriction on DELETE bodies).
+  - **Decision, confirmed with the user (narrow, not a full Phase 45
+    reversal):** the three GET routes in `api/rag/ingest_document.py`
+    (`list_documents`, `get_document`, `preview_test_noise_documents` -
+    fixed for consistency, same underlying problem, even though only
+    the first two are used by the UI today) read identity from query
+    params (`?employee_id=...&full_name=...&role=...`) instead of the
+    body. Every POST/DELETE route - including this same router's own
+    upload/delete endpoints - keeps the body, unchanged. `require_role()`
+    itself is untouched; only the new `identity_from_query_params()`
+    dependency (in `api/gateway/rbac.py`, next to `require_role`)
+    changes *where* the `UserProfile` comes from before being handed to
+    the same validation function, so the 401/403 error behavior stays
+    byte-for-byte identical to every other route.
+  - **Scope:** `api/gateway/rbac.py` - add `identity_from_query_params()`
+    (three optional `Query(None)` params, returns `None` if any are
+    missing so `require_role()` still raises its normal 401, not a 422).
+    `api/rag/ingest_document.py` - swap `identity: IdentityPayload` for
+    `user_profile: UserProfile | None = Depends(identity_from_query_params)`
+    on the three GET routes only. `docs/agent-reference/endpoint-
+    request-response-contracts.md` and `CLAUDE.md`'s Phase 45 paragraph
+    both get a note pointing here, rather than silently contradicting
+    what they say about query params - the Phase 45 decision was right
+    for POST/DELETE; this is new information (the Fetch spec constraint)
+    specific to GET that wasn't known at the time.
+  - **Testing plan:** update `tests/hrb_chatbot/api/rag/test_routes_documents.py`'s
+    `_get()` helper (and the one raw `client.request("GET", ...)` call)
+    from a JSON body to query params - every existing call site already
+    passes the same `{employee_id, full_name, role}` shape, so this is
+    a transport change, not a new test. Full suite green after. Manual
+    check both locally and against AWS: a real `fetch()` GET call with
+    query-param identity succeeds where the old body-based shape would
+    have thrown before ever reaching the network.
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
