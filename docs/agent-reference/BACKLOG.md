@@ -994,3 +994,25 @@ ingested under an earlier code path (before some metadata-patching change
 landed) and never got backfilled - a fresh ingest under current code
 simply doesn't have the bug. Not worth further investigation now that
 it's confirmed gone.
+
+## Phase 88 follow-ups: Lambda reserved concurrency skipped; AWS CLI default region is wrong (2026-10-06)
+
+Two real, non-blocking gaps found while provisioning Phase 88's S3 → SQS →
+Lambda pipeline:
+
+1. **No reserved concurrency on `hrb-chatbot-index-document`.** The spec
+   called for one (protect Pinecone/Postgres from a batch-upload spike),
+   but `PutFunctionConcurrency` failed - this AWS account's total Lambda
+   concurrency pool is only 10, and AWS enforces a floor of 10 unreserved
+   executions account-wide, leaving zero room to reserve any amount.
+   Fixing this needs an AWS support concurrency-limit-increase request,
+   not a code or config change. Low urgency at this project's real
+   traffic volume - revisit if a real batch-upload test is ever run.
+2. **This AWS CLI's configured default region is `us-east-2`, not
+   `us-east-1`.** Caught live during Phase 88 (the first `sqs
+   create-queue` call landed in the wrong region with no `--region`
+   flag) - the same root cause as the already-flagged 5 duplicate
+   wrong-region Postgres secrets elsewhere in this backlog. Every AWS
+   CLI call in this project should pass `--region us-east-1` explicitly;
+   worth fixing the shell/profile's actual default at some point so this
+   stops being something every session has to remember by hand.

@@ -1,0 +1,31 @@
+# The Phase 88 Lambda handler (index_document_handler.py), as a container
+# image - a zip package can't carry this project's real dependencies
+# (langchain, llama-index, pinecone-client are well past Lambda's 250MB
+# unzipped zip limit); a container image's 10GB limit fits easily.
+#
+# Build it from the REPOSITORY ROOT, same as the main Dockerfile:
+#
+#     docker build -f Dockerfile.lambda -t hrb-chatbot-lambda:local .
+#
+# AWS's own Python base image implements the Lambda Runtime API - unlike
+# the main Dockerfile's plain python:3.12-slim, this one is NOT a long-running
+# server, so there's no uvicorn, no HEALTHCHECK, no EXPOSE.
+FROM public.ecr.aws/lambda/python:3.12
+
+# requirements.txt copied on its own first, same caching reasoning as the
+# main Dockerfile - an ordinary code edit reuses this layer.
+COPY requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
+RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
+
+# Same Presidio/Spacy model the main image needs (Phase 82) - the input
+# guardrail this Lambda's own pipeline.py calls indirectly needs it too,
+# if guardrails are ever exercised from this path.
+RUN python -m spacy download en_core_web_lg
+
+# src/ lands under LAMBDA_TASK_ROOT so `from src.hrb_chatbot...` imports
+# resolve exactly like they do locally and in the main Dockerfile.
+COPY src ${LAMBDA_TASK_ROOT}/src
+
+# Lambda's container runtime calls this as module.function - the handler
+# lives at src/hrb_chatbot/lambda_handlers/index_document_handler.py.
+CMD ["src.hrb_chatbot.lambda_handlers.index_document_handler.lambda_handler"]

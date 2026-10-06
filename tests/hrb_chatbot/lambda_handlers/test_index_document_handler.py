@@ -1,0 +1,117 @@
+"""Tests for the Lambda handler (RAG-ROADMAP.md Phase 88) - a thin adapter
+over pipeline.index_document(), so these cover the adapter logic only
+(parsing the SQS/S3 event, creating a missing metadata row, status
+transitions, batchItemFailures reporting) - no real AWS call, matching
+this project's existing fake-based test convention."""
+
+import json
+
+import pytest
+
+from src.hrb_chatbot.lambda_handlers import index_document_handler
+from tests.conftest import FakeDBGateway, FakeMetadataStore
+
+
+class _FakeS3Client:
+    """Stands in for boto3's S3 client - download_file() writes fixed bytes
+    to the given local path instead of making a real network call."""
+
+    def __init__(self, content: bytes = b"%PDF-1.4 fake content"):
+        self.content = content
+        self.downloaded = []
+
+    def download_file(self, bucket, key, local_path):
+        self.downloaded.append((bucket, key, local_path))
+        with open(local_path, "wb") as f:
+            f.write(self.content)
+
+
+def _s3_event_sqs_record(bucket: str, key: str, message_id: str = "msg-1") -> dict:
+    """One SQS message carrying an S3 ObjectCreated event notification body -
+    the real shape S3 -> SQS delivers, per Phase 88's spec."""
+    body = {"Records": [{"s3": {"bucket": {"name": bucket}, "object": {"key": key}}}]}
+    return {"messageId": message_id, "body": json.dumps(body)}
+
+
+def _wire_fakes(monkeypatch, metadata_store=None, s3_client=None, index_document=None):
+    gateway = FakeDBGateway(metadata_store=metadata_store or FakeMetadataStore())
+    monkeypatch.setattr(index_document_handler, "get_db_gateway", lambda: gateway)
+    monkeypatch.setattr(index_document_handler.boto3, "client", lambda service: s3_client or _FakeS3Client())
+
+    async def _default_index_document(document_id, file_path, **kwargs):
+        return {"action": "insert", "chunks_indexed": 1, "chunks_removed": 0}
+
+    monkeypatch.setattr(index_document_handler.pipeline, "index_document", index_document or _default_index_document)
+    return gateway
+
+
+def test_indexes_a_new_document_and_creates_its_metadata_row(monkeypatch):
+    gateway = _wire_fakes(monkeypatch)
+    event = {"Records": [_s3_event_sqs_record("hrb-chatbot-kb-uploads", "doc-123/policy.pdf")]}
+
+    result = index_document_handler.lambda_handler(event, context=None)
+
+    assert result == {"batchItemFailures": []}
+    document = gateway.metadata_store().documents["doc-123"]
+    assert document["filename"] == "policy.pdf"
+
+
+def test_existing_document_is_not_recreated_idempotency(monkeypatch):
+    metadata_store = FakeMetadataStore()
+    metadata_store.documents["doc-123"] = {"id": "doc-123", "filename": "policy.pdf", "status": "uploaded"}
+    gateway = _wire_fakes(monkeypatch, metadata_store=metadata_store)
+    event = {"Records": [_s3_event_sqs_record("hrb-chatbot-kb-uploads", "doc-123/policy.pdf")]}
+
+    result = index_document_handler.lambda_handler(event, context=None)
+
+    assert result == {"batchItemFailures": []}
+    # Status still moves forward (to "indexing") even though create_document()
+    # was skipped - the fake index_document() stub doesn't flip it to
+    # "indexed" itself, that's the real pipeline's write_chunks() job.
+    assert gateway.metadata_store().documents["doc-123"]["status"] == "indexing"
+
+
+def test_indexing_failure_marks_the_document_failed_and_reports_batch_item_failure(monkeypatch):
+    async def _failing_index_document(document_id, file_path, **kwargs):
+        raise ValueError("could not reach pinecone")
+
+    gateway = _wire_fakes(monkeypatch, index_document=_failing_index_document)
+    event = {"Records": [_s3_event_sqs_record("hrb-chatbot-kb-uploads", "doc-456/benefits.pdf", message_id="msg-2")]}
+
+    result = index_document_handler.lambda_handler(event, context=None)
+
+    assert result == {"batchItemFailures": [{"itemIdentifier": "msg-2"}]}
+    document = gateway.metadata_store().documents["doc-456"]
+    assert document["status"] == "failed"
+    assert "could not reach pinecone" in document["error_message"]
+
+
+def test_s3_test_event_is_skipped_not_treated_as_a_failure(monkeypatch):
+    _wire_fakes(monkeypatch)
+    test_event_body = {"Event": "s3:TestEvent"}
+    record = {"messageId": "msg-3", "body": json.dumps(test_event_body)}
+
+    result = index_document_handler.lambda_handler({"Records": [record]}, context=None)
+
+    assert result == {"batchItemFailures": []}
+
+
+def test_one_bad_message_in_a_batch_does_not_block_the_others(monkeypatch):
+    async def _index_document(document_id, file_path, **kwargs):
+        if document_id == "doc-bad":
+            raise ValueError("boom")
+        return {"action": "insert", "chunks_indexed": 1, "chunks_removed": 0}
+
+    gateway = _wire_fakes(monkeypatch, index_document=_index_document)
+    event = {
+        "Records": [
+            _s3_event_sqs_record("hrb-chatbot-kb-uploads", "doc-good/a.pdf", message_id="msg-good"),
+            _s3_event_sqs_record("hrb-chatbot-kb-uploads", "doc-bad/b.pdf", message_id="msg-bad"),
+        ]
+    }
+
+    result = index_document_handler.lambda_handler(event, context=None)
+
+    assert result == {"batchItemFailures": [{"itemIdentifier": "msg-bad"}]}
+    assert gateway.metadata_store().documents["doc-good"]["filename"] == "a.pdf"
+    assert gateway.metadata_store().documents["doc-bad"]["status"] == "failed"

@@ -159,7 +159,7 @@ reviewed before that phase's code starts.
 | 85 — Found while closing out Milestone 2: SQLiteClient never created its own parent directory, breaking the golden-dataset gate on a fresh runner | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 86 — Found while closing out Milestone 2: eval-gate.yml never had the Phase 82 Spacy fix, and the gate itself silently PASSed with zero cases scored | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 87 — Found during full AWS verification sweep: multi-turn memory bypassed on zero-chunk follow-ups; production metadata store resets on every redeploy (ephemeral SQLite) | Claude Code | ✅ Done, verified, 2026-10-06 | ✅ Spec'd and implemented - see detail below |
-| 88 — User-directed, Milestone 3 part 1: S3 → SQS → Lambda async indexing pipeline, wired but not cut over to the live API yet | Claude Code | 📋 Planned, added 2026-10-06 - not started, packaging decision pending user confirmation | ✅ Spec'd - see detail below |
+| 88 — User-directed, Milestone 3 part 1: S3 → SQS → Lambda async indexing pipeline, wired but not cut over to the live API yet | Claude Code | ✅ Done, verified live on AWS, 2026-10-06 - real end-to-end + idempotency + failure-path tests, cold-start init-timeout finding noted (non-blocking) | ✅ Spec'd and implemented - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -6781,9 +6781,9 @@ Explicitly deferred to a later, separate wave - not part of the above:
     config: `recall: 0.955`, `groundedness: 0.983`, `completeness: 0.862`,
     **PASS**, all 24 cases scored - no regression from either fix.
 
-- [ ] **Phase 88 (planned, not started) — User-directed, Milestone 3 part 1:
-  S3 → SQS → Lambda async indexing pipeline, wired but not yet cut over to
-  the real API (that's Phase 89).**
+- [x] **Phase 88 (done, verified live on AWS, 2026-10-06) — User-directed,
+  Milestone 3 part 1: S3 → SQS → Lambda async indexing pipeline, wired but
+  not yet cut over to the real API (that's Phase 89).**
 
   **Spec:**
   - **Context:** Milestone 3 per
@@ -6807,21 +6807,15 @@ Explicitly deferred to a later, separate wave - not part of the above:
     ChromaDB is ruled out, per the design doc). Failed messages redrive to
     an SQS DLQ after `maxReceiveCount` retries; a CloudWatch alarm on DLQ
     depth is new (zero alarms exist anywhere in this project today).
-  - **Packaging decision, flagged for review, not yet confirmed with the
-    user:** the design doc's sibling note recommends AWS CDK for the IaC.
-    This project has never used CDK/Terraform anywhere - every other piece
-    of AWS infra (App Runner, Secrets Manager, Postgres/Neon, Pinecone)
-    was provisioned by hand via plain `aws` CLI commands. Proposed instead:
-    keep using plain `aws` CLI/boto3 for the bucket/queue/IAM role (same
-    pattern as everything else), and package the Lambda as a **container
-    image** (not a zip) pushed to the same ECR repo App Runner already
-    uses - this project's `requirements.txt` (langchain, llama-index,
-    openai, pinecone-client) is far past Lambda's 250MB unzipped zip
-    limit, but well within a container image's 10GB limit, and this
-    project already has a working `Dockerfile` + ECR + `gh`-triggered CI
-    push to build from. No new tool, no new library - matches
-    [[feedback_no_unreviewed_libraries]]. **Open question for the user:**
-    confirm this before implementation starts.
+  - **Packaging decision, confirmed with the user, 2026-10-06:** container
+    image (not a zip), pushed to the same ECR repo App Runner already
+    uses, provisioned via plain `aws` CLI (not CDK/Terraform - this project
+    has never used an IaC tool, every other piece of AWS infra was
+    provisioned by hand the same way). This project's `requirements.txt`
+    (langchain, llama-index, openai, pinecone-client) is far past Lambda's
+    250MB unzipped zip limit, but well within a container image's 10GB
+    limit, and a working `Dockerfile` + ECR + CI push already exist to
+    build from. No new tool, no new library.
   - **Scope, this phase only:**
     1. S3 bucket (`hrb-chatbot-kb-uploads`, one object per `document_id`).
     2. SQS queue + DLQ, redrive policy (`maxReceiveCount`), CloudWatch
@@ -6870,8 +6864,98 @@ Explicitly deferred to a later, separate wave - not part of the above:
   - **Out of scope:** the API cutover (Phase 89), EventBridge fan-out (no
     second consumer exists yet - the design doc's own call to defer this
     until one does), any UI/client change.
-  - **Open questions:** the packaging decision above, pending user
-    confirmation before any AWS resource is created or billed.
+  - **Open questions:** none - packaging decision confirmed above.
+
+  **Built and verified live on AWS, 2026-10-06:**
+  - New: `src/hrb_chatbot/lambda_handlers/index_document_handler.py` (the
+    handler, with its own tiny JSON log formatter per the spec) +
+    `Dockerfile.lambda` (AWS's `public.ecr.aws/lambda/python:3.12` base
+    image, same `en_core_web_lg` Spacy download as the main Dockerfile).
+    5 unit tests (`tests/hrb_chatbot/lambda_handlers/`), all passing, no
+    real AWS call - full suite still 282 passed after adding them.
+  - AWS resources, all in `us-east-1`: S3 bucket
+    `hrb-chatbot-kb-uploads` (versioned, public access fully blocked);
+    SQS queue `hrb-chatbot-ingest-queue` (360s visibility timeout,
+    redrive to the DLQ after 3 receives) + DLQ `hrb-chatbot-ingest-dlq`;
+    a queue policy scoped to this one bucket's ARN; the bucket's
+    `ObjectCreated:*` notification wired to that queue; IAM role
+    `hrb-chatbot-lambda-execution-role` (basic execution + SQS execution
+    managed policies, plus an inline policy scoped to `GetObject` on this
+    bucket only); a new ECR repo `hrb-chatbot-lambda`; the Lambda function
+    `hrb-chatbot-index-document` (1024MB, 300s timeout, built from the
+    container image); its SQS event source mapping
+    (`ReportBatchItemFailures`, batch size 5); a CloudWatch alarm on DLQ
+    depth. Environment variables/secrets mirror App Runner's live config
+    exactly (resolved from the same Secrets Manager ARNs at provisioning
+    time, since Lambda has no native equivalent to App Runner's
+    `RuntimeEnvironmentSecrets`).
+  - **Real bugs found and fixed during provisioning, not hypothetical:**
+    1. This AWS CLI's configured default region is `us-east-2`, not
+       `us-east-1` - the first `sqs create-queue` call (no explicit
+       `--region`) silently created the DLQ in the wrong region. Caught
+       immediately (checked the returned queue URL), deleted, recreated
+       with `--region us-east-1` explicit on every call from then on -
+       the same root cause already flagged as a pending cleanup item
+       elsewhere in this file (5 duplicate wrong-region Postgres
+       secrets).
+    2. The Lambda container image, built with a plain `docker build`,
+       came out as an OCI image index with an attestation manifest -
+       the exact same failure class Phase 10 already hit with App Runner
+       (an image index/attestation manifest instead of a single plain
+       manifest). Fixed the same way: rebuilt with
+       `docker buildx build --provenance=false --sbom=false --output
+       type=image,...,oci-mediatypes=false,push=true`, confirmed the
+       pushed tag resolved to a single `vnd.docker.distribution.manifest.v2`
+       image before creating the function.
+    3. `CreateFunction` rejected `AWS_REGION` in the `Environment.Variables`
+       map - it's a Lambda-reserved key the runtime sets itself. Dropped
+       from the merged env dict before calling the API.
+    4. `PutFunctionConcurrency` with `ReservedConcurrentExecutions=5`
+       failed - this account's total Lambda concurrency pool is only 10,
+       and AWS enforces a floor of 10 unreserved executions account-wide,
+       leaving no room to reserve any amount without a limit-increase
+       request. **Flagged, not silently dropped**: reserved concurrency
+       is skipped for now; the function has no concurrency cap beyond the
+       account default. A real follow-up if a batch upload spike is ever
+       tested at volume.
+  - **End-to-end test, real S3 put, no API involved (the whole point of
+    this phase):** uploaded a small hand-built real PDF (not a KB
+    document - a throwaway, clearly-labeled test file, to avoid writing
+    duplicate data under a new id for an already-indexed real document)
+    to `s3://hrb-chatbot-kb-uploads/<test-id>/phase88_test.pdf`. Confirmed
+    via CloudWatch Logs: the handler created the metadata row, moved it
+    `uploaded` → `indexing`, ran chunking/embedding/Pinecone upsert/
+    document-metadata-extraction unchanged, reached `indexed`. Confirmed
+    the SAME result independently via the **live production API**
+    (`GET /v1/genai-rag/ingest-document/documents/{id}` against the real
+    App Runner URL) - cross-system proof that the Lambda wrote to the
+    exact Postgres/Pinecone the running app reads from, not a side
+    database. Cleaned up afterward via the existing DELETE endpoint - 0
+    production documents left behind.
+  - **Idempotency test, real:** re-uploaded to the exact same S3 key.
+    `chunk_count` stayed at 1 (not 2) and `chunk_ids` stayed the same
+    single id - `document_version` incremented to 2, a clean re-index,
+    not a duplicate. Confirms `write_chunks()`'s existing update-in-place
+    logic (unchanged, this phase reuses it as-is) already does the right
+    thing when the same document_id is processed twice.
+  - **Failure-path test, real:** direct `aws lambda invoke` with a
+    synthetic SQS record pointing at a nonexistent S3 key - the handler
+    caught the resulting download error and returned
+    `{"batchItemFailures": [{"itemIdentifier": "manual-failure-test-1"}]}`
+    rather than crashing, confirming one bad message doesn't take down
+    the whole invocation.
+  - **Real, non-blocking finding - Lambda's own init-phase timeout:** the
+    very first (cold) invocation's `INIT_REPORT` showed
+    `Status: timeout` after ~10 seconds - AWS enforces an internal
+    init-phase budget on top of the function's configured `Timeout`
+    (300s here), and this handler's heavy top-level imports (langchain,
+    llama-index, pinecone-client, transitively) came close enough to
+    blow through it. SQS's automatic redelivery absorbed this
+    transparently - a second attempt succeeded in ~13s, nothing was
+    lost, no message reached the DLQ. Noted here as a known
+    characteristic of this handler's cold start, not fixed - a future
+    tuning pass (more memory for faster init, or Lambda SnapStart) could
+    reduce/eliminate it if it ever becomes a real problem at volume.
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
