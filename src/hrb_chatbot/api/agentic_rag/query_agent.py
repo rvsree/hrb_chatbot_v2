@@ -3,7 +3,10 @@
 from fastapi import APIRouter, Request
 
 from src.hrb_chatbot.ai.agents.workflow_agents.orchestration_agent import run_agent
+from src.hrb_chatbot.ai.pre_processing.guardrails_input import GuardrailBlockedError
+from src.hrb_chatbot.api.dependencies import json_error
 from src.hrb_chatbot.api.gateway.rbac import require_role
+from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.enums import Role
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rate_limiting.rate_limiter import enforce_rate_limit
@@ -19,13 +22,16 @@ async def query(payload: AgenticRagRequest, request: Request):
     userProfile = require_role(payload.user_profile, Role.EMPLOYEE, Role.MANAGER, Role.HR_SUPPORT)
     await enforce_rate_limit(request)
 
-    result = await run_agent(
-        payload.query,
-        userProfile.employee_id,
-        payload.max_iterations,
-        enable_conversation_memory=payload.enable_conversation_memory,
-        conversation_id=payload.conversation_id,
-    )
+    try:
+        result = await run_agent(
+            payload.query,
+            userProfile.employee_id,
+            payload.max_iterations,
+            enable_conversation_memory=payload.enable_conversation_memory,
+            conversation_id=payload.conversation_id,
+        )
+    except GuardrailBlockedError as error:
+        return json_error(422, str(error), code=error_codes.INPUT_GUARDRAIL_BLOCKED)
 
     return AgenticRagResponse(
         query=payload.query,

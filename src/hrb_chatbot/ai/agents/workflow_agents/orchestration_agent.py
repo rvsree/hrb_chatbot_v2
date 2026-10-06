@@ -6,8 +6,8 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 from src.hrb_chatbot.ai.agents._llm_helpers import AGENT_LLM_TIMEOUT_SECONDS, build_agent_llm
-from src.hrb_chatbot.ai.pre_processing import conversation_memory
 from src.hrb_chatbot.ai.prompts.agent_prompts import ORCHESTRATION_SYSTEM_PROMPT
+from src.hrb_chatbot.ai.rag_core.guarded_pipeline import run_guarded_pipeline
 from src.hrb_chatbot.ai.rag_pipeline.tools.agentic_tools import (
     AGENTIC_TOOL_DEFINITIONS,
     get_leave_balance_tool,
@@ -46,66 +46,61 @@ async def run_agent(
     enable_conversation_memory: bool = False,
     conversation_id: str | None = None,
 ) -> dict:
-    """Runs the tool-calling loop for one query - only the final answer is saved to history."""
+    """Runs the tool-calling loop for one query - guardrailed and memory-
+    tracked via the Phase 98 shared core (previously had neither: no
+    check_input()/check_output() anywhere in this file). Every result is
+    now saved to history, including the iteration-exhausted case - matches
+    genai-rag's own behavior, which has no equivalent skip-save case."""
     resolved_max_iterations = max_iterations or DEFAULT_MAX_ITERATIONS
     llm = _build_llm().bind(tools=AGENTIC_TOOL_DEFINITIONS)
 
-    resolved_conversation_id = None
-    history = []
-    if enable_conversation_memory:
-        resolved_conversation_id = conversation_id or conversation_memory.new_conversation_id()
-        history = await conversation_memory.load_history(resolved_conversation_id)
+    async def generate(checked_query: str, chat_history: list | None) -> dict:
+        messages = [SystemMessage(content=SYSTEM_PROMPT), *(chat_history or []), HumanMessage(content=checked_query)]
+        tools_used = []
+        tool_outputs = []  # raw tool output text, kept alongside tools_used - needed to eval groundedness (Phase 69)
 
-    messages = [SystemMessage(content=SYSTEM_PROMPT), *history, HumanMessage(content=query)]
-    tools_used = []
-    tool_outputs = []  # raw tool output text, kept alongside tools_used - needed to eval groundedness (Phase 69)
+        for i in range(resolved_max_iterations):
+            with log_backend_call(logger, "orchestration_agent", "ainvoke", iteration=i + 1):
+                response = await asyncio.wait_for(llm.ainvoke(messages), timeout=AGENT_LLM_TIMEOUT_SECONDS)
 
-    for i in range(resolved_max_iterations):
-        with log_backend_call(logger, "orchestration_agent", "ainvoke", iteration=i + 1):
-            response = await asyncio.wait_for(llm.ainvoke(messages), timeout=AGENT_LLM_TIMEOUT_SECONDS)
+            if response.usage_metadata:
+                logger.info(
+                    "[orchestration_agent] tokens used: %s prompt + %s completion",
+                    response.usage_metadata["input_tokens"],
+                    response.usage_metadata["output_tokens"],
+                )
 
-        if response.usage_metadata:
-            logger.info(
-                "[orchestration_agent] tokens used: %s prompt + %s completion",
-                response.usage_metadata["input_tokens"],
-                response.usage_metadata["output_tokens"],
-            )
+            messages.append(response)
 
-        messages.append(response)
+            if not response.tool_calls:
+                return {
+                    "answer": response.content,
+                    "tools_used": tools_used,
+                    "tool_outputs": tool_outputs,
+                    "iterations": i + 1,
+                }
 
-        if not response.tool_calls:
-            if resolved_conversation_id:
-                await conversation_memory.save_turn(resolved_conversation_id, employee_id, query, response.content)
-            return {
-                "answer": response.content,
-                "tools_used": tools_used,
-                "tool_outputs": tool_outputs,
-                "iterations": i + 1,
-                "conversation_id": resolved_conversation_id,
-            }
+            for tool_call in response.tool_calls:
+                tool_name = tool_call["name"]
+                tool_args = tool_call["args"]
+                tool_input = tool_args.get("input", "")
+                tools_used.append({"tool_name": tool_name, "tool_input": tool_input})
 
-        for tool_call in response.tool_calls:
-            tool_name = tool_call["name"]
-            tool_args = tool_call["args"]
-            tool_input = tool_args.get("input", "")
-            tools_used.append({"tool_name": tool_name, "tool_input": tool_input})
+                tool_function = TOOL_FUNCTIONS.get(tool_name)
+                if tool_function is None:
+                    tool_output = f"Error: unknown tool {tool_name!r}"
+                else:
+                    tool_output = await tool_function(tool_args, employee_id)
 
-            tool_function = TOOL_FUNCTIONS.get(tool_name)
-            if tool_function is None:
-                tool_output = f"Error: unknown tool {tool_name!r}"
-            else:
-                tool_output = await tool_function(tool_args, employee_id)
+                tool_outputs.append(tool_output)
+                logger.info("Agent called tool=%s input=%r args=%r", tool_name, tool_input[:80], tool_args)
+                messages.append(ToolMessage(content=tool_output, tool_call_id=tool_call["id"]))
 
-            tool_outputs.append(tool_output)
-            logger.info("Agent called tool=%s input=%r args=%r", tool_name, tool_input[:80], tool_args)
-            messages.append(ToolMessage(content=tool_output, tool_call_id=tool_call["id"]))
+        return {
+            "answer": "I wasn't able to finish reasoning about this within the allowed number of steps. Please rephrase or ask a more specific question.",
+            "tools_used": tools_used,
+            "tool_outputs": tool_outputs,
+            "iterations": resolved_max_iterations,
+        }
 
-    # Not saved to history - a failure message isn't worth remembering as
-    # context for the caller's next turn, unlike a real final answer above.
-    return {
-        "answer": "I wasn't able to finish reasoning about this within the allowed number of steps. Please rephrase or ask a more specific question.",
-        "tools_used": tools_used,
-        "tool_outputs": tool_outputs,
-        "iterations": resolved_max_iterations,
-        "conversation_id": resolved_conversation_id,
-    }
+    return await run_guarded_pipeline(query, employee_id, enable_conversation_memory, conversation_id, generate)

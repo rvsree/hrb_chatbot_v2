@@ -2,8 +2,8 @@
 
 from src.hrb_chatbot.ai.pre_processing import conversation_memory
 from src.hrb_chatbot.ai.pre_processing.guardrails_input import check_input
+from src.hrb_chatbot.ai.rag_core.guarded_pipeline import run_guarded_pipeline
 from src.hrb_chatbot.ai.rag_pipeline.query_retrieval.retriever import retrieve_chunks
-from src.hrb_chatbot.ai.rag_pipeline.response_generation.guardrails_output import check_output
 from src.hrb_chatbot.ai.rag_pipeline.response_generation.response_generator import generate_answer
 from src.hrb_chatbot.ai.rag_pipeline.tools.mcp_tools import try_route_to_mcp
 from src.hrb_chatbot.common.clients.cache_client.answer_cache import build_cache_key
@@ -16,10 +16,17 @@ logger = get_logger("rag_pipeline.pipeline")
 
 
 async def answer_query(params: RagQueryParams) -> dict:
-    """Run the full pipeline: guardrail, retrieve, generate, guardrail - GuardrailBlockedError becomes a 422 upstream."""
+    """Run the full pipeline: MCP fast-path (own routing, not a shared-core
+    concern), else guardrail/retrieve/generate/guardrail/save via the
+    Phase 98 shared core - GuardrailBlockedError becomes a 422 upstream."""
+    # The MCP fast-path needs the checked query before deciding whether to
+    # short-circuit at all - checked once here, then handed to the shared
+    # core below as pre_checked_query so it isn't checked a second time.
     checked_query = await check_input(params.query)
 
-    # Resolved up front so every response path (including MCP) can echo it, but only the normal RAG path saves history.
+    # Resolved up front so only the MCP path (which never calls the shared
+    # core) can echo it - the normal RAG path below gets its own
+    # resolution from run_guarded_pipeline().
     resolved_conversation_id = None
     if params.enable_conversation_memory:
         resolved_conversation_id = params.conversation_id or conversation_memory.new_conversation_id()
@@ -73,37 +80,39 @@ async def answer_query(params: RagQueryParams) -> dict:
         resolved_llm_provider,
     )
 
-    chunks, applied_filter = await retrieve_chunks(
+    async def generate(generate_query: str, chat_history: list) -> dict:
+        chunks, applied_filter = await retrieve_chunks(
+            generate_query,
+            top_k=resolved_top_k,
+            vector_db=resolved_vector_db,
+            search_strategy=resolved_search_strategy,
+            use_multi_query=params.use_multi_query,
+            use_self_query=params.use_self_query,
+            llm_provider=resolved_llm_provider,
+        )
+        generation = generate_answer(
+            generate_query, chunks, model_name=params.model_name, temperature=resolved_temperature,
+            max_tokens=params.max_tokens, chat_history=chat_history,
+        )
+        logger.info("Query %r answered using %d chunk(s)", generate_query, len(chunks))
+        return {
+            "query": generate_query,
+            "answer": generation["answer"],
+            "model_used": generation["model_used"],
+            "sources": chunks,
+            "vector_db": resolved_vector_db,
+            "search_strategy": resolved_search_strategy,
+            "applied_filter": applied_filter,
+        }
+
+    result = await run_guarded_pipeline(
         checked_query,
-        top_k=resolved_top_k,
-        vector_db=resolved_vector_db,
-        search_strategy=resolved_search_strategy,
-        use_multi_query=params.use_multi_query,
-        use_self_query=params.use_self_query,
-        llm_provider=resolved_llm_provider,
+        params.employee_id,
+        params.enable_conversation_memory,
+        params.conversation_id,
+        generate,
+        pre_checked_query=checked_query,
     )
-    chat_history = await conversation_memory.load_history(resolved_conversation_id) if resolved_conversation_id else None
-    generation = generate_answer(
-        checked_query, chunks, model_name=params.model_name, temperature=resolved_temperature,
-        max_tokens=params.max_tokens, chat_history=chat_history,
-    )
-    checked_answer = await check_output(checked_query, generation["answer"])
-
-    if resolved_conversation_id:
-        await conversation_memory.save_turn(resolved_conversation_id, params.employee_id, checked_query, checked_answer)
-
-    logger.info("Query %r answered using %d chunk(s)", checked_query, len(chunks))
-
-    result = {
-        "query": checked_query,
-        "answer": checked_answer,
-        "model_used": generation["model_used"],
-        "sources": chunks,
-        "vector_db": resolved_vector_db,
-        "search_strategy": resolved_search_strategy,
-        "applied_filter": applied_filter,
-        "conversation_id": resolved_conversation_id,
-    }
 
     if cache_key:
         await get_db_gateway().answer_cache().set(cache_key, checked_query, result)

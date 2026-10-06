@@ -8,6 +8,7 @@ resolution branching."""
 import pytest
 
 from src.hrb_chatbot.ai.pre_processing import conversation_memory
+from src.hrb_chatbot.ai.rag_core import guarded_pipeline
 from src.hrb_chatbot.ai.rag_pipeline import pipeline
 from src.hrb_chatbot.common.rag_query_params import RagQueryParams
 from tests.conftest import FakeConversationStore, FakeDBGateway
@@ -58,8 +59,12 @@ async def _fake_check_output(query, answer):
 
 
 def _patch_guardrails(monkeypatch):
+    # check_input is still called directly in pipeline.py (the MCP fast-path
+    # needs it before deciding whether to short-circuit); check_output only
+    # exists in the Phase 98 shared core now - genai-rag's own path never
+    # calls it a second time, since pipeline.py passes pre_checked_query.
     monkeypatch.setattr(pipeline, "check_input", _fake_check_input)
-    monkeypatch.setattr(pipeline, "check_output", _fake_check_output)
+    monkeypatch.setattr(guarded_pipeline, "check_output", _fake_check_output)
 
 
 async def test_omitted_top_k_and_search_strategy_use_env_defaults(monkeypatch):
