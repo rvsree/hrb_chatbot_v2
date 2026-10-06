@@ -165,7 +165,7 @@ reviewed before that phase's code starts.
 | 91 — User-directed: custom domain, `rvsree.dev` registered and `compute.rvsree.dev` associated with the App Runner service | User (registration) + Claude Code (App Runner association, DNS records) | ✅ Done, verified live, 2026-10-06 - real HTTPS 200 from `compute.rvsree.dev` and `www.compute.rvsree.dev` | N/A - AWS console/CLI only, no src/ touched |
 | 92 — User-directed: `/hrb-chatbot` context-path prefix on every endpoint, so `compute.rvsree.dev` can host multiple future projects by path | Claude Code | ✅ Done, verified live on AWS, 2026-10-06 - full endpoint sweep passed; hit and recovered from a real ~20-min App Runner health-check incident (MSYS path-mangling, self-healed, zero production impact) | ✅ Spec'd and implemented - see detail below |
 | 93 — User-directed: codebase cleanup pass (dead code/duplicate logic survey, two Explore-agent audits, one real duplicate found and extracted) | Claude Code | ✅ Done, 2026-10-06 - 293 tests passing, very little dead code found codebase-wide | ✅ Spec'd and implemented - see detail below |
-| 94 — User-directed: domain rename `compute.rvsree.dev/hrb-chatbot` → `hrb-chatbot.rvsree.dev` (subdomain-per-project, not a shared path-routed one), first real adoption of the documented `feature → develop → master` flow | Claude Code | 📋 In progress, added 2026-10-06, on `feature-hrb-chatbot-subdomain` | ✅ Spec'd - see detail below |
+| 94 — User-directed: domain rename `compute.rvsree.dev/hrb-chatbot` → `hrb-chatbot.rvsree.dev` (subdomain-per-project, not a shared path-routed one), first real adoption of the documented `feature → develop → master` flow | Claude Code | ✅ Done, 2026-10-06, pushed to `feature-hrb-chatbot-subdomain` (not merged - see Out of scope) | ✅ Spec'd - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -7579,7 +7579,7 @@ Explicitly deferred to a later, separate wave - not part of the above:
   - **Testing plan:** full local suite green after the extraction (no
     behavior change expected or found).
 
-- [ ] **Phase 94 (in progress) — User-directed: subdomain rename +
+- [x] **Phase 94 — User-directed: subdomain rename +
   first real feature-branch adoption.**
 
   **Spec:**
@@ -7639,6 +7639,45 @@ Explicitly deferred to a later, separate wave - not part of the above:
   - **Out of scope:** merging this branch into `develop`/`master` -
     this phase ends with the branch pushed and verified, not merged;
     that's a separate, later decision.
+
+  **Built and verified:**
+  - `hrb-chatbot.rvsree.dev` associated with the same App Runner service
+    (`aws apprunner associate-custom-domain`), 3 ACM cert-validation
+    CNAMEs + 2 routing CNAMEs (`hrb-chatbot.rvsree.dev` and
+    `www.hrb-chatbot.rvsree.dev` → the App Runner default URL) added to
+    Route 53. `compute.rvsree.dev` kept associated, `active`, untouched.
+  - `main.py`'s 6 routers back to bare prefixes (`/v1/...`, `/ping`,
+    `/health` at root); the temporary dual root+prefix health
+    registration used during the cutover is gone, single registration
+    only.
+  - All ~86 test-file path literals reverted across 7 test files +
+    `scripts/ingest_kb_docs.py` (97 replacements, matching Phase 92's
+    97 additions exactly), plus `CLAUDE.md` and
+    `endpoint-request-response-contracts.md`. Full suite: **293 passed,
+    6 deselected.**
+  - `Dockerfile`'s `HEALTHCHECK`, `deploy.yml`'s smoke test, and
+    `eval-gate.yml`'s readiness check all reverted to `/ping` (no path
+    prefix).
+  - Both Postman environment files' `base_url` updated:
+    `aws.postman_environment.json` → `https://hrb-chatbot.rvsree.dev`,
+    `local.postman_environment.json` → `http://localhost:8093`.
+  - App Runner `HealthCheckConfiguration.Path` switched cleanly back to
+    `/health` (`MSYS_NO_PATHCONV=1` used proactively this time, not
+    reactively - the Phase 92 path-mangling incident did not repeat).
+  - Main app image manually rebuilt and pushed to ECR, deployed via
+    `aws apprunner start-deployment` (since `deploy.yml` only triggers
+    on `master`, not this feature branch) - reached `RUNNING`.
+  - Lambda image also rebuilt/pushed and
+    `aws lambda update-function-code` run, to keep it in sync (no
+    functional change to the handler itself this phase).
+  - **Live verification on `hrb-chatbot.rvsree.dev`:** `/ping` → 200;
+    old `/hrb-chatbot/ping` → 404 (dual registration confirmed removed);
+    `/health` → `"status":"healthy"` with real OpenAI/Pinecone/SQLite
+    checks; a real `POST /v1/genai-rag/retrieve-document/query` ("What
+    dental plans are offered?") → correct grounded answer citing
+    `JPMC Healthcare Benefits.pdf, chunk 11.0` (MetLife/Delta Dental).
+  - Done on `feature-hrb-chatbot-subdomain`, pushed, **not merged** into
+    `develop`/`master` - per this phase's own declared scope.
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,

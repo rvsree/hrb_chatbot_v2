@@ -37,19 +37,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Phase 92: every route lives under /hrb-chatbot, a Spring Boot-style
-# context path - lets compute.rvsree.dev host more than one project by
-# path later, each with its own prefix, no per-project domain/App
-# Runner cost. The temporary dual root+prefix health registration used
-# during rollout is gone now - App Runner's own HealthCheckConfiguration
-# has been switched to /hrb-chatbot/health and confirmed healthy there.
-app.include_router(routes_health.router, prefix="/hrb-chatbot")
+# Phase 94: the /hrb-chatbot context path (Phase 92) is gone - the
+# project now gets its own subdomain (hrb-chatbot.rvsree.dev) instead of
+# sharing one path-routed domain, so the path-level project name was
+# redundant. The temporary dual root+prefix health registration used
+# during rollout is gone too - App Runner's own HealthCheckConfiguration
+# has been switched back to /health and confirmed healthy there.
+app.include_router(routes_health.router)
 
-app.include_router(ingest_document.router_ingest_document, prefix="/hrb-chatbot/v1/genai-rag/ingest-document")
-app.include_router(retrieve_document.router_retrieve_document, prefix="/hrb-chatbot/v1/genai-rag/retrieve-document")
-app.include_router(query_agent.router_query_agent, prefix="/hrb-chatbot/v1/single-agentic-rag")
-app.include_router(multi_query_agent.router_query_agent, prefix="/hrb-chatbot/v1/multi-agentic-rag")
-app.include_router(manage_conversations.router_manage_conversations, prefix="/hrb-chatbot/v1/conversations")
+app.include_router(ingest_document.router_ingest_document, prefix="/v1/genai-rag/ingest-document")
+app.include_router(retrieve_document.router_retrieve_document, prefix="/v1/genai-rag/retrieve-document")
+app.include_router(query_agent.router_query_agent, prefix="/v1/single-agentic-rag")
+app.include_router(multi_query_agent.router_query_agent, prefix="/v1/multi-agentic-rag")
+app.include_router(manage_conversations.router_manage_conversations, prefix="/v1/conversations")
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):

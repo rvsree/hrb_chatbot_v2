@@ -1,4 +1,4 @@
-"""Tests for POST/GET/DELETE /hrb-chatbot/v1/genai-rag/ingest-document/documents (api/rag/ingest_document.py).
+"""Tests for POST/GET/DELETE /v1/genai-rag/ingest-document/documents (api/rag/ingest_document.py).
 Phase 26: upload now indexes immediately (one endpoint, no separate
 /index step) - pipeline.index_document() is faked for every test here
 (see _fake_indexing below) so no test spends real embedding API cost.
@@ -104,7 +104,7 @@ def _pdf_file(filename: str = "policy.pdf", content: bytes | None = None):
 
 
 def test_single_valid_pdf_is_uploaded_and_indexed():
-    response = client.post("/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=_pdf_file(), data=_payload())
+    response = client.post("/v1/genai-rag/ingest-document/documents", files=_pdf_file(), data=_payload())
 
     assert response.status_code == 200
     body = response.json()
@@ -150,7 +150,7 @@ def test_chunking_strategy_size_and_overlap_form_fields_reach_the_pipeline(monke
     monkeypatch.setattr(documents_service.pipeline, "index_document", _capturing_fake_index_document)
 
     response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents",
+        "/v1/genai-rag/ingest-document/documents",
         files=_pdf_file(),
         data=_payload(chunk_info={"chunking_strategy": "recursive", "chunk_size": 500, "chunk_overlap": 50}),
     )
@@ -163,7 +163,7 @@ def test_chunking_strategy_size_and_overlap_form_fields_reach_the_pipeline(monke
 
 def test_invalid_chunking_strategy_payload_value_returns_422_not_500():
     response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents",
+        "/v1/genai-rag/ingest-document/documents",
         files=_pdf_file(),
         data=_payload(chunk_info={"chunking_strategy": "not-a-real-strategy"}),
     )
@@ -174,7 +174,7 @@ def test_invalid_chunking_strategy_payload_value_returns_422_not_500():
 
 def test_malformed_payload_json_returns_422_not_500():
     response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=_pdf_file(), data={"payload": "{not valid json"}
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(), data={"payload": "{not valid json"}
     )
 
     assert response.status_code == 422
@@ -184,13 +184,13 @@ def test_malformed_payload_json_returns_422_not_500():
 def test_missing_payload_still_requires_identity_and_is_a_401():
     # payload omitted entirely -> {} -> user_profile is None -> 401, same
     # fail-closed behavior the old header check had.
-    response = client.post("/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=_pdf_file())
+    response = client.post("/v1/genai-rag/ingest-document/documents", files=_pdf_file())
 
     assert response.status_code == 401
 
 
 def test_uploading_with_no_files_returns_422():
-    response = client.post("/hrb-chatbot/v1/genai-rag/ingest-document/documents", data=_payload())
+    response = client.post("/v1/genai-rag/ingest-document/documents", data=_payload())
 
     assert response.status_code == 422
     assert response.json()["code"] == "VALIDATION_ERROR"
@@ -202,7 +202,7 @@ def test_batch_of_two_valid_pdfs_are_both_uploaded():
         ("files", ("policy-b.pdf", io.BytesIO(f"%PDF-1.4 fake b {uuid.uuid4().hex}".encode()), "application/pdf")),
     ]
 
-    response = client.post("/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=files, data=_payload())
+    response = client.post("/v1/genai-rag/ingest-document/documents", files=files, data=_payload())
 
     assert response.status_code == 200
     body = response.json()
@@ -221,7 +221,7 @@ def test_non_pdf_file_is_rejected_not_the_whole_batch():
         ("files", ("notes.txt", io.BytesIO(b"just plain text"), "text/plain")),
     ]
 
-    response = client.post("/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=files, data=_payload())
+    response = client.post("/v1/genai-rag/ingest-document/documents", files=files, data=_payload())
 
     # Still 200 - a bad file in a batch is reported per-file, not a failed request.
     assert response.status_code == 200
@@ -237,7 +237,7 @@ def test_non_pdf_file_is_rejected_not_the_whole_batch():
 
 
 def test_empty_file_is_rejected():
-    response = client.post("/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=_pdf_file(content=b""), data=_payload())
+    response = client.post("/v1/genai-rag/ingest-document/documents", files=_pdf_file(content=b""), data=_payload())
 
     assert response.status_code == 200
     body = response.json()
@@ -249,7 +249,7 @@ def test_empty_file_is_rejected():
 def test_oversized_file_is_rejected():
     too_big = b"x" * (MAX_FILE_SIZE_BYTES + 1)
 
-    response = client.post("/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=_pdf_file(content=too_big), data=_payload())
+    response = client.post("/v1/genai-rag/ingest-document/documents", files=_pdf_file(content=too_big), data=_payload())
 
     assert response.status_code == 200
     body = response.json()
@@ -259,23 +259,23 @@ def test_oversized_file_is_rejected():
 
 
 def test_no_files_field_at_all_is_a_422():
-    response = client.post("/hrb-chatbot/v1/genai-rag/ingest-document/documents", files={}, data=_payload())
+    response = client.post("/v1/genai-rag/ingest-document/documents", files={}, data=_payload())
 
     assert response.status_code == 422
 
 
 def test_uploaded_document_appears_in_list_and_get_by_id():
     upload_response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="findable.pdf"), data=_payload()
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="findable.pdf"), data=_payload()
     )
     document_id = upload_response.json()["results"][0]["document_id"]
 
-    list_response = _get("/hrb-chatbot/v1/genai-rag/ingest-document/documents")
+    list_response = _get("/v1/genai-rag/ingest-document/documents")
     assert list_response.status_code == 200
     all_ids = [doc["id"] for doc in list_response.json()["documents"]]
     assert document_id in all_ids
 
-    get_response = _get(f"/hrb-chatbot/v1/genai-rag/ingest-document/documents/{document_id}")
+    get_response = _get(f"/v1/genai-rag/ingest-document/documents/{document_id}")
     assert get_response.status_code == 200
     document = get_response.json()
     assert document["filename"] == "findable.pdf"
@@ -287,7 +287,7 @@ def test_uploaded_document_appears_in_list_and_get_by_id():
 
 
 def test_get_unknown_document_id_is_a_404_with_the_standard_error_shape():
-    response = _get("/hrb-chatbot/v1/genai-rag/ingest-document/documents/does-not-exist")
+    response = _get("/v1/genai-rag/ingest-document/documents/does-not-exist")
 
     assert response.status_code == 404
     body = response.json()
@@ -297,11 +297,11 @@ def test_get_unknown_document_id_is_a_404_with_the_standard_error_shape():
 
 def test_deleting_an_indexed_document_removes_it():
     upload_response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="to-delete.pdf"), data=_payload()
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="to-delete.pdf"), data=_payload()
     )
     document_id = upload_response.json()["results"][0]["document_id"]
 
-    delete_response = _delete(f"/hrb-chatbot/v1/genai-rag/ingest-document/documents/{document_id}")
+    delete_response = _delete(f"/v1/genai-rag/ingest-document/documents/{document_id}")
 
     assert delete_response.status_code == 200
     body = delete_response.json()
@@ -310,27 +310,27 @@ def test_deleting_an_indexed_document_removes_it():
     assert body["deleted_by"] == "EMP051"
 
     # Really gone, not just reported as deleted.
-    get_response = _get(f"/hrb-chatbot/v1/genai-rag/ingest-document/documents/{document_id}")
+    get_response = _get(f"/v1/genai-rag/ingest-document/documents/{document_id}")
     assert get_response.status_code == 404
 
-    list_response = _get("/hrb-chatbot/v1/genai-rag/ingest-document/documents")
+    list_response = _get("/v1/genai-rag/ingest-document/documents")
     all_ids = [doc["id"] for doc in list_response.json()["documents"]]
     assert document_id not in all_ids
 
 
 def test_deleting_an_unknown_document_id_is_a_404():
-    response = _delete("/hrb-chatbot/v1/genai-rag/ingest-document/documents/does-not-exist")
+    response = _delete("/v1/genai-rag/ingest-document/documents/does-not-exist")
 
     assert response.status_code == 404
     assert "error" in response.json()
 
 
 def test_deleting_the_same_document_twice_is_404_the_second_time():
-    upload_response = client.post("/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=_pdf_file(), data=_payload())
+    upload_response = client.post("/v1/genai-rag/ingest-document/documents", files=_pdf_file(), data=_payload())
     document_id = upload_response.json()["results"][0]["document_id"]
 
-    first_delete = _delete(f"/hrb-chatbot/v1/genai-rag/ingest-document/documents/{document_id}")
-    second_delete = _delete(f"/hrb-chatbot/v1/genai-rag/ingest-document/documents/{document_id}")
+    first_delete = _delete(f"/v1/genai-rag/ingest-document/documents/{document_id}")
+    second_delete = _delete(f"/v1/genai-rag/ingest-document/documents/{document_id}")
 
     assert first_delete.status_code == 200
     assert second_delete.status_code == 404
@@ -342,8 +342,8 @@ def test_uploading_identical_content_twice_is_a_duplicate_not_a_new_document():
     # leftover rows from a previous test *run*, not just within this one.
     same_content = f"%PDF-1.4 identical bytes both times {uuid.uuid4().hex}".encode()
 
-    first = client.post("/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=_pdf_file(content=same_content), data=_payload())
-    second = client.post("/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=_pdf_file(content=same_content), data=_payload())
+    first = client.post("/v1/genai-rag/ingest-document/documents", files=_pdf_file(content=same_content), data=_payload())
+    second = client.post("/v1/genai-rag/ingest-document/documents", files=_pdf_file(content=same_content), data=_payload())
 
     assert first.json()["results"][0]["status"] == "uploaded"
     first_document_id = first.json()["results"][0]["document_id"]
@@ -368,10 +368,10 @@ def test_identical_content_under_a_different_filename_is_still_a_duplicate():
     same_content = f"%PDF-1.4 same bytes, different name {uuid.uuid4().hex}".encode()
 
     first = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="v1.pdf", content=same_content), data=_payload()
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="v1.pdf", content=same_content), data=_payload()
     )
     second = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents",
+        "/v1/genai-rag/ingest-document/documents",
         files=_pdf_file(filename="renamed-copy.pdf", content=same_content),
         data=_payload(),
     )
@@ -385,12 +385,12 @@ def test_identical_content_under_a_different_filename_is_still_a_duplicate():
 def test_same_filename_with_different_content_is_not_a_duplicate():
     run_id = uuid.uuid4().hex
     first = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents",
+        "/v1/genai-rag/ingest-document/documents",
         files=_pdf_file(filename="policy.pdf", content=f"%PDF-1.4 version one {run_id}".encode()),
         data=_payload(),
     )
     second = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents",
+        "/v1/genai-rag/ingest-document/documents",
         files=_pdf_file(filename="policy.pdf", content=f"%PDF-1.4 version two {run_id}".encode()),
         data=_payload(),
     )
@@ -408,7 +408,7 @@ def test_supersedes_document_id_on_a_batch_upload_is_rejected_as_ambiguous():
     ]
 
     response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents",
+        "/v1/genai-rag/ingest-document/documents",
         files=files,
         data=_payload(document_metadata={"supersedes_document_id": "some-id"}),
     )
@@ -418,7 +418,7 @@ def test_supersedes_document_id_on_a_batch_upload_is_rejected_as_ambiguous():
 
 def test_supersedes_document_id_pointing_at_an_unknown_document_is_rejected():
     response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents",
+        "/v1/genai-rag/ingest-document/documents",
         files=_pdf_file(),
         data=_payload(document_metadata={"supersedes_document_id": "does-not-exist"}),
     )
@@ -432,12 +432,12 @@ def test_supersedes_document_id_pointing_at_an_unknown_document_is_rejected():
 
 def test_supersedes_document_id_on_a_valid_target_is_recorded_on_the_new_document():
     target_response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="v1.pdf"), data=_payload()
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="v1.pdf"), data=_payload()
     )
     target_id = target_response.json()["results"][0]["document_id"]
 
     response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents",
+        "/v1/genai-rag/ingest-document/documents",
         files=_pdf_file(filename="v2.pdf"),
         data=_payload(document_metadata={"supersedes_document_id": target_id}),
     )
@@ -447,12 +447,12 @@ def test_supersedes_document_id_on_a_valid_target_is_recorded_on_the_new_documen
     assert result["status"] == "uploaded"
     new_document_id = result["document_id"]
 
-    new_document = _get(f"/hrb-chatbot/v1/genai-rag/ingest-document/documents/{new_document_id}").json()
+    new_document = _get(f"/v1/genai-rag/ingest-document/documents/{new_document_id}").json()
     assert new_document["versioning_info"]["supersedes"] == target_id
 
 
 def test_ingestion_without_any_identity_is_a_401():
-    response = client.request("GET", "/hrb-chatbot/v1/genai-rag/ingest-document/documents", json={})
+    response = client.request("GET", "/v1/genai-rag/ingest-document/documents", json={})
 
     assert response.status_code == 401
     body = response.json()
@@ -461,7 +461,7 @@ def test_ingestion_without_any_identity_is_a_401():
 
 def test_ingestion_with_an_unknown_role_value_is_a_401():
     response = _get(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents",
+        "/v1/genai-rag/ingest-document/documents",
         {"employee_id": "EMP051", "full_name": "Hana Support", "role": "made-up-role"},
     )
 
@@ -474,7 +474,7 @@ def test_ingestion_with_an_unknown_role_value_is_a_401():
 def test_ingestion_as_employee_or_manager_is_a_403_only_hr_support_may_upload():
     for role in ("employee", "manager"):
         response = client.post(
-            "/hrb-chatbot/v1/genai-rag/ingest-document/documents",
+            "/v1/genai-rag/ingest-document/documents",
             files=_pdf_file(),
             data=_payload(user_profile={"employee_id": "EMP052", "full_name": "Some Employee", "role": role}),
         )
@@ -487,7 +487,7 @@ def test_ingestion_as_employee_or_manager_is_a_403_only_hr_support_may_upload():
 
 def test_the_separate_index_endpoint_no_longer_exists():
     # Phase 26 - upload does the whole pipeline in one call now.
-    response = client.post("/hrb-chatbot/v1/genai-rag/ingest-document/documents/does-not-exist/index")
+    response = client.post("/v1/genai-rag/ingest-document/documents/does-not-exist/index")
 
     assert response.status_code == 404
 
@@ -498,11 +498,11 @@ def test_cleanup_preview_lists_test_noise_without_deleting_it():
     # faked, since tests now hit an isolated DB (data/test_sqlite_db.sqlite3),
     # not the real dev one.
     upload_response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="noise.pdf"), data=_payload()
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="noise.pdf"), data=_payload()
     )
     document_id = upload_response.json()["results"][0]["document_id"]
 
-    preview_response = _get("/hrb-chatbot/v1/genai-rag/ingest-document/documents/cleanup/preview")
+    preview_response = _get("/v1/genai-rag/ingest-document/documents/cleanup/preview")
 
     assert preview_response.status_code == 200
     body = preview_response.json()
@@ -512,16 +512,16 @@ def test_cleanup_preview_lists_test_noise_without_deleting_it():
     assert body["count"] == len(body["documents"])
 
     # Still there - preview must not delete anything.
-    assert _get(f"/hrb-chatbot/v1/genai-rag/ingest-document/documents/{document_id}").status_code == 200
+    assert _get(f"/v1/genai-rag/ingest-document/documents/{document_id}").status_code == 200
 
 
 def test_cleanup_delete_removes_test_noise_and_reports_deleted_by():
     upload_response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="noise-to-delete.pdf"), data=_payload()
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="noise-to-delete.pdf"), data=_payload()
     )
     document_id = upload_response.json()["results"][0]["document_id"]
 
-    delete_response = _delete("/hrb-chatbot/v1/genai-rag/ingest-document/documents/cleanup")
+    delete_response = _delete("/v1/genai-rag/ingest-document/documents/cleanup")
 
     assert delete_response.status_code == 200
     body = delete_response.json()
@@ -529,13 +529,13 @@ def test_cleanup_delete_removes_test_noise_and_reports_deleted_by():
     assert body["deleted_by"] == "EMP051"
 
     # Really gone.
-    assert _get(f"/hrb-chatbot/v1/genai-rag/ingest-document/documents/{document_id}").status_code == 404
+    assert _get(f"/v1/genai-rag/ingest-document/documents/{document_id}").status_code == 404
 
 
 def test_cleanup_routes_are_not_shadowed_by_the_document_id_route():
     # "cleanup" must never be read as a document_id - both new routes are
     # registered before GET/DELETE /documents/{document_id} for this reason.
-    response = _get("/hrb-chatbot/v1/genai-rag/ingest-document/documents/cleanup/preview")
+    response = _get("/v1/genai-rag/ingest-document/documents/cleanup/preview")
 
     assert response.status_code == 200
     assert "threshold_bytes" in response.json()  # not the 404 error shape
@@ -551,7 +551,7 @@ def test_delete_all_calls_the_service_and_returns_its_result(monkeypatch):
 
     monkeypatch.setattr(documents_service, "delete_all_documents", _fake_delete_all)
 
-    response = _delete("/hrb-chatbot/v1/genai-rag/ingest-document/documents")
+    response = _delete("/v1/genai-rag/ingest-document/documents")
 
     assert response.status_code == 200
     assert response.json() == {"documents_deleted": 3, "chunks_removed": 12, "deleted_by": "EMP051"}
@@ -569,7 +569,7 @@ def _fake_presigned_url(monkeypatch):
 
 def test_presigned_upload_returns_a_url_and_a_pending_document(monkeypatch):
     response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents/presigned-upload",
+        "/v1/genai-rag/ingest-document/documents/presigned-upload",
         json={"user_profile": HR_SUPPORT_USER_PROFILE, "filename": "401k-policy.pdf", "content_type": "application/pdf"},
     )
 
@@ -579,14 +579,14 @@ def test_presigned_upload_returns_a_url_and_a_pending_document(monkeypatch):
     assert body["expires_in_seconds"] == 300
     assert body["document_id"] in body["upload_url"]
 
-    document = _get(f"/hrb-chatbot/v1/genai-rag/ingest-document/documents/{body['document_id']}").json()
+    document = _get(f"/v1/genai-rag/ingest-document/documents/{body['document_id']}").json()
     assert document["status"] == "pending_upload"
     assert document["filename"] == "401k-policy.pdf"
 
 
 def test_presigned_upload_rejects_a_non_pdf_content_type():
     response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents/presigned-upload",
+        "/v1/genai-rag/ingest-document/documents/presigned-upload",
         json={"user_profile": HR_SUPPORT_USER_PROFILE, "filename": "notes.txt", "content_type": "text/plain"},
     )
 
@@ -596,7 +596,7 @@ def test_presigned_upload_rejects_a_non_pdf_content_type():
 
 def test_presigned_upload_rejects_an_unknown_supersedes_target():
     response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents/presigned-upload",
+        "/v1/genai-rag/ingest-document/documents/presigned-upload",
         json={
             "user_profile": HR_SUPPORT_USER_PROFILE,
             "filename": "401k-policy.pdf",
@@ -611,7 +611,7 @@ def test_presigned_upload_rejects_an_unknown_supersedes_target():
 
 def test_presigned_upload_as_employee_is_a_403():
     response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents/presigned-upload",
+        "/v1/genai-rag/ingest-document/documents/presigned-upload",
         json={
             "user_profile": {"employee_id": "EMP052", "full_name": "Some Employee", "role": "employee"},
             "filename": "401k-policy.pdf",
@@ -625,7 +625,7 @@ def test_presigned_upload_as_employee_is_a_403():
 
 def test_presigned_upload_stashes_chunk_info_and_document_metadata_overrides_for_the_lambda():
     response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents/presigned-upload",
+        "/v1/genai-rag/ingest-document/documents/presigned-upload",
         json={
             "user_profile": HR_SUPPORT_USER_PROFILE,
             "filename": "401k-policy.pdf",
@@ -648,7 +648,7 @@ def test_presigned_upload_stashes_chunk_info_and_document_metadata_overrides_for
 
 def test_presigned_upload_without_overrides_leaves_pending_overrides_null():
     response = client.post(
-        "/hrb-chatbot/v1/genai-rag/ingest-document/documents/presigned-upload",
+        "/v1/genai-rag/ingest-document/documents/presigned-upload",
         json={"user_profile": HR_SUPPORT_USER_PROFILE, "filename": "401k-policy.pdf", "content_type": "application/pdf"},
     )
     document_id = response.json()["document_id"]

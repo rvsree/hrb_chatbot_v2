@@ -106,4 +106,4 @@ jobs:
         # a provider call just to confirm the container booted; see
         # docs/agent-reference/AWS-DEVOPS-RUNBOOK.md for the deliberate, by-hand /health check.
         run: |
-          curl --fail --silent --show-error "${{ env.APP_RUNNER_URL }}/hrb-chatbot/ping"
+          curl --fail --silent --show-error "${{ env.APP_RUNNER_URL }}/ping"
