@@ -162,6 +162,7 @@ reviewed before that phase's code starts.
 | 88 — User-directed, Milestone 3 part 1: S3 → SQS → Lambda async indexing pipeline, wired but not cut over to the live API yet | Claude Code | ✅ Done, verified live on AWS, 2026-10-06 - real end-to-end + idempotency + failure-path tests, cold-start init-timeout finding noted (non-blocking) | ✅ Spec'd and implemented - see detail below |
 | 89 — User-directed, Milestone 3 part 2: presigned-upload endpoint, additive alongside the existing synchronous upload (confirmed with the user, not a replacement) | Claude Code | ✅ Done, verified live on AWS, 2026-10-06 - real bug found and fixed along the way (Lambda is a separate deployable, deploy.yml never redeploys it) | ✅ Spec'd and implemented - see detail below |
 | 90 — User-directed: local Lambda worker (`scripts/run_local_lambda_worker.py`) + `deploy-lambda.yml` CI/CD, so Phases 88-89 can be developed against real S3/SQS from localhost without paying for Lambda compute | Claude Code | ✅ Done, verified live, 2026-10-06 - real race condition found (local worker vs. the live Lambda competing for one queue), permanently fixed with separate `-dev` S3/SQS resources (the user's own suggestion) rather than a disable-and-wait workaround | N/A - scripts/+.github/ only, spec_gate doesn't apply to either; full rationale recorded inline below |
+| 91 — User-directed: custom domain, `rvsree.dev` registered and `compute.rvsree.dev` associated with the App Runner service | User (registration) + Claude Code (App Runner association, DNS records) | ✅ Done, verified live, 2026-10-06 - real HTTPS 200 from `compute.rvsree.dev` and `www.compute.rvsree.dev` | N/A - AWS console/CLI only, no src/ touched |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -7338,6 +7339,50 @@ Explicitly deferred to a later, separate wave - not part of the above:
   sent the moment the bucket's notification was first configured - the
   handler's existing `_parse_s3_event()` skip-case, written for exactly
   this in Phase 88, handled it with zero code changes needed.)
+
+- [x] **Phase 91 (done, verified live, 2026-10-06) — User-directed: custom
+  domain, `rvsree.dev` registered, `compute.rvsree.dev` associated with
+  the App Runner service.**
+
+  **Context:** final step of the reusable-personal-domain plan
+  (`docs/dev-reference/deployment-guide/09-custom-domain-setup.html`),
+  revised mid-stream from the originally-chosen `rvsree-labs.dev` to
+  `rvsree.dev` with `compute` as this project's subdomain - a deliberate
+  choice of a generic label over `hrb-chatbot` (the earlier plan), so
+  the same pattern works cleanly for future, unrelated projects sharing
+  this one domain.
+  - **Registration:** done by the user directly via the Route 53 console
+    (real billing info, by design - not something handed to Claude Code).
+    Confirmed `AutoRenew: false` already set and `StatusList: ["ACTIVE"]`
+    - expires 2027-10-05, no renewal charge after that.
+  - **App Runner association:** `aws apprunner associate-custom-domain`
+    - `compute.rvsree.dev`, `EnableWWWSubdomain: true`. App Runner
+      returned 3 ACM certificate-validation CNAME records
+      (`pending_certificate_dns_validation`); added all 3 directly to
+      the Route 53 hosted zone that already existed for `rvsree.dev`
+      (auto-created at registration) via `route53 change-resource-
+      record-sets`, plus the 2 actual routing CNAMEs
+      (`compute.rvsree.dev`/`www.compute.rvsree.dev` →
+      `mrgysvt6ye.us-east-1.awsapprunner.com`, the existing App Runner
+      default URL, which keeps working unchanged).
+  - **Real timing observed, not assumed:** cert validation + domain
+    status reaching `active` took about 2 minutes end to end. A real
+    gap existed *after* that, though - the first HTTPS request against
+    `compute.rvsree.dev` failed with a TLS error
+    (`SEC_E_WRONG_PRINCIPAL` - the certificate presented didn't match
+    the hostname) even though DNS resolved correctly and the API
+    already reported the domain `active`. This is AWS edge-propagation
+    lag, not a misconfiguration - waited 5 more minutes, same request
+    then returned a real `200 OK` from `/ping`. Worth remembering for
+    next time: App Runner's custom-domain `active` status can report
+    true before the global edge has actually finished picking up the
+    new certificate.
+  - **Verified live:** `curl https://compute.rvsree.dev/ping` → `200
+    {"status":"ok"}`; `curl https://www.compute.rvsree.dev/ping` →
+    same. Both aliases work alongside the original
+    `mrgysvt6ye.us-east-1.awsapprunner.com` URL, which keeps working
+    unchanged - nothing about the service itself changed, only a new
+    way to reach it.
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
