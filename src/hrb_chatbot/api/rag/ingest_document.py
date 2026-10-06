@@ -9,6 +9,7 @@ from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rate_limiting.rate_limiter import enforce_rate_limit
 from src.hrb_chatbot.models.common import IdentityPayload
 from src.hrb_chatbot.models.documents import (
+    ALLOWED_CONTENT_TYPE,
     PAYLOAD_MAX_LENGTH,
     TEST_NOISE_MAX_FILE_SIZE_BYTES,
     DocumentDeleteAllResponse,
@@ -16,6 +17,8 @@ from src.hrb_chatbot.models.documents import (
     DocumentListResponse,
     DocumentRecord,
     DocumentUploadResponse,
+    PresignedUploadRequest,
+    PresignedUploadResponse,
     TestNoiseDocument,
     TestNoisePreviewResponse,
     UploadDocumentsPayload,
@@ -89,6 +92,41 @@ async def upload_documents(
     )
 
     return response
+
+
+@router_ingest_document.post("/documents/presigned-upload", response_model=PresignedUploadResponse)
+async def request_presigned_upload(body: PresignedUploadRequest, request: Request):
+    # Phase 89: additive, alongside upload_documents() above - that endpoint is unchanged.
+    # No file bytes here, just a document_id + a presigned S3 PUT url the client uploads to directly.
+    userProfile = require_role(body.user_profile, Role.HR_SUPPORT)
+    await enforce_rate_limit(request)
+
+    if body.content_type != ALLOWED_CONTENT_TYPE and not body.filename.lower().endswith(".pdf"):
+        return json_error(
+            422,
+            f"Only PDF files are accepted, got content_type={body.content_type!r}",
+            code=error_codes.INVALID_FILE_TYPE,
+        )
+
+    supersedes_document_id = body.document_metadata.supersedes_document_id if body.document_metadata else None
+
+    result = await documents_service.request_presigned_upload(
+        body.filename,
+        body.content_type,
+        supersedes_document_id=supersedes_document_id,
+        chunk_info=body.chunk_info,
+        document_metadata=body.document_metadata,
+        uploaded_by=userProfile.employee_id,
+    )
+
+    if result is None:
+        return json_error(
+            422,
+            f"supersedes_document_id {supersedes_document_id!r} does not exist",
+            code=error_codes.SUPERSEDES_TARGET_NOT_FOUND,
+        )
+
+    return result
 
 
 @router_ingest_document.get("/documents", response_model=DocumentListResponse)

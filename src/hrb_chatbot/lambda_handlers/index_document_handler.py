@@ -64,6 +64,28 @@ def _document_id_and_filename(key: str) -> tuple[str, str]:
     return document_id, filename or key
 
 
+def _pending_overrides_kwargs(existing: dict) -> dict:
+    """Phase 89: the presigned-upload route stashes chunk_info/document_metadata
+    on the row it already created - unpack them into index_document()'s own
+    kwargs. Returns {} if there's nothing pending (the Phase 88 direct-S3-put
+    fallback path, or a retry after they were already cleared)."""
+    raw = existing.get("pending_overrides")
+    if not raw:
+        return {}
+
+    overrides = json.loads(raw)
+    kwargs = {}
+    chunk_info = overrides.get("chunk_info")
+    if chunk_info:
+        kwargs["chunking_strategy"] = chunk_info.get("chunking_strategy")
+        kwargs["chunk_size"] = chunk_info.get("chunk_size")
+        kwargs["chunk_overlap"] = chunk_info.get("chunk_overlap")
+    document_metadata = overrides.get("document_metadata")
+    if document_metadata:
+        kwargs["document_metadata_override"] = document_metadata
+    return kwargs
+
+
 async def _index_one(bucket: str, key: str) -> None:
     document_id, filename = _document_id_and_filename(key)
     local_path = TMP_DIRECTORY / document_id / filename
@@ -75,16 +97,22 @@ async def _index_one(bucket: str, key: str) -> None:
     metadata_store = get_db_gateway().metadata_store()
     existing = await metadata_store.get_document(document_id)
     if existing is None:
-        # No API step created this row yet (Phase 88 is tested via a direct S3
-        # upload, before Phase 89 wires the real presigned-upload endpoint).
+        # No API step created this row yet - the Phase 88 direct-S3-put
+        # fallback path, still useful for manual testing. Phase 89's real
+        # presigned-upload endpoint always creates this row first.
         content = local_path.read_bytes()
         content_hash = hashlib.sha256(content).hexdigest()
         await metadata_store.create_document(document_id, filename, str(local_path), len(content), content_hash)
+        index_kwargs = {}
+    else:
+        index_kwargs = _pending_overrides_kwargs(existing)
 
     await metadata_store.update_status(document_id, "indexing")
 
     try:
-        await pipeline.index_document(document_id, str(local_path))
+        await pipeline.index_document(document_id, str(local_path), **index_kwargs)
+        if index_kwargs:
+            await metadata_store.set_pending_overrides(document_id, None)
     except Exception as error:
         logger.error(
             "Indexing failed for document %s (bucket=%s, key=%s): %s: %s",

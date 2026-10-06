@@ -20,6 +20,10 @@
     {
       "key": "kb_docs_dir",
       "value": "C:/workspace/2026-v1/interview-kickstart/hrb_chatbot_v2/resources/kb_docs"
+    },
+    {
+      "key": "presigned_upload_url",
+      "value": ""
     }
   ],
   "item": [
@@ -492,6 +496,88 @@
                 },
                 "description": "Phase 38: re-exposes per-call chunking overrides (now payload.chunk_info, Phase 45). chunking_strategy must be one of the ChunkingStrategy enum values (fixed/recursive/semantic/markdown/html/none) or this 422s; left out, CHUNK_DEFAULT_SIZE/CHUNK_DEFAULT_OVERLAP from .env (or decide_chunk_size()'s own table/large-document auto-sizing) apply instead. Phase 45: every document_metadata field here overrides whatever the LLM extraction step would have guessed for that field - check the response's document_metadata to see the caller's values win. Phase 57: doc_type/doc_classification renamed to doc_category/doc_description. Phase 59: added author/doc_date/doc_version - document-level provenance fields, extracted from a document's own closing colophon when present (verified live on JPMC Guild Tuition Assistance.pdf's page 20), not chunk-filterable like doc_category/doc_description."
               }
+            }
+          ]
+        },
+        {
+          "name": "Presigned Upload — POST /v1/genai-rag/ingest-document/documents/presigned-upload (Phase 89)",
+          "item": [
+            {
+              "name": "Step 1: Request a presigned upload URL",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents/presigned-upload",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "genai-rag",
+                    "ingest-document",
+                    "documents",
+                    "presigned-upload"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"user_profile\": {\n    \"employee_id\": \"EMP051\",\n    \"full_name\": \"Hana Support\",\n    \"role\": \"hr_support\"\n  },\n  \"filename\": \"JPMC Healthcare Benefits.pdf\",\n  \"content_type\": \"application/pdf\",\n  \"chunk_info\": {\n    \"chunking_strategy\": null,\n    \"chunk_size\": null,\n    \"chunk_overlap\": null\n  },\n  \"document_metadata\": {\n    \"doc_category\": \"benefits\",\n    \"department\": \"HR\"\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "description": "Phase 89 - additive alongside the Upload folder above, which is unchanged. Returns a presigned S3 URL instead of accepting the file body directly. Run Step 2 next to actually upload the file, then poll List/Get/Delete for the real indexing result once Phase 88's S3 -> SQS -> Lambda pipeline picks it up.",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// Saves document_id and upload_url so Step 2 and the List/Get/Delete folder can use them.",
+                      "if (pm.response.code === 200) {",
+                      "    const body = pm.response.json();",
+                      "    pm.collectionVariables.set(\"document_id\", body.document_id);",
+                      "    pm.collectionVariables.set(\"presigned_upload_url\", body.upload_url);",
+                      "    console.log(\"document_id set to:\", body.document_id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Step 2: PUT the file to the presigned URL",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/pdf"
+                  }
+                ],
+                "url": {
+                  "raw": "{{presigned_upload_url}}",
+                  "host": [
+                    "{{presigned_upload_url}}"
+                  ]
+                },
+                "body": {
+                  "mode": "file",
+                  "file": {
+                    "src": "{{kb_docs_dir}}/JPMC Healthcare Benefits.pdf"
+                  }
+                }
+              },
+              "description": "The client never touches AWS credentials - this is a plain HTTP PUT with the file body, straight to S3. Run Step 1 first so {{presigned_upload_url}} is set."
             }
           ]
         },

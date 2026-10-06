@@ -1059,3 +1059,51 @@ across records in the same batch).
    already proposes) would fix both at once. See `docs/dev-reference/
    deployment-guide/10-observability-howto.html` for what LangSmith/
    CloudWatch actually show today, step by step.
+
+## CI (not Deploy) has been failing since at least Phase 86, undetected until 2026-10-06
+
+Found while checking CI status for Phase 89's push (via `gh run list` -
+the GitHub Actions CLI, not watched routinely this session; AWS
+verification was always checked directly, but the separate CI workflow's
+own pass/fail was not). **`Deploy` has been green the whole time** - this
+is specifically the `CI` workflow (`ci.yml`'s "Test suite" job), and
+nothing in this project's actual production behavior is affected by it.
+
+**The failure:** 11 tests in `tests/hrb_chatbot/ai/doc_processing/
+indexing/test_vector_indexer.py` fail on GitHub's `ubuntu-latest` runner
+with `ValueError: Could not load OpenAI embedding model... No API key
+found for OpenAI` - LlamaIndex's `OpenAIEmbedding` (its `Settings
+.embed_model` default) validating a key eagerly, somewhere inside
+`VectorStoreIndex`'s construction path in `vector_indexer.py`, despite
+real embeddings already being computed and passed in separately (Phase
+44's own documented design - this validation should never be reachable).
+
+**What's been ruled out, each one tested directly, not assumed:**
+- Not a stale/missing `.env` issue - reproduced locally with `.env`
+  fully removed (`mv .env .env.bak`), still passed.
+- Not test-order/global-state pollution - ran the single failing test in
+  isolation AND the full local suite together, both passed.
+- Not the exact CI command (`--cov=... --cov-fail-under=45`) - ran that
+  exact command locally, passed.
+- Not dependency version drift - diffed `pip freeze` between this
+  project's long-lived local `.venv` and a genuinely fresh clone + fresh
+  venv + fresh `pip install` (several transitive packages *did* differ,
+  e.g. `aiohttp` 3.10.11 vs 3.14.4) - the fresh install still passed
+  cleanly on Windows (283 passed, matching `master` before Phase 89).
+
+**What's left, not yet tested - no Linux environment available this
+session:** this now looks like a genuine Windows-vs-Linux behavior
+difference in a dependency on the `ubuntu-latest` runner specifically,
+since the most faithful possible local reproduction (fresh clone, fresh
+venv, fresh install, identical command) still doesn't fail on Windows.
+Next step for whoever picks this up: reproduce on an actual Linux box/
+container (not WSL necessarily, but anything matching `ubuntu-latest`)
+before guessing at a fix - guessing blind at an OS-specific dependency
+behavior without being able to reproduce it is how a wrong fix gets
+merged and the real bug stays. Once reproduced, the real fix is most
+likely either explicitly setting `Settings.embed_model` to something
+that doesn't validate a key at all (a local/fake embed model) before
+`VectorStoreIndex` is ever constructed in these tests, or a conftest.py-
+level `os.environ.setdefault("OPENAI_API_KEY", "sk-test-dummy")` -
+exactly the same category of fix Phase 82/83/85/86 already applied for
+other CI-only gaps, just not diagnosable blind.

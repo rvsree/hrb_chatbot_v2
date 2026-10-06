@@ -53,6 +53,9 @@ ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS author TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_date TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_version TEXT",
+    # Phase 89: the presigned-upload route's chunk_info/document_metadata
+    # overrides, as one JSON blob, until the Lambda reads and clears it.
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS pending_overrides TEXT",
 ]
 
 # Rename rather than add-new/leave-old, so stored values survive - checked against information_schema first.
@@ -222,6 +225,19 @@ class PostgresClient(BaseMetadataClient):
             logger, "postgres", "metadata.update_status", document_id=document_id, status=status
         ):
             await asyncio.to_thread(self._update_status_sync, document_id, status, error_message)
+
+    def _set_pending_overrides_sync(self, document_id: str, overrides_json: str | None) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE documents SET pending_overrides = %s WHERE id = %s",
+                (overrides_json, document_id),
+            )
+            conn.commit()
+
+    async def set_pending_overrides(self, document_id: str, overrides_json: str | None) -> None:
+        await self._ensure_table()
+        with log_backend_call(logger, "postgres", "metadata.set_pending_overrides", document_id=document_id):
+            await asyncio.to_thread(self._set_pending_overrides_sync, document_id, overrides_json)
 
     def _set_chunk_ids_sync(self, document_id: str, chunk_ids: list[str]) -> None:
         with self._connect() as conn:

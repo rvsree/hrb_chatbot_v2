@@ -555,3 +555,107 @@ def test_delete_all_calls_the_service_and_returns_its_result(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {"documents_deleted": 3, "chunks_removed": 12, "deleted_by": "EMP051"}
+
+
+@pytest.fixture(autouse=True)
+def _fake_presigned_url(monkeypatch):
+    # Phase 89: generate_presigned_upload_url() calls boto3 - fake it here
+    # too, same no-real-AWS-call guarantee as every other test in this file.
+    def _fake_generate(document_id, filename, content_type):
+        return {"upload_url": f"https://hrb-chatbot-kb-uploads.s3.amazonaws.com/{document_id}/{filename}", "expires_in_seconds": 300}
+
+    monkeypatch.setattr(documents_service, "generate_presigned_upload_url", _fake_generate)
+
+
+def test_presigned_upload_returns_a_url_and_a_pending_document(monkeypatch):
+    response = client.post(
+        "/v1/genai-rag/ingest-document/documents/presigned-upload",
+        json={"user_profile": HR_SUPPORT_USER_PROFILE, "filename": "401k-policy.pdf", "content_type": "application/pdf"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "pending_upload"
+    assert body["expires_in_seconds"] == 300
+    assert body["document_id"] in body["upload_url"]
+
+    document = _get(f"/v1/genai-rag/ingest-document/documents/{body['document_id']}").json()
+    assert document["status"] == "pending_upload"
+    assert document["filename"] == "401k-policy.pdf"
+
+
+def test_presigned_upload_rejects_a_non_pdf_content_type():
+    response = client.post(
+        "/v1/genai-rag/ingest-document/documents/presigned-upload",
+        json={"user_profile": HR_SUPPORT_USER_PROFILE, "filename": "notes.txt", "content_type": "text/plain"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "INVALID_FILE_TYPE"
+
+
+def test_presigned_upload_rejects_an_unknown_supersedes_target():
+    response = client.post(
+        "/v1/genai-rag/ingest-document/documents/presigned-upload",
+        json={
+            "user_profile": HR_SUPPORT_USER_PROFILE,
+            "filename": "401k-policy.pdf",
+            "content_type": "application/pdf",
+            "document_metadata": {"supersedes_document_id": "does-not-exist"},
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "SUPERSEDES_TARGET_NOT_FOUND"
+
+
+def test_presigned_upload_as_employee_is_a_403():
+    response = client.post(
+        "/v1/genai-rag/ingest-document/documents/presigned-upload",
+        json={
+            "user_profile": {"employee_id": "EMP052", "full_name": "Some Employee", "role": "employee"},
+            "filename": "401k-policy.pdf",
+            "content_type": "application/pdf",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "FORBIDDEN"
+
+
+def test_presigned_upload_stashes_chunk_info_and_document_metadata_overrides_for_the_lambda():
+    response = client.post(
+        "/v1/genai-rag/ingest-document/documents/presigned-upload",
+        json={
+            "user_profile": HR_SUPPORT_USER_PROFILE,
+            "filename": "401k-policy.pdf",
+            "content_type": "application/pdf",
+            "chunk_info": {"chunking_strategy": "recursive", "chunk_size": 800, "chunk_overlap": 100},
+            "document_metadata": {"doc_category": "benefits", "department": "HR"},
+        },
+    )
+    document_id = response.json()["document_id"]
+
+    import asyncio
+
+    from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
+
+    document = asyncio.run(get_db_gateway().metadata_store().get_document(document_id))
+    overrides = json.loads(document["pending_overrides"])
+    assert overrides["chunk_info"] == {"chunking_strategy": "recursive", "chunk_size": 800, "chunk_overlap": 100}
+    assert overrides["document_metadata"]["doc_category"] == "benefits"
+
+
+def test_presigned_upload_without_overrides_leaves_pending_overrides_null():
+    response = client.post(
+        "/v1/genai-rag/ingest-document/documents/presigned-upload",
+        json={"user_profile": HR_SUPPORT_USER_PROFILE, "filename": "401k-policy.pdf", "content_type": "application/pdf"},
+    )
+    document_id = response.json()["document_id"]
+
+    import asyncio
+
+    from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
+
+    document = asyncio.run(get_db_gateway().metadata_store().get_document(document_id))
+    assert document["pending_overrides"] is None

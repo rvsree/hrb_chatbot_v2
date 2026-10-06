@@ -258,6 +258,7 @@ class FakeMetadataStore(BaseMetadataClient):
             "doc_date": None,
             "doc_version": None,
             "uploaded_by": uploaded_by,
+            "pending_overrides": None,
         }
 
     async def find_by_content_hash(self, content_hash):
@@ -273,6 +274,10 @@ class FakeMetadataStore(BaseMetadataClient):
         if document_id in self.documents:
             self.documents[document_id]["status"] = status
             self.documents[document_id]["error_message"] = error_message
+
+    async def set_pending_overrides(self, document_id, overrides_json):
+        if document_id in self.documents:
+            self.documents[document_id]["pending_overrides"] = overrides_json
 
     async def set_chunk_ids(self, document_id, chunk_ids):
         import json

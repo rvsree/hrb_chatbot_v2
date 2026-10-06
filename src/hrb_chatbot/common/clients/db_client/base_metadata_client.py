@@ -36,6 +36,13 @@ class BaseMetadataClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def set_pending_overrides(self, document_id: str, overrides_json: str | None) -> None:
+        """Phase 89: stash the presigned-upload caller's chunk_info/document_metadata
+        overrides (as one JSON blob) until the Lambda picks them up - None clears it
+        after a successful index, same as any other document column."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def set_chunk_ids(self, document_id: str, chunk_ids: list[str]) -> None:
         """Record which vector-store ids this document's chunks were written under."""
         raise NotImplementedError

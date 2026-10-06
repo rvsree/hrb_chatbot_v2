@@ -57,6 +57,39 @@ def test_indexes_a_new_document_and_creates_its_metadata_row(monkeypatch):
     assert document["filename"] == "policy.pdf"
 
 
+def test_pending_overrides_from_the_presigned_upload_route_are_passed_through_and_cleared(monkeypatch):
+    # Phase 89: the presigned-upload route already created this row with
+    # chunk_info/document_metadata stashed - the handler must pass them to
+    # index_document() and clear the column afterward, not just ignore them.
+    metadata_store = FakeMetadataStore()
+    metadata_store.documents["doc-123"] = {
+        "id": "doc-123",
+        "filename": "policy.pdf",
+        "status": "pending_upload",
+        "pending_overrides": json.dumps({
+            "chunk_info": {"chunking_strategy": "recursive", "chunk_size": 800, "chunk_overlap": 100},
+            "document_metadata": {"doc_category": "benefits"},
+        }),
+    }
+    captured_kwargs = {}
+
+    async def _capturing_index_document(document_id, file_path, **kwargs):
+        captured_kwargs.update(kwargs)
+        return {"action": "insert", "chunks_indexed": 1, "chunks_removed": 0}
+
+    gateway = _wire_fakes(monkeypatch, metadata_store=metadata_store, index_document=_capturing_index_document)
+    event = {"Records": [_s3_event_sqs_record("hrb-chatbot-kb-uploads", "doc-123/policy.pdf")]}
+
+    result = index_document_handler.lambda_handler(event, context=None)
+
+    assert result == {"batchItemFailures": []}
+    assert captured_kwargs["chunking_strategy"] == "recursive"
+    assert captured_kwargs["chunk_size"] == 800
+    assert captured_kwargs["chunk_overlap"] == 100
+    assert captured_kwargs["document_metadata_override"] == {"doc_category": "benefits"}
+    assert gateway.metadata_store().documents["doc-123"]["pending_overrides"] is None
+
+
 def test_existing_document_is_not_recreated_idempotency(monkeypatch):
     metadata_store = FakeMetadataStore()
     metadata_store.documents["doc-123"] = {"id": "doc-123", "filename": "policy.pdf", "status": "uploaded"}

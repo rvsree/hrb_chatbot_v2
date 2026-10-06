@@ -13,14 +13,18 @@ from src.hrb_chatbot.ai.doc_processing.indexing.vector_indexer import storage_ch
 from src.hrb_chatbot.common.clients.db_client.langchain_vector_store import COLLECTION_NAME
 from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
+from src.hrb_chatbot.common.clients.storage_client.s3_upload_client import generate_presigned_upload_url
+from src.hrb_chatbot.common.config.settings import read_setting
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.models.documents import (
     ALLOWED_CONTENT_TYPE,
     MAX_FILE_SIZE_BYTES,
+    ChunkInfoInput,
     ChunkInfoResult,
     DocumentMetadataInput,
     DocumentMetadataResult,
     DocumentUploadResult,
+    PresignedUploadResponse,
     VersioningInfo,
 )
 
@@ -231,6 +235,58 @@ async def _index_now(
         logger.error("Indexing failed for document %s: %s: %s", document_id, type(error).__name__, error)
         await get_db_gateway().metadata_store().update_status(document_id, "failed", str(error))
         return {"error": "Upload succeeded, but indexing failed.", "error_code": error_codes.INDEXING_FAILED}
+
+
+async def request_presigned_upload(
+    filename: str,
+    content_type: str,
+    supersedes_document_id: str | None = None,
+    chunk_info: ChunkInfoInput | None = None,
+    document_metadata: DocumentMetadataInput | None = None,
+    uploaded_by: str | None = None,
+) -> PresignedUploadResponse | None:
+    """Phase 89: records a pending document row and hands back a presigned
+    S3 PUT url - no file bytes exist yet, so there's no content-hash dedup
+    check here (that needs real bytes; see RAG-ROADMAP.md Phase 88's
+    flagged gap) and no indexing result either. Returns None if
+    supersedes_document_id doesn't exist - same "let the route 404/422 it"
+    convention as get_document()/delete_document()."""
+    if supersedes_document_id:
+        target = await get_db_gateway().metadata_store().get_document(supersedes_document_id)
+        if target is None:
+            return None
+
+    document_id = uuid.uuid4().hex
+    bucket = read_setting(None, "S3_UPLOAD_BUCKET")
+    placeholder_path = f"s3://{bucket}/{document_id}/{filename}"
+
+    await get_db_gateway().metadata_store().create_document(
+        document_id,
+        filename,
+        placeholder_path,
+        0,
+        None,
+        supersedes=supersedes_document_id,
+        uploaded_by=uploaded_by,
+    )
+    await get_db_gateway().metadata_store().update_status(document_id, "pending_upload")
+
+    overrides = {
+        "chunk_info": chunk_info.model_dump() if chunk_info else None,
+        "document_metadata": document_metadata.model_dump(exclude={"supersedes_document_id"}) if document_metadata else None,
+    }
+    if chunk_info or document_metadata:
+        await get_db_gateway().metadata_store().set_pending_overrides(document_id, json.dumps(overrides))
+
+    presigned = generate_presigned_upload_url(document_id, filename, content_type)
+    logger.info("Issued a presigned upload url for document %s (%r)", document_id, filename)
+
+    return PresignedUploadResponse(
+        document_id=document_id,
+        upload_url=presigned["upload_url"],
+        expires_in_seconds=presigned["expires_in_seconds"],
+        status="pending_upload",
+    )
 
 
 async def save_uploads(

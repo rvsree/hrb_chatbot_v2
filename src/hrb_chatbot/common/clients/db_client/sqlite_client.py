@@ -56,6 +56,9 @@ ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN author TEXT",
     "ALTER TABLE documents ADD COLUMN doc_date TEXT",
     "ALTER TABLE documents ADD COLUMN doc_version TEXT",
+    # Phase 89: the presigned-upload route's chunk_info/document_metadata
+    # overrides, as one JSON blob, until the Lambda reads and clears it.
+    "ALTER TABLE documents ADD COLUMN pending_overrides TEXT",
 ]
 
 # Rename rather than add-new/leave-old, so stored values survive - checked against real column names first.
@@ -193,6 +196,17 @@ class SQLiteClient(BaseMetadataClient):
                 await db.execute(
                     "UPDATE documents SET status = ?, error_message = ?, updated_at = ? WHERE id = ?",
                     (status, error_message, now, document_id),
+                )
+                await db.commit()
+
+    async def set_pending_overrides(self, document_id: str, overrides_json: str | None) -> None:
+        await self._ensure_table()
+
+        with log_backend_call(logger, "sqlite", "metadata.set_pending_overrides", document_id=document_id):
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "UPDATE documents SET pending_overrides = ? WHERE id = ?",
+                    (overrides_json, document_id),
                 )
                 await db.commit()
 

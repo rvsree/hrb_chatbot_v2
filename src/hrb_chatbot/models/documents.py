@@ -270,3 +270,24 @@ class TestNoisePreviewResponse(BaseModel):
     count: int = Field(..., description="How many documents are below the size threshold.")
     threshold_bytes: int = Field(..., description="file_size_bytes below this counts as test noise.")
     documents: list[TestNoiseDocument]
+
+
+class PresignedUploadRequest(BaseModel):
+    """Phase 89: JSON body for POST .../documents/presigned-upload - no file bytes yet,
+    so this is plain JSON, not multipart like the upload endpoint above."""
+
+    user_profile: UserProfile | None = None
+    filename: str = Field(..., max_length=255)
+    content_type: str = Field(..., max_length=100)
+    chunk_info: ChunkInfoInput | None = None
+    document_metadata: DocumentMetadataInput | None = None
+
+
+class PresignedUploadResponse(BaseModel):
+    """What POST .../documents/presigned-upload returns - nothing has been indexed yet,
+    so this is deliberately not DocumentUploadResponse. Poll GET /documents/{id} afterward."""
+
+    document_id: str
+    upload_url: str = Field(..., description="PUT the file body directly here - no AWS SDK or credentials needed.")
+    expires_in_seconds: int
+    status: str = Field("pending_upload", description="Always 'pending_upload' - poll GET /documents/{id} for the real result.")
