@@ -37,13 +37,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Phase 92: every route lives under /hrb-chatbot, a Spring Boot-style
+# context path - lets compute.rvsree.dev host more than one project by
+# path later, each with its own prefix, no per-project domain/App
+# Runner cost. routes_health.router is included TWICE during rollout -
+# once at the new prefix, once still at the old root paths - so App
+# Runner's own live HealthCheckConfiguration (still pointed at the old
+# /health) keeps passing through this deploy with zero gap. The root
+# registration is removed in a follow-up push, once App Runner's own
+# config has been switched to the new path and confirmed healthy there.
+app.include_router(routes_health.router, prefix="/hrb-chatbot")
 app.include_router(routes_health.router)
 
-app.include_router(ingest_document.router_ingest_document, prefix="/v1/genai-rag/ingest-document")
-app.include_router(retrieve_document.router_retrieve_document, prefix="/v1/genai-rag/retrieve-document")
-app.include_router(query_agent.router_query_agent, prefix="/v1/single-agentic-rag")
-app.include_router(multi_query_agent.router_query_agent, prefix="/v1/multi-agentic-rag")
-app.include_router(manage_conversations.router_manage_conversations, prefix="/v1/conversations")
+app.include_router(ingest_document.router_ingest_document, prefix="/hrb-chatbot/v1/genai-rag/ingest-document")
+app.include_router(retrieve_document.router_retrieve_document, prefix="/hrb-chatbot/v1/genai-rag/retrieve-document")
+app.include_router(query_agent.router_query_agent, prefix="/hrb-chatbot/v1/single-agentic-rag")
+app.include_router(multi_query_agent.router_query_agent, prefix="/hrb-chatbot/v1/multi-agentic-rag")
+app.include_router(manage_conversations.router_manage_conversations, prefix="/hrb-chatbot/v1/conversations")
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):

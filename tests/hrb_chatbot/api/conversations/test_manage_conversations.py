@@ -1,4 +1,4 @@
-"""Tests for DELETE /v1/conversations/{conversation_id} (Phase 76) -
+"""Tests for DELETE /hrb-chatbot/v1/conversations/{conversation_id} (Phase 76) -
 conversation_memory.delete_conversation() is faked, no real database."""
 
 from fastapi.testclient import TestClient
@@ -23,7 +23,7 @@ def test_well_formed_request_returns_turns_deleted(monkeypatch):
 
     monkeypatch.setattr(manage_conversations.conversation_memory, "delete_conversation", _fake_delete_conversation)
 
-    response = client.request("DELETE", "/v1/conversations/conv-1", json=_body())
+    response = client.request("DELETE", "/hrb-chatbot/v1/conversations/conv-1", json=_body())
 
     assert response.status_code == 200
     body = response.json()
@@ -36,7 +36,7 @@ def test_someone_elses_conversation_returns_zero_deleted(monkeypatch):
 
     monkeypatch.setattr(manage_conversations.conversation_memory, "delete_conversation", _fake_delete_conversation)
 
-    response = client.request("DELETE", "/v1/conversations/not-mine", json=_body())
+    response = client.request("DELETE", "/hrb-chatbot/v1/conversations/not-mine", json=_body())
 
     assert response.status_code == 200
     assert response.json()["turns_deleted"] == 0
@@ -48,6 +48,6 @@ def test_missing_user_profile_is_401(monkeypatch):
 
     monkeypatch.setattr(manage_conversations.conversation_memory, "delete_conversation", _fake_delete_conversation)
 
-    response = client.request("DELETE", "/v1/conversations/conv-1", json={})
+    response = client.request("DELETE", "/hrb-chatbot/v1/conversations/conv-1", json={})
 
     assert response.status_code == 401

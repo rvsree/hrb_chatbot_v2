@@ -2,7 +2,7 @@
 """Uploads and indexes every real KB PDF (resources/kb_docs/) against a
 running local server - used by the release-gate CI workflow (Phase 80) to
 populate a fresh runner's empty vector store before scoring. Goes through
-the real POST /v1/genai-rag/ingest-document/documents endpoint, not a
+the real POST /hrb-chatbot/v1/genai-rag/ingest-document/documents endpoint, not a
 shortcut that calls internal functions directly, so the gate tests what a
 real deploy would actually serve. Safe to re-run - the endpoint's own
 content-hash dedup (Phase 16) makes a second run against an
@@ -33,7 +33,7 @@ def main() -> int:
         payload = {"payload": json.dumps({"user_profile": HR_SUPPORT_USER_PROFILE})}
 
         response = requests.post(
-            f"{BASE_URL}/v1/genai-rag/ingest-document/documents", files=files, data=payload, timeout=300
+            f"{BASE_URL}/hrb-chatbot/v1/genai-rag/ingest-document/documents", files=files, data=payload, timeout=300
         )
     finally:
         for handle in open_files:

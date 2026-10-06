@@ -1,4 +1,4 @@
-"""Tests for POST /v1/single-agentic-rag/query (api/agentic_rag/query_agent.py).
+"""Tests for POST /hrb-chatbot/v1/single-agentic-rag/query (api/agentic_rag/query_agent.py).
 run_agent() is faked - no real LLM/tool call, matching every other route
 test in this project. Phase 45: identity travels in the request body's
 user_profile sub-object, same pattern as genai-rag's query endpoint."""
@@ -29,7 +29,7 @@ async def _fake_run_agent(query, employee_id, max_iterations, enable_conversatio
 def test_well_formed_query_returns_answer_and_tools_used(monkeypatch):
     monkeypatch.setattr(query_agent, "run_agent", _fake_run_agent)
 
-    response = client.post("/v1/single-agentic-rag/query", json=_body())
+    response = client.post("/hrb-chatbot/v1/single-agentic-rag/query", json=_body())
 
     assert response.status_code == 200
     body = response.json()
@@ -41,7 +41,7 @@ def test_well_formed_query_returns_answer_and_tools_used(monkeypatch):
 def test_missing_user_profile_is_401(monkeypatch):
     monkeypatch.setattr(query_agent, "run_agent", _fake_run_agent)
 
-    response = client.post("/v1/single-agentic-rag/query", json={"query": "test"})
+    response = client.post("/hrb-chatbot/v1/single-agentic-rag/query", json={"query": "test"})
 
     assert response.status_code == 401
 
@@ -49,7 +49,7 @@ def test_missing_user_profile_is_401(monkeypatch):
 def test_empty_query_is_422(monkeypatch):
     monkeypatch.setattr(query_agent, "run_agent", _fake_run_agent)
 
-    response = client.post("/v1/single-agentic-rag/query", json=_body(query=""))
+    response = client.post("/hrb-chatbot/v1/single-agentic-rag/query", json=_body(query=""))
 
     assert response.status_code == 422
 
@@ -58,7 +58,7 @@ def test_unknown_role_is_401(monkeypatch):
     monkeypatch.setattr(query_agent, "run_agent", _fake_run_agent)
 
     response = client.post(
-        "/v1/single-agentic-rag/query",
+        "/hrb-chatbot/v1/single-agentic-rag/query",
         json=_body(user_profile={"employee_id": "EMP052", "full_name": "Eddy Employee", "role": "made-up-role"}),
     )
 

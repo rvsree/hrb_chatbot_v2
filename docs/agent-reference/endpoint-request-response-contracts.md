@@ -19,7 +19,7 @@ is exactly one identity mechanism everywhere, not two. `X-Employee-Id`/
 `X-Full-Name`/`X-Role` headers and query-param identity were both tried
 and rejected during this design pass - neither is used anywhere.
 
-- `GET /v1/genai-rag/ingest-document/documents`, `GET .../{id}`,
+- `GET /hrb-chatbot/v1/genai-rag/ingest-document/documents`, `GET .../{id}`,
   `DELETE .../{id}`, `DELETE .../documents` (all): body is
   `{"user_profile": {...}}` only - no other fields.
 - `POST` endpoints (upload, query): `user_profile` is one sub-object
@@ -59,7 +59,7 @@ inside a 200 batch response, not a top-level error): `INVALID_FILE_TYPE`,
 
 ---
 
-## POST /v1/genai-rag/ingest-document/documents (upload) — **Finalized**
+## POST /hrb-chatbot/v1/genai-rag/ingest-document/documents (upload) — **Finalized**
 
 `multipart/form-data`, two parts:
 - `files` — one or more PDFs (binary, unchanged from today)
@@ -173,7 +173,7 @@ file in a batch doesn't fail the good ones (unchanged from today).
 
 ---
 
-## POST /v1/genai-rag/retrieve-document/query — Finalized
+## POST /hrb-chatbot/v1/genai-rag/retrieve-document/query — Finalized
 
 Same `payload`-as-JSON-string-in-multipart pattern doesn't apply here -
 this endpoint has no file, so it can be a real JSON body, no wrapper trick
@@ -236,7 +236,7 @@ Response:
 }
 ```
 
-## POST /v1/single-agentic-rag/query — Finalized (Phase 55)
+## POST /hrb-chatbot/v1/single-agentic-rag/query — Finalized (Phase 55)
 
 Same identity-in-payload pattern as `genai-rag`'s query endpoint. No
 `search_options`/`generation_options` - the agent decides retrieval/tool
@@ -281,7 +281,7 @@ Response:
 response - a tool-calling agent's grounding varies per tool, not always a
 vector-store chunk list, so it isn't forced into that shape here.
 
-## POST /v1/multi-agentic-rag/query — Finalized (Phase 61, scaffold only)
+## POST /hrb-chatbot/v1/multi-agentic-rag/query — Finalized (Phase 61, scaffold only)
 
 Same identity-in-payload/RBAC/rate-limiting pattern as every other query
 endpoint. **The pipeline itself is stubbed** (Phase 61) - this contract is
@@ -329,7 +329,7 @@ shape) - aggregated across every sub-agent's own tool calls, not
 per-agent, matching `single-agentic-rag`'s existing flat shape rather
 than inventing a nested one.
 
-## GET /v1/genai-rag/ingest-document/documents, GET .../{id} — Finalized
+## GET /hrb-chatbot/v1/genai-rag/ingest-document/documents, GET .../{id} — Finalized
 
 Body: `{"user_profile": {...}}` only, alongside `{id}` in the path for the
 single-document form. Response is where the same 27-flat-field problem
@@ -359,7 +359,7 @@ reuses the same three sub-objects as the upload response, not redefined:
 ```
 `GET /documents` (list) wraps this in `{"count": N, "documents": [...]}`, unchanged.
 
-## DELETE /v1/genai-rag/ingest-document/documents/{id}, DELETE .../documents (all) — Finalized
+## DELETE /hrb-chatbot/v1/genai-rag/ingest-document/documents/{id}, DELETE .../documents (all) — Finalized
 
 Body: `{"user_profile": {...}}` only, same as the GET endpoints above.
 This is the endpoint the audit trail matters most for - `deleted_by` on
@@ -396,7 +396,7 @@ Delete (`DELETE`) - same response shape as delete-all:
 { "documents_deleted": 2, "chunks_removed": 0, "deleted_by": "EMP051" }
 ```
 
-## GET /health, GET /ping — Finalized: no identity, no change
+## GET /hrb-chatbot/health, GET /hrb-chatbot/ping — Finalized: no identity, no change
 
 No identity params, on purpose - both are called by automated
 infrastructure (Docker's `HEALTHCHECK`, CI's deploy smoke test), not by an
@@ -412,7 +412,7 @@ no change needed there either, it already matches this exercise's pattern:
 ```
 `/ping`: `{"status": "ok"}`, unchanged - it's deliberately minimal (no provider calls).
 
-## POST /v1/genai-rag/ingest-document/documents/presigned-upload — Finalized (Phase 89)
+## POST /hrb-chatbot/v1/genai-rag/ingest-document/documents/presigned-upload — Finalized (Phase 89)
 
 **Additive, confirmed with the user 2026-10-06 - does not replace, and
 nothing changes about, the existing `POST .../documents` above.** Single
@@ -450,7 +450,7 @@ since nothing has been chunked/embedded/indexed yet when this responds.
 The client `PUT`s the file body directly to `upload_url` (plain HTTP, no
 AWS SDK, no credentials needed client-side - see `docs/dev-reference/
 deployment-guide/05-rag-ingestion-batch.html`'s "Presigned URLs" section),
-then polls the existing `GET /v1/genai-rag/ingest-document/documents/{id}`
+then polls the existing `GET /hrb-chatbot/v1/genai-rag/ingest-document/documents/{id}`
 above for the real indexing result once Phase 88's S3 → SQS → Lambda
 pipeline picks it up - same response shape that endpoint already returns
 today, no change there either.

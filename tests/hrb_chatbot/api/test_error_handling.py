@@ -31,7 +31,7 @@ def test_an_unexpected_exception_never_leaks_its_raw_message_to_the_client(monke
     # raise_server_exceptions=False: otherwise TestClient re-raises the
     # exception instead of returning the handler's real HTTP response.
     with TestClient(app, raise_server_exceptions=False) as test_client:
-        response = test_client.request("GET", "/v1/genai-rag/ingest-document/documents", json=HR_SUPPORT_IDENTITY_BODY)
+        response = test_client.request("GET", "/hrb-chatbot/v1/genai-rag/ingest-document/documents", json=HR_SUPPORT_IDENTITY_BODY)
 
     assert response.status_code == 500
     body_text = response.text
@@ -47,7 +47,7 @@ def test_the_generic_error_response_still_has_the_project_s_standard_shape(monke
     monkeypatch.setattr(documents_service, "list_documents", raise_unexpectedly)
 
     with TestClient(app, raise_server_exceptions=False) as test_client:
-        response = test_client.request("GET", "/v1/genai-rag/ingest-document/documents", json=HR_SUPPORT_IDENTITY_BODY)
+        response = test_client.request("GET", "/hrb-chatbot/v1/genai-rag/ingest-document/documents", json=HR_SUPPORT_IDENTITY_BODY)
 
     # Still {"error": ...} (json_error()'s shape), not FastAPI's default
     # {"detail": ...} - the handler normalizes every error response.
@@ -70,7 +70,7 @@ def test_a_multipart_body_on_a_json_endpoint_is_a_clean_422_not_a_crash():
 
     with TestClient(app, raise_server_exceptions=False) as test_client:
         response = test_client.post(
-            "/v1/genai-rag/retrieve-document/query",
+            "/hrb-chatbot/v1/genai-rag/retrieve-document/query",
             content=non_utf8_multipart_body,
             headers={"Content-Type": "multipart/form-data; boundary=boundary"},
         )
@@ -84,7 +84,7 @@ def test_query_longer_than_the_max_length_is_rejected():
     too_long_query = "a" * 2001
 
     response = client.post(
-        "/v1/genai-rag/retrieve-document/query",
+        "/hrb-chatbot/v1/genai-rag/retrieve-document/query",
         json={"user_profile": EMPLOYEE_USER_PROFILE, "query": too_long_query},
     )
 
@@ -114,7 +114,7 @@ def test_query_at_exactly_the_max_length_is_accepted_by_validation(monkeypatch):
     exactly_max_length_query = "a" * 2000
 
     response = client.post(
-        "/v1/genai-rag/retrieve-document/query",
+        "/hrb-chatbot/v1/genai-rag/retrieve-document/query",
         json={"user_profile": EMPLOYEE_USER_PROFILE, "query": exactly_max_length_query},
     )
 

@@ -11,7 +11,7 @@ client = TestClient(app)
 
 
 def test_ping_is_free_and_instant():
-    response = client.get("/ping")
+    response = client.get("/hrb-chatbot/ping")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
@@ -26,7 +26,7 @@ def test_health_defaults_provider_params_when_omitted(monkeypatch):
 
     monkeypatch.setattr(routes_health.agent_health, "check_all_backend_services", _fake_check_all)
 
-    response = client.get("/health")
+    response = client.get("/hrb-chatbot/health")
 
     assert response.status_code == 200
     assert captured["provider"] == "openai"
@@ -43,7 +43,7 @@ def test_health_query_params_override_the_defaults(monkeypatch):
 
     monkeypatch.setattr(routes_health.agent_health, "check_all_backend_services", _fake_check_all)
 
-    response = client.get("/health?provider=anthropic&metadata_provider=postgres&vector_provider=pinecone")
+    response = client.get("/hrb-chatbot/health?provider=anthropic&metadata_provider=postgres&vector_provider=pinecone")
 
     assert response.status_code == 200
     assert captured["provider"] == "anthropic"
@@ -52,7 +52,7 @@ def test_health_query_params_override_the_defaults(monkeypatch):
 
 
 def test_health_rejects_an_unknown_provider_value_with_422():
-    response = client.get("/health?provider=not-a-real-provider")
+    response = client.get("/hrb-chatbot/health?provider=not-a-real-provider")
 
     assert response.status_code == 422
     body = response.json()
