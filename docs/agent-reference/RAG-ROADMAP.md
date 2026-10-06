@@ -159,6 +159,7 @@ reviewed before that phase's code starts.
 | 85 — Found while closing out Milestone 2: SQLiteClient never created its own parent directory, breaking the golden-dataset gate on a fresh runner | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 86 — Found while closing out Milestone 2: eval-gate.yml never had the Phase 82 Spacy fix, and the gate itself silently PASSed with zero cases scored | Claude Code | ✅ Done, verified, 2026-10-05 | ✅ Spec'd and implemented - see detail below |
 | 87 — Found during full AWS verification sweep: multi-turn memory bypassed on zero-chunk follow-ups; production metadata store resets on every redeploy (ephemeral SQLite) | Claude Code | ✅ Done, verified, 2026-10-06 | ✅ Spec'd and implemented - see detail below |
+| 88 — User-directed, Milestone 3 part 1: S3 → SQS → Lambda async indexing pipeline, wired but not cut over to the live API yet | Claude Code | 📋 Planned, added 2026-10-06 - not started, packaging decision pending user confirmation | ✅ Spec'd - see detail below |
 
 
 **If you're picking this up after a restart with no session memory**, the
@@ -6779,6 +6780,98 @@ Explicitly deferred to a later, separate wave - not part of the above:
   - Golden-dataset gate re-run against the fully updated production
     config: `recall: 0.955`, `groundedness: 0.983`, `completeness: 0.862`,
     **PASS**, all 24 cases scored - no regression from either fix.
+
+- [ ] **Phase 88 (planned, not started) — User-directed, Milestone 3 part 1:
+  S3 → SQS → Lambda async indexing pipeline, wired but not yet cut over to
+  the real API (that's Phase 89).**
+
+  **Spec:**
+  - **Context:** Milestone 3 per
+    `docs/dev-reference/deployment-guide/05-rag-ingestion-batch.html` -
+    today's `POST /v1/genai-rag/ingest-document/documents` reads the whole
+    file through the FastAPI process and indexes synchronously in-request.
+    This phase builds the async path (S3 bucket, SQS queue + DLQ, Lambda
+    handler reusing `ai/doc_processing/pipeline.py` unchanged) end to end
+    and proves it indexes a real document correctly - triggered by a
+    direct S3 `put-object`, not yet by the live API. Splitting it this way
+    (infra + Lambda first, API cutover second in Phase 89) keeps each
+    phase independently testable and keeps the live ingest endpoint
+    working throughout this phase, per the project's "one task at a time"
+    norm.
+  - **Architecture, per the design doc:** S3 `ObjectCreated` → SQS (primary
+    trigger, not just a failure bucket) → Lambda's own SQS event source
+    mapping (AWS-managed polling, no listener process to write) → Lambda
+    handler calls `pipeline.py`'s existing `chunk_document()`/
+    `embed_chunks()`/`index_chunks()` → Pinecone + Postgres (the only
+    reachable vector/metadata stores from Lambda's ephemeral filesystem -
+    ChromaDB is ruled out, per the design doc). Failed messages redrive to
+    an SQS DLQ after `maxReceiveCount` retries; a CloudWatch alarm on DLQ
+    depth is new (zero alarms exist anywhere in this project today).
+  - **Packaging decision, flagged for review, not yet confirmed with the
+    user:** the design doc's sibling note recommends AWS CDK for the IaC.
+    This project has never used CDK/Terraform anywhere - every other piece
+    of AWS infra (App Runner, Secrets Manager, Postgres/Neon, Pinecone)
+    was provisioned by hand via plain `aws` CLI commands. Proposed instead:
+    keep using plain `aws` CLI/boto3 for the bucket/queue/IAM role (same
+    pattern as everything else), and package the Lambda as a **container
+    image** (not a zip) pushed to the same ECR repo App Runner already
+    uses - this project's `requirements.txt` (langchain, llama-index,
+    openai, pinecone-client) is far past Lambda's 250MB unzipped zip
+    limit, but well within a container image's 10GB limit, and this
+    project already has a working `Dockerfile` + ECR + `gh`-triggered CI
+    push to build from. No new tool, no new library - matches
+    [[feedback_no_unreviewed_libraries]]. **Open question for the user:**
+    confirm this before implementation starts.
+  - **Scope, this phase only:**
+    1. S3 bucket (`hrb-chatbot-kb-uploads`, one object per `document_id`).
+    2. SQS queue + DLQ, redrive policy (`maxReceiveCount`), CloudWatch
+       alarm on DLQ depth.
+    3. Lambda handler (new, small file - a thin adapter: read the SQS
+       message's S3 event, `get_object()`, call `pipeline.index_document()`
+       unchanged, update metadata status). Structured (JSON) logging from
+       day one, per the design doc - this project's own logs are
+       plain-text today, deliberately not changed here, only Lambda's new
+       log group.
+    4. IAM role for the Lambda - least-privilege (S3 read on this bucket,
+       Pinecone/Postgres network egress), same pattern as the existing
+       `hrb-chatbot-apprunner-access-role`/`hrb-chatbot-github-actions-deploy`
+       roles.
+    5. Lambda reserved concurrency cap, to protect Pinecone/Postgres from a
+       batch-upload thundering herd.
+    6. Metadata status state machine: `pending_upload` → `indexing` →
+       `indexed`/`failed`, reusing the existing `documents_service.py`
+       status field, no schema change.
+  - **Explicitly NOT in scope (Phase 89):** the API contract change itself
+    - `POST /v1/genai-rag/ingest-document/documents` keeps accepting the
+      file body directly and indexing synchronously, completely unchanged,
+      through this entire phase. No client, Postman collection, or
+      existing test is affected. This phase is proven by manually
+      `put-object`-ing a real KB PDF straight to the new bucket and
+      confirming the Lambda fires and the document reaches `indexed`.
+  - **Idempotency:** re-processing the same S3 key (a Lambda retry, or a
+    replayed DLQ message) must not double-index - reuses the existing
+    content-hash dedup (Phase 16) inside `pipeline.py` unchanged, nothing
+    new to build here.
+  - **Data/API contracts:** none this phase - no request/response shape
+    changes anywhere, since the live endpoint isn't touched yet.
+  - **Failure modes:** a malformed PDF or an unreachable Pinecone/Postgres
+    during Lambda execution → message not deleted → SQS redelivers after
+    the visibility timeout → retries up to `maxReceiveCount` → DLQ → status
+    set to `failed` with a real error message, never a silent drop.
+  - **Testing plan:** unit test the Lambda handler with a synthetic SQS/S3
+    event fixture (no real AWS call, matching this project's existing
+    fake-based convention); then one real integration pass - `put-object`
+    a real KB PDF, confirm the document reaches `indexed` in Postgres and
+    the chunks land in Pinecone; then an idempotency pass (invoke twice,
+    confirm no duplicate chunks); then a forced-failure pass (bad input or
+    a temporarily wrong Pinecone key) confirming the DLQ + `failed` status
+    path. Golden-dataset gate re-run afterward to confirm retrieval quality
+    holds for documents that arrived via this path.
+  - **Out of scope:** the API cutover (Phase 89), EventBridge fan-out (no
+    second consumer exists yet - the design doc's own call to defer this
+    until one does), any UI/client change.
+  - **Open questions:** the packaging decision above, pending user
+    confirmation before any AWS resource is created or billed.
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
