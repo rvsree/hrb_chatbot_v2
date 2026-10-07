@@ -9266,6 +9266,54 @@ Explicitly deferred to a later, separate wave - not part of the above:
     returned correctly - and leave history for EMP052 correctly reports
     no records (empty seed data, not an error).
 
+- [x] **Phase 119 — User-directed: cleanup pass across all three
+  applications (dead code, stale data/files, requirements.txt,
+  Postman, docs/diagrams, READMEs).**
+  - **Spec:** Three parallel read-only survey agents (one per repo -
+    `hrb_chatbot_v2`, `hrb_chatbot_ui`, `hrb_lms_mcp`) confirmed real
+    cleanup candidates via grep-verified zero-reference checks, not
+    guesses. This repo's own findings: 4 empty dead packages
+    (`repo/`, `ai/doc_processing/helper/`, `ai/rag_pipeline/prompts/`,
+    `common/clients/mcp_client/`), a byte-identical duplicate KB PDF
+    (`JPMC Unpaid TimeOff v1.pdf`), several requirements.txt entries
+    with zero imports anywhere in `src/`, and stale/broken links in
+    CLAUDE.md's dev-reference section (files moved in commit `967ee13`,
+    links never updated). Postman collection and `GET /v1/conversations`
+    BACKLOG.md note were checked and found already accurate/resolved -
+    no action needed on either.
+  - **Reusability requirement:** none - this is a one-time cleanup
+    pass, not a reusable function.
+  - **Testing plan:** full suite must stay green after every deletion;
+    no new tests needed since nothing user-facing changes.
+  - **Built and verified:** deleted the 4 empty dead packages, the
+    duplicate KB PDF, and 4 duplicate `docs/dev-reference/rag-retrieval/`
+    HTML/MD files (root copies kept, per direct confirmation - the 5th
+    file in that folder, `rag-pipeline-current-state.html`, has no root
+    duplicate and was kept as-is). Fixed all 8 broken dev-reference links
+    in CLAUDE.md. Struck through the now-resolved BACKLOG.md Phase 95
+    conversation-history note.
+    **requirements.txt - a real self-caught mistake worth recording**:
+    initially removed 7 packages as "zero imports in `src/`"
+    (`pydantic-settings`, `python-magic`, `loguru`, `colorlog`,
+    `aiofiles`, `psycopg-pool`, `deepeval`) - that check alone was
+    insufficient. Actually uninstalling them and re-running the suite
+    (not just grepping) immediately broke 24 test files:
+    `pydantic-settings` is a real transitive dependency of `mcp` itself
+    (`mcp.server.fastmcp.server` imports `BaseSettings` directly).
+    Re-checked all 7 properly via each installed package's own
+    `Requires-Dist` metadata, not just `src/`'s own imports: `aiofiles`
+    (required by `nemoguardrails`), `loguru` (required by `fastembed` and
+    `sentry-sdk`), and `psycopg-pool` (required by `psycopg[binary]`
+    itself) were all real transitive dependencies too - reinstalled all
+    4 and restored their requirements.txt lines with comments explaining
+    the real reason, matching this file's own established
+    pin-transitive-deps-explicitly convention (see the `pyjwt` entry).
+    Only `python-magic`, `colorlog`, and `deepeval` were genuinely
+    unused (confirmed via the same `Requires-Dist` check across every
+    installed package, not just a guess) - those 3 stayed removed, along
+    with the now-unnecessary `libmagic1` system package in `Dockerfile`.
+    358 passed, 6 deselected, both before AND after the correction.
+
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
    document id returned, file in `data/uploads/`, SQLite row exists. **Done**,
