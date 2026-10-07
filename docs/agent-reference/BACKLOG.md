@@ -1148,6 +1148,43 @@ two defaults should resolve dynamically via `get_active_vector_db()`/
 the metadata-store equivalent, not a hardcoded Enum literal - not done
 here, out of scope for a path-prefix-only phase.
 
+## Re-verified against live AWS/CI, 2026-10-07 - all still open, none regressed
+
+User asked to confirm current status of the "handful of AWS/Lambda infra
+items" noted above, against the real account/CI, not from memory. All five
+re-checked directly, nothing fixed itself, nothing got worse:
+
+1. **AWS CLI default region still `us-east-2`** (`aws configure get
+   region`) - unchanged from the Phase 88 finding above.
+2. **`hrb-chatbot-index-document` still has no reserved concurrency**
+   (`get-function-concurrency` returns empty) - unchanged, same 10-execution
+   account floor. The function itself is healthy and current: `State:
+   Active`, `MemorySize: 1024`, `Timeout: 300`, last deployed
+   `2026-10-06T13:53:10Z` (matches `deploy-lambda.yml`'s real run history).
+3. **`CI` workflow (`ci.yml`) still red** - 5 most recent runs on GitHub all
+   `completed failure`, same `ubuntu-latest` OpenAI-embedding-key issue
+   documented above, still unreproduced on Linux this session. `Deploy` and
+   `Deploy Lambda` are both still green (3/3 most recent runs each) - the
+   actual deploy pipeline is unaffected, same as before.
+4. **`GET /health` with no params still reports chromadb/sqlite** on
+   production, not the real active Pinecone/Postgres backends - confirmed
+   live: bare `/health` returns `vector_database.provider: "chromadb"`
+   (0 collections), while `?metadata_provider=postgres&vector_provider=
+   pinecone` returns the real data (`355` vectors in Pinecone, `9`
+   documents in Postgres). Same misleading-default bug, same real fix
+   (`get_active_vector_db()` instead of a hardcoded Enum default), still
+   not done.
+5. **Async-path validation gap (Phase 88 round 2, item 1)** - not
+   re-exercised live this pass (would need a real S3 upload + Lambda
+   invoke); no code change has touched `index_document_handler.py`'s
+   validation since it was written, so there's no reason to expect it
+   changed. Still open, still deferred to Phase 89's presigned-upload
+   endpoint as documented above.
+
+Net: no new findings, nothing resolved. All five remain real, open,
+low-urgency gaps - safe to keep deferring unless one of them starts
+actually affecting production traffic.
+
 ## Codebase cleanup findings (Phase 93, 2026-10-06)
 
 Two independent Explore-agent audits run first, rather than guessing -
@@ -1246,21 +1283,50 @@ UI-build phase. Likely fix is a Presidio allowlist/exclusion entry for
 needs its own `**Spec:**` block, not a quick inline patch, since
 guardrail config changes affect every response, not just this one term.
 
-## multi-agentic-rag 500s whenever conversation memory is enabled (found 2026-10-06)
+~~## multi-agentic-rag 500s whenever conversation memory is enabled~~ Fixed
+2026-10-06 (Phase 97) - root cause was a PDF-ligature NUL byte reaching a
+Postgres TEXT column, not the LangGraph state wiring guessed at here when
+this was first found. See `RAG-ROADMAP.md`'s Phase 97 entry for the real
+fix. Entry kept struck-through rather than deleted outright, so the
+original (wrong) root-cause guess doesn't get silently lost.
 
-Found live, building `hrb_chatbot_ui`'s mode switcher:
-`POST /v1/multi-agentic-rag/query` with `enable_conversation_memory: true`
-returns a 500 `INTERNAL_ERROR` every time - confirmed 100% reproducible
-(tested with memory on and off, alternating, multiple times). The exact
-same request with `enable_conversation_memory: false` returns a normal
-200. genai-rag and single-agentic-rag both handle memory fine - this is
-specific to the multi-agent LangGraph pipeline
-(`ai/agents/workflow_agents/multi_agent_pipeline.py`, Phase 64), not a
-general conversation-memory bug. Not fixed this round (backend change,
-not critical to the UI-build phase per the user's own instruction) - the
-UI works around it by always sending `enable_conversation_memory: false`
-for this one mode specifically, with a visible note that multi-agentic-rag
-answers each question independently as a result. Worth its own
-`**Spec:**` block to actually fix - likely something in how
-`multi_agent_pipeline.py` wires conversation history into the LangGraph
-state across its planner → domain-agent → reviewer hops, not a one-line fix.
+## Token cost (in dollars), not just token counts, in Explainability
+
+Found 2026-10-06, user-directed, deliberately deferred alongside the
+identity-keyed rate-limiting item above. Once real token counts are
+captured and surfaced (see `RAG-ROADMAP.md`'s metrics-capture phase),
+converting to a dollar estimate is a small additional step - a per-model
+pricing table (prompt/completion rate, by `model_used`) multiplied against
+the already-captured counts. Not built now - token counts themselves are
+the priority; cost-in-dollars is a cheap follow-on once that lands, not
+before.
+
+## `chunking_strategy` is never persisted, only `chunk_size`/`chunk_overlap`
+
+Found 2026-10-06, building Phase 103's documents-table chunk-info display.
+`DocumentRecord.chunk_info.chunking_strategy` is always `null` for every
+real indexed document, confirmed live - `sqlite_client.py` has no
+`chunking_strategy` column at all (only `chunk_size`/`chunk_overlap` exist,
+confirmed by grep), even though `record_successful_index()` receives the
+real resolved strategy name as a parameter and simply never writes it.
+UI handles the `null` gracefully (omits the parenthetical rather than
+showing "(null)"), not fixed here - adding the column is a small,
+real, separate backend change (new column + migration + one more field
+in the `UPDATE` in `record_successful_index()`), out of this phase's scope.
+
+## multi-agentic-rag has no per-domain-agent token usage, and no caching
+
+Found 2026-10-06, Phase 110 (explainability/cache parity across all three
+retrieval modes). `explainability_info.token_usage` is always `null` for
+multi-agentic-rag specifically - real token capture would mean touching
+all 7 files the LangGraph graph fans out across (planner, 5 domain
+agents, reviewer), each calling an LLM independently, which this phase
+didn't otherwise need to change. genai-rag and single-agentic-rag both
+have real token counts (Phase 107/110). Separately, this pipeline also has
+no answer caching at all, unlike the other two (Phase 105/110) -
+`web_search_agent`/`lms_analytics_agent` can return live, time-sensitive
+data the same way `GetLeaveBalance` can, and there's no cheap per-node
+signal yet (unlike single-agentic-rag's `tools_used` list) to tell a
+cacheable turn from a live-data one without one. Both are real, scoped
+follow-ups, not silently skipped - see `RAG-ROADMAP.md`'s Phase 110 entry
+for the full reasoning.
