@@ -1334,7 +1334,7 @@ now does have caching** - the `token_usage`-stays-null half of this finding
 is still accurate, but the caching half is resolved, see Phase 115's own
 roadmap entry.
 
-## `HRB_LMS_MCP_URL` never configured on AWS - MCP-dependent tools fail live in production (found 2026-10-07)
+## ~~`HRB_LMS_MCP_URL` never configured on AWS~~ - resolved 2026-10-07, Phase 118
 
 `GetLeaveBalance`/`GetLeaveHistory` (single-agentic-rag) and the MCP
 fast-path (genai-rag) all call out to `hrb_lms_mcp`, a separate sibling
@@ -1356,9 +1356,15 @@ connection failure (the container tries to reach `127.0.0.1:8190` on
 *itself*, where nothing listens) and falls back to a generic "unable to
 retrieve... due to a connection issue" answer instead of a real number.
 
-**Not fixed here** - this needs a real decision: either deploy
-`hrb_lms_mcp` somewhere AWS can reach it (its own App Runner service, or
-similar) and wire the real URL/OAuth2 credentials into this project's
-App Runner config, or accept that leave-balance/leave-history questions
-are a local-dev-only demo capability for now and say so in the UI/docs.
-Both are legitimate choices - flagging, not deciding unilaterally.
+**Resolved, Phase 118 (2026-10-07, see RAG-ROADMAP.md for the full
+write-up)**: `hrb_lms_mcp` deployed to its own AWS App Runner service
+(`hrb-lms-mcp`, custom domain `hrb-lms-mcp.rvsree.dev`) with
+`hrb_emp_lms`/`hrb_lms_mcp_auth` schemas added to the same Neon
+`HR_Benefits` database this project already uses, and the real
+URL/OAuth2 credentials wired into this project's own App Runner config.
+A second, independent bug surfaced and got fixed along the way -
+`hrb_lms_mcp`'s `FastMCP("lms")` defaulted to DNS-rebinding Host-header
+protection that rejected every real (non-localhost) hostname with 421,
+masked by generic `ExceptionGroup` logging here until `exc_info=True`
+was added to surface it. Live-verified: the exact question that used to
+return the connection-issue fallback now returns a real PTO balance.
