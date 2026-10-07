@@ -9184,7 +9184,7 @@ Explicitly deferred to a later, separate wave - not part of the above:
     page loads) - screenshot shows the full exchange plus real
     conversation history loaded from the production backend.
 
-- [ ] **Phase 118 — User-directed: deploy `hrb_lms_mcp` to AWS and wire
+- [x] **Phase 118 — User-directed: deploy `hrb_lms_mcp` to AWS and wire
   it into production, with its own Postgres schemas for real DB
   boundaries.**
   - **Spec:** `HRB_LMS_MCP_URL` was never configured on AWS - confirmed
@@ -9229,19 +9229,42 @@ Explicitly deferred to a later, separate wave - not part of the above:
     (`HRB_LMS_MCP_URL`/`_OAUTH_TOKEN_URL`/`_OAUTH_CLIENT_ID` as plain env
     vars, `_OAUTH_CLIENT_SECRET` as a Secrets Manager secret) and
     redeployed - no code change needed on this side.
-  - **Known issue found during live verification, not yet resolved**: a
-    real OAuth2 token is acquired successfully from inside
-    `hrb-chatbot`'s own App Runner container (confirmed in CloudWatch
-    logs), but the actual MCP tool call then fails with `unhandled
-    errors in a TaskGroup (1 sub-exception)` - `agentic_tools.py`'s
-    `except Exception as error` + `logger.warning(..., error)` only logs
-    the `ExceptionGroup`'s own summary string, not the real sub-
-    exception, so the root cause isn't visible yet. The exact same call
-    (same URL, same credentials, same code) succeeds every time when run
-    from a local reproduction script outside AWS - points at something
-    App-Runner-network-specific (not a credentials/schema/deployment
-    problem, all of which are independently confirmed working).
-    Investigating next.
+  - **Real bug found and fixed during live verification**: the actual
+    MCP tool call failed with `httpx.HTTPStatusError: 421 Misdirected
+    Request` even though OAuth2 succeeded. `agentic_tools.py`'s
+    `except Exception as error` + plain `logger.warning(..., error)`
+    only logged the `ExceptionGroup`'s own summary ("unhandled errors in
+    a TaskGroup (1 sub-exception)"), not the real sub-exception - fixed
+    by adding `exc_info=True` to both `get_leave_balance_tool`/
+    `get_leave_history_tool`'s warning logs (small, standalone
+    improvement, same commit as this phase's doc update - no other code
+    in this repo changed). That surfaced the real cause: a direct `curl`
+    reproduction to `/mcp` (bypassing both services' own code entirely)
+    returned `server: envoy` / `"Invalid Host header"` - a dead giveaway
+    matching `mcp`'s own `transport_security.py` almost verbatim. Root
+    cause, in `hrb_lms_mcp`: `FastMCP("lms")` (no `host=` param) defaults
+    to `host="127.0.0.1"`, which auto-enables DNS-rebinding Host-header
+    protection allowing only `localhost`/`127.0.0.1` - regardless of
+    `main.py` binding uvicorn to `0.0.0.0` directly (FastMCP never finds
+    out). Any real hostname - the raw `*.awsapprunner.com` domain or a
+    dedicated custom domain (`hrb-lms-mcp.rvsree.dev`, provisioned while
+    investigating, same ACM/Route53 pattern as Phase 117 - ruled out
+    shared-domain TLS routing as a cause once both failed identically)
+    - got rejected. Fixed in `hrb_lms_mcp` with
+    `transport_security=TransportSecuritySettings(
+    enable_dns_rebinding_protection=False)`: this server is never
+    localhost-only in any real environment and already requires a real
+    Bearer JWT on every `/mcp` call, so DNS-rebinding protection (meant
+    to stop a malicious website's browser JS reaching a local dev
+    server) doesn't apply here and was only breaking real deployments.
+  - **Final live verification, production, 2026-10-07**: the exact
+    question that previously returned the connection-issue/system-error
+    fallback now returns real data - `"How many PTO days do I have
+    left?"` (EMP052) → *"You have 21.5 days of Paid Time Off (PTO)
+    available."*, groundedness 1.0/completeness 1.0 COMPLETE. Also
+    confirmed for EMP053 (the identity this phase added) - 20 PTO days
+    returned correctly - and leave history for EMP052 correctly reports
+    no records (empty seed data, not an error).
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
