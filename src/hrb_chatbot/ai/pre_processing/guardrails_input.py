@@ -6,6 +6,7 @@ from pathlib import Path
 from nemoguardrails import LLMRails, RailsConfig
 from nemoguardrails.rails.llm.options import RailStatus, RailType
 
+from src.hrb_chatbot.ai.pre_processing.safe_terms import protect_known_safe_terms
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("guardrails_input")
@@ -32,7 +33,8 @@ class GuardrailBlockedError(Exception):
 async def check_input(query: str) -> str:
     """Runs input rails on the query. Returns the query to actually use
     (masked if NeMo redacted PII). Raises GuardrailBlockedError if blocked."""
-    result = await get_rails().check_async([{"role": "user", "content": query}], rail_types=[RailType.INPUT])
+    protected_query = protect_known_safe_terms(query)
+    result = await get_rails().check_async([{"role": "user", "content": protected_query}], rail_types=[RailType.INPUT])
 
     if result.status == RailStatus.BLOCKED:
         logger.warning("Input blocked by guardrail %s", result.rail)

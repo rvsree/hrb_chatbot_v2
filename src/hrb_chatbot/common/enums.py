@@ -50,3 +50,11 @@ class Role(StrEnum):
     EMPLOYEE = "employee"
     MANAGER = "manager"
     HR_SUPPORT = "hr_support"
+
+
+class FeedbackVote(StrEnum):
+    """A fixed value set (Phase 104), not a plain str - matches the project's
+    own convention for this kind of field."""
+
+    HELPFUL = "helpful"
+    NOT_QUITE = "not_quite"

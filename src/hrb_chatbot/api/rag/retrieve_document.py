@@ -11,7 +11,16 @@ from src.hrb_chatbot.common.enums import Role
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rag_query_params import RagQueryParams
 from src.hrb_chatbot.common.rate_limiting.rate_limiter import enforce_rate_limit
-from src.hrb_chatbot.models.rag import AnswerInfo, RagQueryRequest, RagQueryResponse, RetrievalInfo
+from src.hrb_chatbot.models.rag import (
+    AnswerInfo,
+    EvalScores,
+    ExplainabilityInfo,
+    LatencyInfo,
+    RagQueryRequest,
+    RagQueryResponse,
+    RetrievalInfo,
+    TokenUsageInfo,
+)
 
 logger = get_logger("retrieve_document")
 
@@ -55,6 +64,8 @@ async def _answer_query(payload: RagQueryRequest, employee_id: str | None = None
             500, "The query could not be answered. Please try again.", code=error_codes.QUERY_FAILED
         )
 
+    token_usage = result.get("token_usage")
+    eval_scores = result.get("eval_scores")
     return RagQueryResponse(
         query=result["query"],
         answer_info=AnswerInfo(answer=result["answer"], model_used=result["model_used"]),
@@ -63,6 +74,14 @@ async def _answer_query(payload: RagQueryRequest, employee_id: str | None = None
             search_strategy=result["search_strategy"],
             applied_filter=result.get("applied_filter"),
             sources=result["sources"],
+        ),
+        explainability_info=ExplainabilityInfo(
+            served_from_cache=result["served_from_cache"],
+            llm_call_count=result["llm_call_count"],
+            latency_ms=LatencyInfo(**result["latency_ms"]),
+            token_usage=TokenUsageInfo(**token_usage) if token_usage else None,
+            routed_to=result.get("routed_to"),
+            eval_scores=EvalScores(**eval_scores) if eval_scores else None,
         ),
         conversation_id=result.get("conversation_id"),
     )

@@ -46,3 +46,22 @@ async def test_a_modified_query_returns_the_masked_text(monkeypatch):
     result = await check_input("My SSN is 123-45-6789")
 
     assert result == "My SSN is <MASKED>"
+
+
+async def test_a_known_safe_term_is_protected_before_the_guardrail_check(monkeypatch):
+    """Phase 113 - same protection as check_output(), on the input side."""
+    captured = {}
+
+    class SpyRails:
+        async def check_async(self, messages, rail_types=None):
+            captured["messages"] = messages
+            return FakeRailsResult("passed", content=messages[0]["content"])
+
+    monkeypatch.setattr(guardrails_input, "get_rails", lambda: SpyRails())
+
+    query = "What's the difference between Roth and traditional 401k?"
+    await check_input(query)
+
+    sent_content = captured["messages"][0]["content"]
+    assert sent_content != query
+    assert "⁦Roth⁩" in sent_content

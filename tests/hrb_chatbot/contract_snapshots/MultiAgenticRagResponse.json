@@ -20,16 +20,233 @@
       "title": "AgentTaskInfo",
       "type": "object"
     },
-    "ToolCallInfo": {
+    "EvalScores": {
+      "description": "Phase 109 - live LLM-as-judge scores, same prompts/parsing as the\noffline golden-dataset harness (golden_dataset_harness.py), run\nsynchronously per live response at the user's explicit request\n(accepted tradeoff: 2 extra judge LLM calls per live - not cached -\ngeneration). 0.0-1.0, not 0-10 - already normalized by the judge.",
       "properties": {
-        "tool_input": {
-          "description": "What the agent passed to it.",
-          "title": "Tool Input",
+        "groundedness": {
+          "description": "Is the answer supported by the retrieved context? 0.0-1.0.",
+          "title": "Groundedness",
+          "type": "number"
+        },
+        "groundedness_verdict": {
+          "description": "GROUNDED (>=0.7), PARTIAL (>=0.4), or HALLUCINATED.",
+          "title": "Groundedness Verdict",
           "type": "string"
         },
+        "completeness": {
+          "description": "Does the answer fully address the question? 0.0-1.0.",
+          "title": "Completeness",
+          "type": "number"
+        },
+        "completeness_verdict": {
+          "description": "COMPLETE (>=0.7), PARTIAL (>=0.4), or INCOMPLETE.",
+          "title": "Completeness Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "groundedness",
+        "groundedness_verdict",
+        "completeness",
+        "completeness_verdict"
+      ],
+      "title": "EvalScores",
+      "type": "object"
+    },
+    "ExplainabilityInfo": {
+      "description": "Phase 107/109 - real latency/token/cache-vs-live/eval numbers,\ngenai-rag only. Dollar cost is deliberately excluded (see BACKLOG.md).",
+      "properties": {
+        "served_from_cache": {
+          "description": "True if this answer came from the answer cache, not a live retrieval+generation call.",
+          "title": "Served From Cache",
+          "type": "boolean"
+        },
+        "llm_call_count": {
+          "description": "How many LLM calls this request made - 0 on a cache hit or MCP fast-path, 1 otherwise. Excludes eval-judge calls.",
+          "title": "Llm Call Count",
+          "type": "integer"
+        },
+        "latency_ms": {
+          "$ref": "#/$defs/LatencyInfo"
+        },
+        "token_usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TokenUsageInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Null on a cache hit, MCP fast-path, or a no-context answer that never called the LLM."
+        },
+        "routed_to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The MCP tool name if this answer was dynamically routed there instead of RAG (Phase 49/108). Null otherwise.",
+          "title": "Routed To"
+        },
+        "eval_scores": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EvalScores"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Null for an MCP answer or a no-context answer (nothing to check groundedness against). Reused as-is on a cache hit - same answer, same score, not re-judged."
+        }
+      },
+      "required": [
+        "served_from_cache",
+        "llm_call_count",
+        "latency_ms"
+      ],
+      "title": "ExplainabilityInfo",
+      "type": "object"
+    },
+    "LatencyInfo": {
+      "properties": {
+        "total": {
+          "description": "Total wall-clock time for this call, in milliseconds.",
+          "title": "Total",
+          "type": "number"
+        },
+        "retrieval": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Time spent retrieving chunks, in milliseconds. Null on a cache hit.",
+          "title": "Retrieval"
+        },
+        "generation": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Time spent generating the answer, in milliseconds. Null on a cache hit.",
+          "title": "Generation"
+        },
+        "eval": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Time spent on live eval-judge scoring, in milliseconds. Null when no eval ran this call (cache hit, MCP, or no context).",
+          "title": "Eval"
+        }
+      },
+      "required": [
+        "total"
+      ],
+      "title": "LatencyInfo",
+      "type": "object"
+    },
+    "RetrievedChunk": {
+      "description": "One chunk the retrieval step considered relevant to the query.",
+      "properties": {
+        "document_id": {
+          "description": "Which uploaded document this chunk came from.",
+          "title": "Document Id",
+          "type": "string"
+        },
+        "filename": {
+          "description": "That document's original filename.",
+          "title": "Filename",
+          "type": "string"
+        },
+        "chunk_index": {
+          "description": "This chunk's position within that document.",
+          "title": "Chunk Index",
+          "type": "integer"
+        },
+        "text": {
+          "description": "The chunk's text, as stored at index time.",
+          "title": "Text",
+          "type": "string"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The vector store's own similarity score, null for MMR results.",
+          "title": "Score"
+        }
+      },
+      "required": [
+        "document_id",
+        "filename",
+        "chunk_index",
+        "text"
+      ],
+      "title": "RetrievedChunk",
+      "type": "object"
+    },
+    "TokenUsageInfo": {
+      "properties": {
+        "prompt_tokens": {
+          "title": "Prompt Tokens",
+          "type": "integer"
+        },
+        "completion_tokens": {
+          "title": "Completion Tokens",
+          "type": "integer"
+        },
+        "total_tokens": {
+          "title": "Total Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens"
+      ],
+      "title": "TokenUsageInfo",
+      "type": "object"
+    },
+    "ToolCallInfo": {
+      "properties": {
         "tool_name": {
           "description": "Which tool the agent called.",
           "title": "Tool Name",
+          "type": "string"
+        },
+        "tool_input": {
+          "description": "What the agent passed to it.",
+          "title": "Tool Input",
           "type": "string"
         }
       },
@@ -43,32 +260,14 @@
   },
   "description": "What POST /query returns.",
   "properties": {
-    "answer": {
-      "description": "The final, synthesized answer.",
-      "title": "Answer",
-      "type": "string"
-    },
-    "conversation_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Echoed/generated when enable_conversation_memory was true - pass it back on the next call to continue this conversation. Null when memory wasn't enabled.",
-      "title": "Conversation Id"
-    },
-    "iterations": {
-      "description": "Total reasoning rounds across every sub-agent.",
-      "title": "Iterations",
-      "type": "integer"
-    },
     "query": {
       "description": "The question that was asked.",
       "title": "Query",
+      "type": "string"
+    },
+    "answer": {
+      "description": "The final, synthesized answer.",
+      "title": "Answer",
       "type": "string"
     },
     "tasks": {
@@ -86,6 +285,36 @@
       },
       "title": "Tools Used",
       "type": "array"
+    },
+    "sources": {
+      "description": "Phase 115 - real chunks from vector_kb_agent dispatches, if any.",
+      "items": {
+        "$ref": "#/$defs/RetrievedChunk"
+      },
+      "title": "Sources",
+      "type": "array"
+    },
+    "iterations": {
+      "description": "Total reasoning rounds across every sub-agent.",
+      "title": "Iterations",
+      "type": "integer"
+    },
+    "explainability_info": {
+      "$ref": "#/$defs/ExplainabilityInfo",
+      "description": "Phase 110/115 - total latency + llm_call_count + eval scores + real caching (cache-eligible only when every dispatched task was vector_kb_agent, see RAG-ROADMAP.md Phase 115). token_usage is still always null - not yet captured per-domain-agent (BACKLOG.md)."
+    },
+    "conversation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Echoed/generated when enable_conversation_memory was true - pass it back on the next call to continue this conversation. Null when memory wasn't enabled.",
+      "title": "Conversation Id"
     }
   },
   "required": [
@@ -93,7 +322,8 @@
     "answer",
     "tasks",
     "tools_used",
-    "iterations"
+    "iterations",
+    "explainability_info"
   ],
   "title": "MultiAgenticRagResponse",
   "type": "object"

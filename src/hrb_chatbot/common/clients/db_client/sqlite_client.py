@@ -36,6 +36,9 @@ ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN vector_db TEXT",
     "ALTER TABLE documents ADD COLUMN chunk_size INTEGER",
     "ALTER TABLE documents ADD COLUMN chunk_overlap INTEGER",
+    # Phase 114: chunk_size/chunk_overlap were always persisted - this one
+    # never was, despite record_successful_index() already receiving it.
+    "ALTER TABLE documents ADD COLUMN chunking_strategy TEXT",
     "ALTER TABLE documents ADD COLUMN last_indexed_at TEXT",
     "ALTER TABLE documents ADD COLUMN file_size_bytes INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE documents ADD COLUMN content_hash TEXT",
@@ -231,6 +234,7 @@ class SQLiteClient(BaseMetadataClient):
         embedding_model: str,
         embedding_dimension: int,
         vector_db: str,
+        chunking_strategy: str | None,
         chunk_size: int,
         chunk_overlap: int,
     ) -> int:
@@ -243,7 +247,7 @@ class SQLiteClient(BaseMetadataClient):
             async with aiosqlite.connect(self.db_path) as db:
                 cursor = await db.execute(
                     "UPDATE documents SET chunk_ids = ?, chunk_count = ?, embedding_model = ?, "
-                    "embedding_dimension = ?, vector_db = ?, chunk_size = ?, chunk_overlap = ?, "
+                    "embedding_dimension = ?, vector_db = ?, chunking_strategy = ?, chunk_size = ?, chunk_overlap = ?, "
                     "status = 'indexed', error_message = NULL, last_indexed_at = ?, updated_at = ?, "
                     "document_version = document_version + 1 WHERE id = ? RETURNING document_version",
                     (
@@ -252,6 +256,7 @@ class SQLiteClient(BaseMetadataClient):
                         embedding_model,
                         embedding_dimension,
                         vector_db,
+                        chunking_strategy,
                         chunk_size,
                         chunk_overlap,
                         now,

@@ -52,6 +52,12 @@ class OpenAIChatClient(BaseLLMClient):
         else:
             self.client = None
 
+        # Phase 107: the token usage of the most recent ask() call - a
+        # side-channel, not a return-type change, since ask() is the one
+        # shared interface every provider client implements identically
+        # and every existing caller expects a plain string back.
+        self.last_token_usage: dict | None = None
+
     def get_client(self):
         """Return the OpenAI object, or raise a clear error if there is no key."""
         if self.client is None:
@@ -89,6 +95,13 @@ class OpenAIChatClient(BaseLLMClient):
 
         if response.usage:
             logger.info("[openai] tokens used: %s prompt + %s completion", response.usage.prompt_tokens, response.usage.completion_tokens)
+            self.last_token_usage = {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens,
+            }
+        else:
+            self.last_token_usage = None
 
         answer = response.choices[0].message.content
         if answer is None:

@@ -86,9 +86,14 @@ class GatewayChatModel(BaseChatModel):
             temperature=self.temperature,
             max_tokens=self.max_tokens,
         )
-        # response_metadata carries which model actually answered - a
-        # chain ending in StrOutputParser() alone would discard this.
+        # response_metadata carries which model actually answered and
+        # (Phase 107) that call's token usage, if the provider client
+        # tracked one - a chain ending in StrOutputParser() alone would
+        # discard both.
+        token_usage = getattr(chat_client, "last_token_usage", None)
         generation = ChatGeneration(
-            message=AIMessage(content=answer, response_metadata={"model": chat_client.model})
+            message=AIMessage(
+                content=answer, response_metadata={"model": chat_client.model, "token_usage": token_usage}
+            )
         )
         return ChatResult(generations=[generation])

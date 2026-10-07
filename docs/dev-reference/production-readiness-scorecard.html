@@ -1,0 +1,224 @@
+<title>Production Readiness Scorecard</title>
+<style>
+  :root {
+    --bg: #f7f8fa; --surface: #ffffff; --border: #dde1e7;
+    --text: #1c2430; --text-dim: #5b6472;
+    --navy: #1f3a5f; --navy-dim: #345580;
+    --strong: #1a7f4e; --strong-bg: #e7f6ee;
+    --partial: #b45309; --partial-bg: #fef3e2;
+    --gap: #b3261e; --gap-bg: #fdeceb;
+    --mono-bg: #eef1f5;
+    --shadow: 0 1px 2px rgba(20,30,50,.06), 0 4px 14px rgba(20,30,50,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161d; --surface: #1a2029; --border: #2b3341;
+      --text: #e7ebf1; --text-dim: #9aa4b2;
+      --navy: #7ea0d4; --navy-dim: #5f83b8;
+      --strong: #4fd393; --strong-bg: #14301f;
+      --partial: #f0a94e; --partial-bg: #3a2c14;
+      --gap: #ff7a70; --gap-bg: #3a1614;
+      --mono-bg: #222a35;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 20px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12161d; --surface: #1a2029; --border: #2b3341;
+    --text: #e7ebf1; --text-dim: #9aa4b2;
+    --navy: #7ea0d4; --navy-dim: #5f83b8;
+    --strong: #4fd393; --strong-bg: #14301f;
+    --partial: #f0a94e; --partial-bg: #3a2c14;
+    --gap: #ff7a70; --gap-bg: #3a1614;
+    --mono-bg: #222a35;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 20px rgba(0,0,0,.35);
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: "Inter", -apple-system, "Segoe UI", sans-serif; padding: 28px 16px 60px; line-height: 1.5; }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  header.page { margin-bottom: 26px; }
+  header.page .eyebrow { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--navy-dim); font-weight: 700; margin-bottom: 6px; }
+  header.page h1 { font-size: 25px; margin: 0 0 8px; letter-spacing: -0.01em; }
+  header.page p.sub { color: var(--text-dim); font-size: 14px; max-width: 72ch; margin: 0; }
+
+  .verdict-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 22px 0; }
+  @media (max-width: 640px) { .verdict-row { grid-template-columns: 1fr; } }
+  .verdict-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+  .verdict-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); font-weight: 700; margin-bottom: 6px; }
+  .verdict-card .verdict { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+  .verdict-card.strong .verdict { color: var(--strong); }
+  .verdict-card.partial .verdict { color: var(--partial); }
+  .verdict-card p { font-size: 13px; color: var(--text-dim); margin: 0; }
+
+  section { margin: 34px 0; }
+  section > h2 { font-size: 12.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--navy-dim); font-weight: 700; margin: 0 0 12px; }
+
+  .score-table { width: 100%; border-collapse: collapse; font-size: 13.5px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
+  .score-table th, .score-table td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .score-table th { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); font-weight: 700; background: var(--mono-bg); }
+  .score-table tr:last-child td { border-bottom: none; }
+  .score-table td.item { font-weight: 600; width: 22%; }
+  .score-table td.evidence code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 11.8px; background: var(--mono-bg); padding: 1px 5px; border-radius: 5px; }
+
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+  .badge.strong { background: var(--strong-bg); color: var(--strong); }
+  .badge.partial { background: var(--partial-bg); color: var(--partial); }
+  .badge.gap { background: var(--gap-bg); color: var(--gap); }
+
+  .priority-list { display: flex; flex-direction: column; gap: 10px; }
+  .priority { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--gap); border-radius: 10px; padding: 12px 16px; box-shadow: var(--shadow); display: flex; gap: 12px; align-items: baseline; }
+  .priority .rank { font-size: 20px; font-weight: 800; color: var(--gap); flex: none; width: 24px; }
+  .priority .body .t { font-weight: 600; font-size: 13.5px; }
+  .priority .body .w { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; }
+
+  footer.page { margin-top: 44px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--text-dim); font-size: 12px; }
+  @media (max-width: 560px) { header.page h1 { font-size: 21px; } .score-table { font-size: 12.5px; } .score-table th, .score-table td { padding: 8px 10px; } }
+</style>
+
+<div class="wrap">
+  <header class="page">
+    <div class="eyebrow">hrb_chatbot_v2 &middot; status snapshot &middot; 2026-10-01</div>
+    <h1>Production Readiness Scorecard</h1>
+    <p class="sub">Where this project stands against the AI-reliability evaluation framework (rubric method, golden datasets, confidence-trap avoidance) and the RAG performance framework (latency staging, re-ranking trade-offs, caching) &mdash; checked against the live code, not assumed.</p>
+  </header>
+
+  <div class="verdict-row">
+    <div class="verdict-card strong">
+      <div class="label">Reliability Evaluation</div>
+      <div class="verdict">Strong in substance, not yet enforced</div>
+      <p>Golden dataset, groundedness scoring, and a real release gate all exist and are well-designed. The gate is manual (<code>pytest -m eval</code>), not wired into CI &mdash; nothing stops a deploy if it's skipped.</p>
+    </div>
+    <div class="verdict-card partial">
+      <div class="label">RAG Performance Engineering</div>
+      <div class="verdict">Early-stage</div>
+      <p>No re-ranking stage, no TTFT/streaming, no rolled-up per-request latency breakdown, and zero response caching of any kind. Personalization exists and would complicate caching &mdash; but there's no base cache yet for that to apply to.</p>
+    </div>
+  </div>
+
+  <section>
+    <h2>Reliability Evaluation Framework</h2>
+    <table class="score-table">
+      <thead><tr><th>Guideline</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="item">Define success &amp; failure</td>
+          <td><span class="badge partial">Partial</span></td>
+          <td class="evidence">Forbidden actions are documented, but scattered &mdash; the agent system prompt states <code>"never invent a policy detail or a balance number"</code> (<code>orchestration_agent.py</code>), and NeMo Guardrails' rails define unsafe-input/output behavior. No single structured "must get right / must never do" document exists separately from these.</td>
+        </tr>
+        <tr>
+          <td class="item">The rubric method</td>
+          <td><span class="badge partial">Partial</span></td>
+          <td class="evidence"><code>expected_keywords</code> is exactly the generic/weak check the guideline warns against. It's paired with an LLM-judged <code>evaluate_completeness()</code> scored against <code>expected_answer</code> &mdash; closer to a rubric, but still one holistic 0-10 score per case, not a structured multi-point checklist per task.</td>
+        </tr>
+        <tr>
+          <td class="item">Golden dataset: covered + uncovered</td>
+          <td><span class="badge strong">Strong</span></td>
+          <td class="evidence">23 cases: 18 happy, 1 multi-document, 2 out-of-scope, 1 unanswerable, 1 adversarial &mdash; the last 4 categories exist specifically to test that the agent declines/hedges rather than fabricates. Matches the guideline's "situations not covered" requirement directly.</td>
+        </tr>
+        <tr>
+          <td class="item">Per-task risk &rarr; check &rarr; test &rarr; refine loop</td>
+          <td><span class="badge gap">Gap</span></td>
+          <td class="evidence">No documented, repeatable process for this. Evaluation happens at the dataset level (23 fixed cases), not as a per-task risk-identification workflow a developer runs when adding a new capability.</td>
+        </tr>
+        <tr>
+          <td class="item">Confidence-trap avoidance</td>
+          <td><span class="badge strong">Strong</span></td>
+          <td class="evidence"><code>evaluate_groundedness()</code> specifically checks whether an answer is actually supported by retrieved context, not just well-articulated &mdash; this is the direct, purpose-built defense against the confidence trap.</td>
+        </tr>
+        <tr>
+          <td class="item">Generic-checklist avoidance</td>
+          <td><span class="badge partial">Partial</span></td>
+          <td class="evidence">Keyword-only checking still exists as one signal (<code>expected_keywords</code>), but is never the only check &mdash; always paired with LLM-judged faithfulness/completeness.</td>
+        </tr>
+        <tr>
+          <td class="item">Premature-deployment avoidance</td>
+          <td><span class="badge strong">Strong</span><br/><span class="badge gap" style="margin-top:4px">but not enforced</span></td>
+          <td class="evidence"><code>get_release_decision()</code> gates on aggregate scores across all 23 cases (PASS/REVIEW/BLOCK), not a single demo run. Confirmed not wired into <code>.github/workflows/ci.yml</code> &mdash; CI only runs the default suite; the eval marker is manual-only.</td>
+        </tr>
+        <tr>
+          <td class="item">"Silence is safe" avoidance</td>
+          <td><span class="badge strong">Strong</span></td>
+          <td class="evidence"><code>response_generator.py</code>'s <code>NO_CONTEXT_ANSWER</code> path declines when no chunks are retrieved, without calling the LLM. System prompt forbids guessing. Golden dataset explicitly tests this. Nuance: it declines, but doesn't route to a human/ticket &mdash; no escalation integration exists beyond the decline message itself.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>RAG Performance Engineering</h2>
+    <table class="score-table">
+      <thead><tr><th>Guideline</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="item">Stage-by-stage latency measurement</td>
+          <td><span class="badge partial">Partial</span></td>
+          <td class="evidence"><code>log_backend_call()</code> logs latency per individual backend call (e.g. <code>chromadb vector.query</code>, <code>openai chat.ask</code>) with distinct service/operation tags &mdash; the raw signal exists. Never rolled up into a per-request "retrieval took Xms, generation took Yms" report.</td>
+        </tr>
+        <tr>
+          <td class="item">TTFT vs. total response time</td>
+          <td><span class="badge gap">Gap</span></td>
+          <td class="evidence">No streaming anywhere in the codebase (confirmed: zero matches for streaming/TTFT). Responses are generated in full before returning, so TTFT isn't a meaningful concept yet &mdash; it would equal total latency.</td>
+        </tr>
+        <tr>
+          <td class="item">Re-ranking decision</td>
+          <td><span class="badge gap">Gap</span></td>
+          <td class="evidence">No re-ranking stage exists (confirmed: zero matches for rerank/cross-encoder anywhere). This isn't a documented "retrieval is strong enough to skip it" trade-off decision &mdash; it was simply never built or evaluated either way.</td>
+        </tr>
+        <tr>
+          <td class="item">Caching</td>
+          <td><span class="badge gap">Gap</span></td>
+          <td class="evidence">Zero response caching of any kind. The only "cache" hits in the codebase are an OAuth2 Bearer token cache and generic client-singleton caching &mdash; unrelated to RAG response reuse.</td>
+        </tr>
+        <tr>
+          <td class="item">Personalization</td>
+          <td><span class="badge strong">Strong</span></td>
+          <td class="evidence">Real, not hypothetical: server-side conversation memory (Phase 58) and per-employee MCP tool scoping (<code>GetLeaveBalance</code>/<code>GetLeaveHistory</code>, scoped by <code>employee_id</code> from <code>user_profile</code>) both exist. This is exactly the kind of personalization that would make caching non-trivial &mdash; relevant context for when caching eventually gets built.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>If this needs to be demo-ready at a production-grade level, in priority order</h2>
+    <div class="priority-list">
+      <div class="priority">
+        <div class="rank">1</div>
+        <div class="body">
+          <div class="t">Wire the release gate into CI</div>
+          <div class="w">The single highest-leverage fix: the eval harness already exists and is well-designed. Today it only protects a deploy if someone remembers to run it manually.</div>
+        </div>
+      </div>
+      <div class="priority">
+        <div class="rank">2</div>
+        <div class="body">
+          <div class="t">Write a structured rubric per task, not just keyword + holistic score</div>
+          <div class="w">Replace/augment <code>expected_keywords</code> with multi-point criteria per golden-dataset case (e.g. "states the match % AND the vesting period AND does not claim eligibility before 1 year").</div>
+        </div>
+      </div>
+      <div class="priority">
+        <div class="rank">3</div>
+        <div class="body">
+          <div class="t">Roll up per-request latency into a stage breakdown</div>
+          <div class="w">The raw data already exists in logs (retrieval calls and generation calls are separately tagged) &mdash; this is an aggregation/reporting task, not new instrumentation.</div>
+        </div>
+      </div>
+      <div class="priority">
+        <div class="rank">4</div>
+        <div class="body">
+          <div class="t">Make a documented re-ranking decision, not a default-by-omission</div>
+          <div class="w">Either evaluate a reranker against current retrieval precision/recall (now measurable via Phase 62's deterministic metrics), or write down explicitly why current retrieval is judged good enough to skip it.</div>
+        </div>
+      </div>
+      <div class="priority">
+        <div class="rank">5</div>
+        <div class="body">
+          <div class="t">Caching, tiered by personalization</div>
+          <div class="w">Lowest urgency for a demo, but worth planning given personalization already exists: a global cache for non-personalized policy Q&amp;A, separate from the per-employee MCP lookups that can never be cached the same way.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="page">
+    hrb_chatbot_v2 &middot; verified against live code at <code>src/hrb_chatbot/</code>, not recalled from memory. Caching/rerank/streaming findings confirmed via direct grep, zero matches. Latency logging confirmed by reading <code>call_logger.py</code> and its call sites. CI gate confirmed by reading <code>.github/workflows/ci.yml</code> directly.
+  </footer>
+</div>

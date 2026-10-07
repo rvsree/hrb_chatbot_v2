@@ -35,3 +35,13 @@ async def save_turn(conversation_id: str, employee_id: str | None, human_content
 async def delete_conversation(conversation_id: str, employee_id: str) -> int:
     """Deletes every turn for one conversation - the NFR delete-my-data endpoint's own logic."""
     return await get_db_gateway().conversation_store().delete_conversation(conversation_id, employee_id)
+
+
+async def list_conversations(employee_id: str) -> list[dict]:
+    """Phase 116 - one row per distinct conversation this employee has turns in."""
+    return await get_db_gateway().conversation_store().list_conversations(employee_id)
+
+
+async def get_conversation_turns(conversation_id: str, employee_id: str) -> list[dict]:
+    """Phase 116 - [] if unknown or not this employee's own conversation."""
+    return await get_db_gateway().conversation_store().get_conversation_turns(conversation_id, employee_id)

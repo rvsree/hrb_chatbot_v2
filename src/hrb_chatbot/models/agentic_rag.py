@@ -4,6 +4,7 @@ Phase 45 identity-via-payload pattern as models/rag.py, not headers."""
 from pydantic import BaseModel, Field
 
 from src.hrb_chatbot.models.common import UserProfile
+from src.hrb_chatbot.models.rag import ExplainabilityInfo, RetrievedChunk
 
 
 class AgenticRagRequest(BaseModel):
@@ -33,7 +34,11 @@ class AgenticRagResponse(BaseModel):
     query: str = Field(..., description="The question that was asked.")
     answer: str = Field(..., description="The agent's final answer.")
     tools_used: list[ToolCallInfo] = Field(..., description="Every tool call the agent made, in order.")
+    sources: list[RetrievedChunk] = Field(
+        default_factory=list, description="Phase 115 - real chunks from SearchKnowledgeBase calls, if any."
+    )
     iterations: int = Field(..., description="How many reasoning rounds the agent actually took.")
+    explainability_info: ExplainabilityInfo = Field(..., description="Phase 110 - same shape as genai-rag's own.")
     conversation_id: str | None = Field(
         None,
         description="Echoed/generated when enable_conversation_memory was true - pass it back on the next "

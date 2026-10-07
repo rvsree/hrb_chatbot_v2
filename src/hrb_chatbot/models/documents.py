@@ -204,7 +204,9 @@ class DocumentRecord(BaseModel):
             vector_db=document.get("vector_db"),
             uploaded_by=document.get("uploaded_by"),
             chunk_info=ChunkInfoResult(
-                chunk_size=document.get("chunk_size"), chunk_overlap=document.get("chunk_overlap")
+                chunking_strategy=document.get("chunking_strategy"),
+                chunk_size=document.get("chunk_size"),
+                chunk_overlap=document.get("chunk_overlap"),
             ),
             document_metadata=DocumentMetadataResult(
                 doc_category=document.get("doc_category"),

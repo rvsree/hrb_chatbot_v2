@@ -292,6 +292,7 @@ class FakeMetadataStore(BaseMetadataClient):
         embedding_model=None,
         embedding_dimension=None,
         vector_db=None,
+        chunking_strategy=None,
         chunk_size=None,
         chunk_overlap=None,
     ):
@@ -301,6 +302,7 @@ class FakeMetadataStore(BaseMetadataClient):
         document["chunk_ids"] = json.dumps(chunk_ids)
         document["chunk_count"] = len(chunk_ids)
         document["embedding_model"] = embedding_model
+        document["chunking_strategy"] = chunking_strategy
         document["embedding_dimension"] = embedding_dimension
         document["vector_db"] = vector_db
         document["chunk_size"] = chunk_size
@@ -366,13 +368,20 @@ class FakeConversationStore:
 
     def __init__(self):
         self._turns: dict[str, list[dict]] = {}
+        self._next_created_at = 0
+
+    def _tick(self):
+        self._next_created_at += 1
+        return f"2026-10-07T00:00:{self._next_created_at:02d}Z"
 
     async def load_turns(self, conversation_id):
         return list(self._turns.get(conversation_id, []))
 
     async def save_turn(self, conversation_id, employee_id, role, content):
         turns = self._turns.setdefault(conversation_id, [])
-        turns.append({"employee_id": employee_id, "role": role, "content": content})
+        turns.append(
+            {"employee_id": employee_id, "role": role, "content": content, "created_at": self._tick()}
+        )
 
     async def delete_conversation(self, conversation_id, employee_id):
         turns = self._turns.get(conversation_id, [])
@@ -382,6 +391,69 @@ class FakeConversationStore:
         deleted_count = len(turns)
         self._turns.pop(conversation_id, None)
         return deleted_count
+
+    async def get_conversation_turns(self, conversation_id, employee_id):
+        turns = self._turns.get(conversation_id, [])
+        if not turns or any(turn["employee_id"] != employee_id for turn in turns):
+            return []
+        return [{"role": t["role"], "content": t["content"], "created_at": t["created_at"]} for t in turns]
+
+    async def list_conversations(self, employee_id):
+        conversations = []
+        for conversation_id, turns in self._turns.items():
+            own_turns = [t for t in turns if t["employee_id"] == employee_id]
+            if not own_turns:
+                continue
+            first_human = next((t for t in own_turns if t["role"] == "human"), own_turns[0])
+            conversations.append(
+                {
+                    "conversation_id": conversation_id,
+                    "title": first_human["content"],
+                    "started_at": own_turns[0]["created_at"],
+                    "last_updated_at": own_turns[-1]["created_at"],
+                }
+            )
+        conversations.sort(key=lambda c: c["last_updated_at"], reverse=True)
+        return conversations
+
+    def health_check(self):
+        return {"provider": "postgres", "status": "healthy"}
+
+
+class FakeFeedbackStore:
+    """Stands in for FeedbackStore (Phase 104) - plain in-memory list, same
+    async interface as the real Postgres-backed one, never touches a real
+    database."""
+
+    def __init__(self):
+        self._entries: list[dict] = []
+        self._next_id = 1
+
+    async def save_feedback(
+        self, employee_id, conversation_id, message_id, vote, reason_tags, notes, question, answer
+    ):
+        feedback_id = self._next_id
+        self._next_id += 1
+        self._entries.append(
+            {
+                "id": feedback_id,
+                "employee_id": employee_id,
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "vote": vote,
+                "reason_tags": list(reason_tags),
+                "notes": notes,
+                "question": question,
+                "answer": answer,
+                "created_at": "2026-10-06T00:00:00Z",
+            }
+        )
+        return feedback_id
+
+    async def list_feedback(self, employee_id):
+        if employee_id is None:
+            return list(reversed(self._entries))
+        return list(reversed([entry for entry in self._entries if entry["employee_id"] == employee_id]))
 
     def health_check(self):
         return {"provider": "postgres", "status": "healthy"}
@@ -417,6 +489,7 @@ class FakeAnswerCache:
 
     def __init__(self):
         self._entries: dict[str, dict] = {}
+        self._convo_tags: dict[str, set[str]] = {}
         self.clear_all_call_count = 0
 
     async def get(self, cache_key):
@@ -424,6 +497,17 @@ class FakeAnswerCache:
 
     async def set(self, cache_key, query, answer):
         self._entries[cache_key] = answer
+
+    async def tag_conversation(self, conversation_id, cache_key):
+        self._convo_tags.setdefault(conversation_id, set()).add(cache_key)
+
+    async def clear_for_conversation(self, conversation_id):
+        cache_keys = self._convo_tags.pop(conversation_id, set())
+        deleted = 0
+        for cache_key in cache_keys:
+            if self._entries.pop(cache_key, None) is not None:
+                deleted += 1
+        return deleted
 
     async def clear_all(self):
         count = len(self._entries)
@@ -446,12 +530,14 @@ class FakeDBGateway:
         vector_store: FakeVectorStore | None = None,
         metadata_store: FakeMetadataStore | None = None,
         conversation_store: FakeConversationStore | None = None,
+        feedback_store: "FakeFeedbackStore | None" = None,
         embedding_cache: FakeEmbeddingCache | None = None,
         answer_cache: FakeAnswerCache | None = None,
     ):
         self._vector_store = vector_store or FakeVectorStore()
         self._metadata_store = metadata_store or FakeMetadataStore()
         self._conversation_store = conversation_store or FakeConversationStore()
+        self._feedback_store = feedback_store or FakeFeedbackStore()
         self._embedding_cache = embedding_cache or FakeEmbeddingCache()
         self._answer_cache = answer_cache or FakeAnswerCache()
 
@@ -463,6 +549,9 @@ class FakeDBGateway:
 
     def conversation_store(self):
         return self._conversation_store
+
+    def feedback_store(self):
+        return self._feedback_store
 
     def embedding_cache(self):
         return self._embedding_cache
