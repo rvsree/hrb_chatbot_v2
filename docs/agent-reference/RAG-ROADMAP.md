@@ -9172,9 +9172,17 @@ Explicitly deferred to a later, separate wave - not part of the above:
   - **Built and verified:** `allow_origins` now
     `["http://localhost:5173", "http://localhost:4173",
     "https://hrb-chatbot-ui.rvsree.dev"]`. 358 passed, 6 deselected.
-    Deployed via feature → develop → master → `deploy.yml`. Live CORS
-    verification against the hosted frontend follows once the S3/
-    CloudFront setup below is live (same phase, recorded here once done).
+    Deployed via feature → develop → master → `deploy.yml`. Frontend
+    hosting (S3 bucket `hrb-chatbot-ui-rvsree`, CloudFront distribution
+    `E1CBYCM65AXV9Y` with an Origin Access Control - the bucket itself
+    stays fully private, no public access block overrides - ACM cert in
+    us-east-1, Route53 alias record) provisioned manually via the AWS
+    CLI, 2026-10-07. Verified live end-to-end with Playwright against
+    `https://hrb-chatbot-ui.rvsree.dev`: login succeeded, a real genai-
+    rag question got a real grounded answer with sources, zero browser
+    console errors (confirms CORS is actually working, not just that the
+    page loads) - screenshot shows the full exchange plus real
+    conversation history loaded from the production backend.
 
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
