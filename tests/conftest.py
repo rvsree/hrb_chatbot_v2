@@ -387,6 +387,45 @@ class FakeConversationStore:
         return {"provider": "postgres", "status": "healthy"}
 
 
+class FakeFeedbackStore:
+    """Stands in for FeedbackStore (Phase 104) - plain in-memory list, same
+    async interface as the real Postgres-backed one, never touches a real
+    database."""
+
+    def __init__(self):
+        self._entries: list[dict] = []
+        self._next_id = 1
+
+    async def save_feedback(
+        self, employee_id, conversation_id, message_id, vote, reason_tags, notes, question, answer
+    ):
+        feedback_id = self._next_id
+        self._next_id += 1
+        self._entries.append(
+            {
+                "id": feedback_id,
+                "employee_id": employee_id,
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "vote": vote,
+                "reason_tags": list(reason_tags),
+                "notes": notes,
+                "question": question,
+                "answer": answer,
+                "created_at": "2026-10-06T00:00:00Z",
+            }
+        )
+        return feedback_id
+
+    async def list_feedback(self, employee_id):
+        if employee_id is None:
+            return list(reversed(self._entries))
+        return list(reversed([entry for entry in self._entries if entry["employee_id"] == employee_id]))
+
+    def health_check(self):
+        return {"provider": "postgres", "status": "healthy"}
+
+
 class FakeEmbeddingCache:
     """Stands in for EmbeddingCache (Phase 84, Redis-backed) - plain
     in-memory dict keyed by (content_hash, embedding_model), same async
@@ -446,12 +485,14 @@ class FakeDBGateway:
         vector_store: FakeVectorStore | None = None,
         metadata_store: FakeMetadataStore | None = None,
         conversation_store: FakeConversationStore | None = None,
+        feedback_store: "FakeFeedbackStore | None" = None,
         embedding_cache: FakeEmbeddingCache | None = None,
         answer_cache: FakeAnswerCache | None = None,
     ):
         self._vector_store = vector_store or FakeVectorStore()
         self._metadata_store = metadata_store or FakeMetadataStore()
         self._conversation_store = conversation_store or FakeConversationStore()
+        self._feedback_store = feedback_store or FakeFeedbackStore()
         self._embedding_cache = embedding_cache or FakeEmbeddingCache()
         self._answer_cache = answer_cache or FakeAnswerCache()
 
@@ -463,6 +504,9 @@ class FakeDBGateway:
 
     def conversation_store(self):
         return self._conversation_store
+
+    def feedback_store(self):
+        return self._feedback_store
 
     def embedding_cache(self):
         return self._embedding_cache
