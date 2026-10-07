@@ -9184,6 +9184,65 @@ Explicitly deferred to a later, separate wave - not part of the above:
     page loads) - screenshot shows the full exchange plus real
     conversation history loaded from the production backend.
 
+- [ ] **Phase 118 — User-directed: deploy `hrb_lms_mcp` to AWS and wire
+  it into production, with its own Postgres schemas for real DB
+  boundaries.**
+  - **Spec:** `HRB_LMS_MCP_URL` was never configured on AWS - confirmed
+    live (BACKLOG.md) that `GetLeaveBalance`/`GetLeaveHistory` fail in
+    production, falling back to `127.0.0.1:8190` (the container itself).
+    Both sides of real OAuth2 client-credentials auth already existed
+    and were tested working locally 2026-09-22 (client:
+    `common/clients/auth_client/oauth_client.py`, already committed;
+    server: `hrb_lms_mcp`'s `BearerAuthMiddleware`/`token_service.py`,
+    uncommitted) - this phase deploys and wires them up, not builds new
+    auth. User-confirmed: new `hrb_emp_lms`/`hrb_lms_mcp_auth` schemas
+    live in the same Neon `HR_Benefits` database `hrb_chatbot_v2`
+    already uses in production (schema-per-service, not a new DB
+    instance) - zero new DB provisioning, reuses the working connection.
+  - **Reusability requirement:** none specific to this phase - the
+    client-side OAuth2/MCP code already existed and needed no changes,
+    only configuration (this repo's own `main.py`/settings untouched;
+    all code changes landed in the separate `hrb_lms_mcp` repo).
+  - **Testing plan:** no new `hrb_chatbot_v2` automated test (no code
+    changed in this repo beyond this doc) - verified live: real OAuth2
+    token + real MCP tool call from a direct reproduction script, then
+    the actual production endpoint with the same question that
+    previously returned the connection-issue fallback.
+  - **Built and verified:** `hrb_lms_mcp` (`C:\workspace\poc\2026\
+    hrb_lms_mcp`, GitHub `rvsree/hrb_lms_mcp`) - committed the
+    uncommitted OAuth2 work plus a fix for a real data gap found
+    (`EMP053`/"Mia Manager" was missing from its sample data, only the
+    unrelated `MGR006`/"Mona Manager" identity existed); built this
+    project's first `Dockerfile`, which surfaced and fixed 2 real
+    dependency bugs a long-lived local `.venv` had been masking
+    (`mcp>=1.2.0` resolving to incompatible `mcp==2.3.0` in a clean
+    install; `psycopg2-binary` listed but never imported anywhere,
+    `postgres_db_client.py` actually uses `psycopg` v3). Deployed to a
+    new AWS App Runner service (`hrb-lms-mcp`, dedicated ECR repo, IAM
+    instance role, IAM deploy user, GitHub Actions `deploy.yml`) -
+    reachable at `https://munp3zn43b.us-east-1.awsapprunner.com`.
+    `hrb_emp_lms` (62 employees incl. EMP051/052/053, leave
+    types/balances) and `hrb_lms_mcp_auth` (real OAuth2 client row for
+    `hrb-chatbot-v2-prod`, a fresh secret never reused from local dev)
+    applied directly to the production Neon database. `hrb_chatbot_v2`'s
+    own App Runner service updated with the 4 new settings
+    (`HRB_LMS_MCP_URL`/`_OAUTH_TOKEN_URL`/`_OAUTH_CLIENT_ID` as plain env
+    vars, `_OAUTH_CLIENT_SECRET` as a Secrets Manager secret) and
+    redeployed - no code change needed on this side.
+  - **Known issue found during live verification, not yet resolved**: a
+    real OAuth2 token is acquired successfully from inside
+    `hrb-chatbot`'s own App Runner container (confirmed in CloudWatch
+    logs), but the actual MCP tool call then fails with `unhandled
+    errors in a TaskGroup (1 sub-exception)` - `agentic_tools.py`'s
+    `except Exception as error` + `logger.warning(..., error)` only logs
+    the `ExceptionGroup`'s own summary string, not the real sub-
+    exception, so the root cause isn't visible yet. The exact same call
+    (same URL, same credentials, same code) succeeds every time when run
+    from a local reproduction script outside AWS - points at something
+    App-Runner-network-specific (not a credentials/schema/deployment
+    problem, all of which are independently confirmed working).
+    Investigating next.
+
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
    document id returned, file in `data/uploads/`, SQLite row exists. **Done**,

@@ -41,7 +41,11 @@ async def get_leave_balance_tool(employee_id: str) -> tuple[str, list[dict]]:
     try:
         result = await get_leave_balance(employee_id.strip())
     except Exception as error:
-        logger.warning("get_leave_balance_tool failed for %r: %s", employee_id, error)
+        # exc_info=True (not plain %s) because anyio TaskGroup failures
+        # arrive as an ExceptionGroup whose str() is just "unhandled
+        # errors in a TaskGroup (N sub-exception)" - the real cause only
+        # shows up in the full traceback.
+        logger.warning("get_leave_balance_tool failed for %r: %s", employee_id, error, exc_info=True)
         return f"Error: leave balance lookup failed ({error}).", []
 
     return "\n".join(result["content"]), []
@@ -55,7 +59,7 @@ async def get_leave_history_tool(employee_id: str) -> tuple[str, list[dict]]:
     try:
         result = await get_leave_history(employee_id.strip())
     except Exception as error:
-        logger.warning("get_leave_history_tool failed for %r: %s", employee_id, error)
+        logger.warning("get_leave_history_tool failed for %r: %s", employee_id, error, exc_info=True)
         return f"Error: leave history lookup failed ({error}).", []
 
     return "\n".join(result["content"]), []
