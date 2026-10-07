@@ -47,7 +47,7 @@ app = FastAPI(
 # allow_credentials is safe here.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:4173"],
+    allow_origins=["http://localhost:5173", "http://localhost:4173", "https://hrb-chatbot-ui.rvsree.dev"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

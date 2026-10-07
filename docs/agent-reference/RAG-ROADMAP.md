@@ -9150,6 +9150,32 @@ Explicitly deferred to a later, separate wave - not part of the above:
     own earlier unlock - verified live with the switch on:
     `#mode-select` reported `disabled: false` with an active conversation.
 
+- [x] **Phase 117 — User-directed: CORS origin for the hosted
+  `hrb_chatbot_ui` frontend (S3 + CloudFront at
+  `hrb-chatbot-ui.rvsree.dev`).**
+  - **Spec:** `main.py`'s `CORSMiddleware.allow_origins` only ever listed
+    the two local dev-server ports (`localhost:5173`/`4173` - Vite's dev
+    and preview defaults). Hosting the frontend for real on its own
+    domain needs that origin added too, or the browser blocks every
+    fetch from it before this API's own logic ever runs, regardless of
+    RBAC/anything else. One-line addition: `"https://hrb-chatbot-ui.
+    rvsree.dev"` appended to the existing list - the two local origins
+    stay, unchanged, for local dev.
+  - **Reusability requirement:** none - this list is read once at
+    `main.py` import time, already structured as a plain list every
+    future hosted origin just appends to.
+  - **Testing plan:** no new automated test (FastAPI's CORS behavior
+    itself isn't this project's own code to test) - verified live
+    instead, after deploy: a real browser `fetch()` from
+    `https://hrb-chatbot-ui.rvsree.dev` against the production API
+    succeeds instead of a CORS console error.
+  - **Built and verified:** `allow_origins` now
+    `["http://localhost:5173", "http://localhost:4173",
+    "https://hrb-chatbot-ui.rvsree.dev"]`. 358 passed, 6 deselected.
+    Deployed via feature → develop → master → `deploy.yml`. Live CORS
+    verification against the hosted frontend follows once the S3/
+    CloudFront setup below is live (same phase, recorded here once done).
+
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
    document id returned, file in `data/uploads/`, SQLite row exists. **Done**,
