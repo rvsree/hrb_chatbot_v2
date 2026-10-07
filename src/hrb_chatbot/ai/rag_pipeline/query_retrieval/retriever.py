@@ -8,7 +8,7 @@ from langchain_community.query_constructors.pinecone import PineconeTranslator
 from langchain_core.documents import Document
 
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
-from src.hrb_chatbot.common.clients.db_client.langchain_vector_store import COLLECTION_NAME, get_vector_store
+from src.hrb_chatbot.common.clients.db_client.langchain_vector_store import get_vector_store
 from src.hrb_chatbot.common.clients.llm_client.langchain_chat_model import GatewayChatModel
 from src.hrb_chatbot.common.config.settings import get_active_llm_provider, read_setting
 from src.hrb_chatbot.common.logging.logger import get_logger
