@@ -106,6 +106,7 @@ async def _record_index_success(
     embedding_model: str | None,
     embedding_dimension: int,
     resolved_vector_db: str,
+    chunking_strategy: str | None,
     chunk_size: int | None,
     chunk_overlap: int | None,
 ) -> int:
@@ -116,6 +117,7 @@ async def _record_index_success(
         embedding_model=embedding_model,
         embedding_dimension=embedding_dimension,
         vector_db=resolved_vector_db,
+        chunking_strategy=chunking_strategy,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
     )
@@ -161,6 +163,7 @@ async def write_chunks(
     embeddings: list[list[float]],
     vector_db: str | None = None,
     embedding_model: str | None = None,
+    chunking_strategy: str | None = None,
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
 ) -> dict:
@@ -192,7 +195,7 @@ async def write_chunks(
 
     document_version = await _record_index_success(
         metadata_store, document_id, new_chunk_ids, embedding_model, embedding_dimension,
-        resolved_vector_db, chunk_size, chunk_overlap,
+        resolved_vector_db, chunking_strategy, chunk_size, chunk_overlap,
     )
 
     # Only on this document's *first* index - no window where the old

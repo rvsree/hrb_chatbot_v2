@@ -292,6 +292,7 @@ class FakeMetadataStore(BaseMetadataClient):
         embedding_model=None,
         embedding_dimension=None,
         vector_db=None,
+        chunking_strategy=None,
         chunk_size=None,
         chunk_overlap=None,
     ):
@@ -301,6 +302,7 @@ class FakeMetadataStore(BaseMetadataClient):
         document["chunk_ids"] = json.dumps(chunk_ids)
         document["chunk_count"] = len(chunk_ids)
         document["embedding_model"] = embedding_model
+        document["chunking_strategy"] = chunking_strategy
         document["embedding_dimension"] = embedding_dimension
         document["vector_db"] = vector_db
         document["chunk_size"] = chunk_size

@@ -55,6 +55,7 @@ class BaseMetadataClient(ABC):
         embedding_model: str,
         embedding_dimension: int,
         vector_db: str,
+        chunking_strategy: str | None,
         chunk_size: int,
         chunk_overlap: int,
     ) -> int:

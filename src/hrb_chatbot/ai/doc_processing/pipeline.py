@@ -107,6 +107,7 @@ async def index_document(
         embeddings,
         vector_db=resolved_vector_db,
         embedding_model=resolved_embedding_model,
+        chunking_strategy=resolved_chunking_strategy,
         chunk_size=resolved_chunk_size,
         chunk_overlap=resolved_chunk_overlap,
     )
