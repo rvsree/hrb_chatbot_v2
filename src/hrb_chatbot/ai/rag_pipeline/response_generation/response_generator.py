@@ -79,9 +79,13 @@ CONVERSATIONAL_FALLBACK_PROMPT = ChatPromptTemplate.from_messages(
 
 
 def _to_result(message: AIMessage) -> dict:
-    # GatewayChatModel sets response_metadata["model"] - StrOutputParser()
-    # alone would discard it, and this app's response needs model_used too.
-    return {"answer": message.content, "model_used": message.response_metadata.get("model", "unknown")}
+    # GatewayChatModel sets response_metadata["model"]/["token_usage"] -
+    # StrOutputParser() alone would discard both.
+    return {
+        "answer": message.content,
+        "model_used": message.response_metadata.get("model", "unknown"),
+        "token_usage": message.response_metadata.get("token_usage"),
+    }
 
 
 def generate_answer(
@@ -116,7 +120,11 @@ def generate_answer(
             return result
 
         logger.info("No chunks retrieved for %r - returning the no-context answer, not calling the LLM", query)
-        return {"answer": NO_CONTEXT_ANSWER, "model_used": model_name or get_client_gateway().openai_chat().model}
+        return {
+            "answer": NO_CONTEXT_ANSWER,
+            "model_used": model_name or get_client_gateway().openai_chat().model,
+            "token_usage": None,
+        }
 
     llm = GatewayChatModel(
         provider=LlmProvider.OPENAI,

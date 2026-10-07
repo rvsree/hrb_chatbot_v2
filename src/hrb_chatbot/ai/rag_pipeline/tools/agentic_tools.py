@@ -1,4 +1,8 @@
-"""The 3 tools single-agentic-rag's agent can call - each wraps something that already exists, never raises."""
+"""The 3 tools single-agentic-rag's agent can call - each wraps something
+that already exists, never raises. Phase 115: every tool now returns
+(text, chunks) - text for the LLM to read, chunks (RetrievedChunk-shaped
+dicts, [] for the two non-retrieval tools) for the real citations list -
+not a side-channel, a uniform contract across all three."""
 
 from src.hrb_chatbot.ai.rag_pipeline.query_retrieval.retriever import retrieve_chunks
 from src.hrb_chatbot.ai.rag_pipeline.tools.mcp_tools import get_leave_balance, get_leave_history
@@ -7,10 +11,10 @@ from src.hrb_chatbot.common.logging.logger import get_logger
 logger = get_logger("rag_pipeline.tools.agentic_tools")
 
 
-async def search_knowledge_base(query: str, search_strategy: str | None = None) -> str:
+async def search_knowledge_base(query: str, search_strategy: str | None = None) -> tuple[str, list[dict]]:
     """The RAG tool - primary for "how do I"/policy questions; search_strategy lets the agent pick "mmr"."""
     if not query or not query.strip():
-        return "Error: please provide a question to search for."
+        return "Error: please provide a question to search for.", []
 
     resolved_strategy = search_strategy if search_strategy in ("similarity", "mmr") else "similarity"
 
@@ -18,43 +22,43 @@ async def search_knowledge_base(query: str, search_strategy: str | None = None) 
         chunks, _ = await retrieve_chunks(query, top_k=3, search_strategy=resolved_strategy)
     except Exception as error:
         logger.warning("search_knowledge_base failed for %r: %s", query, error)
-        return f"Error: knowledge base search failed ({error})."
+        return f"Error: knowledge base search failed ({error}).", []
 
     if not chunks:
-        return "No relevant knowledge base documents found."
+        return "No relevant knowledge base documents found.", []
 
     output = "Found relevant knowledge base content:\n\n"
     for i, chunk in enumerate(chunks, 1):
         output += f"--- Source {i} ({chunk['filename']}) ---\n{chunk['text']}\n\n"
-    return output
+    return output, chunks
 
 
-async def get_leave_balance_tool(employee_id: str) -> str:
+async def get_leave_balance_tool(employee_id: str) -> tuple[str, list[dict]]:
     """Wraps Phase 49's real MCP call - same live, OAuth2-secured call."""
     if not employee_id or not employee_id.strip():
-        return "Error: please provide an employee ID."
+        return "Error: please provide an employee ID.", []
 
     try:
         result = await get_leave_balance(employee_id.strip())
     except Exception as error:
         logger.warning("get_leave_balance_tool failed for %r: %s", employee_id, error)
-        return f"Error: leave balance lookup failed ({error})."
+        return f"Error: leave balance lookup failed ({error}).", []
 
-    return "\n".join(result["content"])
+    return "\n".join(result["content"]), []
 
 
-async def get_leave_history_tool(employee_id: str) -> str:
+async def get_leave_history_tool(employee_id: str) -> tuple[str, list[dict]]:
     """Wraps Phase 49's real MCP call - same live, OAuth2-secured call."""
     if not employee_id or not employee_id.strip():
-        return "Error: please provide an employee ID."
+        return "Error: please provide an employee ID.", []
 
     try:
         result = await get_leave_history(employee_id.strip())
     except Exception as error:
         logger.warning("get_leave_history_tool failed for %r: %s", employee_id, error)
-        return f"Error: leave history lookup failed ({error})."
+        return f"Error: leave history lookup failed ({error}).", []
 
-    return "\n".join(result["content"])
+    return "\n".join(result["content"]), []
 
 
 # Tool definitions the agent's LLM sees - clear, specific descriptions improve tool selection.

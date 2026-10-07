@@ -1,13 +1,14 @@
 """Redis-backed answer cache (Phase 84) - exact-match only, keyed by a
 hash of the query plus every retrieval/generation parameter that could
-change the answer. Never used for a conversation-memory-enabled request -
-that answer depends on prior turns, not just the query alone (see
-pipeline.py's own wiring, unchanged by this phase). Replaces the
-Postgres-backed version from Phase 78 - same method signatures, so
-pipeline.py needed no changes at all; only db_gateway.py's construction
-changed. clear_all() is kept (SCAN+DELETE on a key prefix) for the same
-immediate-invalidation-on-document-change behavior Phase 78 established -
-TTL is added on top as defense in depth, not a replacement for it."""
+change the answer. Checked on every turn as of Phase 105, not just the
+first message of a fresh conversation - the user explicitly chose speed
+over per-turn context-freshness for a repeated exact-text question (see
+pipeline.py's own wiring). Replaces the Postgres-backed version from
+Phase 78 - same method signatures, so pipeline.py needed no changes for
+that migration; only db_gateway.py's construction changed. clear_all() is
+kept (SCAN+DELETE on a key prefix) for the same immediate-invalidation-
+on-document-change behavior Phase 78 established - TTL is added on top as
+defense in depth, not a replacement for it."""
 
 import hashlib
 import json
@@ -21,6 +22,7 @@ from src.hrb_chatbot.common.logging.logger import get_logger
 logger = get_logger("answer_cache")
 
 KEY_PREFIX = "answer_cache:"
+CONVO_TAG_PREFIX = "answer_cache_convo:"
 DEFAULT_TTL_SECONDS = 60 * 60 * 6  # 6 hours - an answer can go stale when a document updates
 
 
@@ -74,6 +76,41 @@ class AnswerCache:
                 await self._client_or_raise().set(KEY_PREFIX + cache_key, json.dumps(answer), ex=self.ttl_seconds)
         except Exception as error:
             logger.warning("[answer_cache] Redis unreachable on set, skipping cache write: %s", error)
+
+    async def tag_conversation(self, conversation_id: str, cache_key: str) -> None:
+        """Phase 112: remembers that this conversation's history now
+        depends on this cache entry, so deleting the conversation can
+        purge it later - best-effort, same never-raise pattern as set()."""
+        try:
+            with log_backend_call(logger, "redis", "answer_cache.tag_conversation", conversation_id=conversation_id):
+                client = self._client_or_raise()
+                tag_key = CONVO_TAG_PREFIX + conversation_id
+                await client.sadd(tag_key, cache_key)
+                await client.expire(tag_key, self.ttl_seconds)
+        except Exception as error:
+            logger.warning("[answer_cache] Redis unreachable on tag_conversation, skipping: %s", error)
+
+    async def clear_for_conversation(self, conversation_id: str) -> int:
+        """Deletes every cache entry this conversation's own turns
+        depended on - called when that conversation is deleted. A cache
+        entry another conversation also relied on is removed for them
+        too (accepted tradeoff - see RAG-ROADMAP.md Phase 112); their
+        next identical question just regenerates it, same as any cold
+        miss. Best-effort: a down cache just means those entries expire
+        on their own TTL instead."""
+        try:
+            with log_backend_call(logger, "redis", "answer_cache.clear_for_conversation", conversation_id=conversation_id):
+                client = self._client_or_raise()
+                tag_key = CONVO_TAG_PREFIX + conversation_id
+                cache_keys = await client.smembers(tag_key)
+                deleted = 0
+                for cache_key in cache_keys:
+                    deleted += await client.delete(KEY_PREFIX + cache_key)
+                await client.delete(tag_key)
+                return deleted
+        except Exception as error:
+            logger.warning("[answer_cache] Redis unreachable on clear_for_conversation, skipping: %s", error)
+            return 0
 
     async def clear_all(self) -> int:
         """Invalidation - clears every cached answer. Called whenever a document changes."""

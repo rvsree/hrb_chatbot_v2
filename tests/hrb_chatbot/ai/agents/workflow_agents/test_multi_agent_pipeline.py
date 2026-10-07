@@ -2,9 +2,33 @@
 dispatch (Send fan-out) -> domain agents -> Reviewer. Every agent and
 guardrail call is faked; only the graph wiring itself is real."""
 
+import pytest
+
 from src.hrb_chatbot.ai.agents.workflow_agents import multi_agent_pipeline
 from src.hrb_chatbot.ai.pre_processing import conversation_memory
 from tests.conftest import FakeConversationStore, FakeDBGateway
+
+
+@pytest.fixture(autouse=True)
+def _fake_cache_and_eval_judges(monkeypatch):
+    """Phase 110/115: run_multi_agent() now calls get_db_gateway().answer_cache()
+    and (for non-empty agent_result_texts) the real eval-judge functions on
+    every call - fake both for every test in this file, same reasoning/
+    confirmed-regression as test_pipeline.py's and test_orchestration_agent.py's
+    own fixtures (confirmed here too: unfaked, these tests logged real
+    "Redis unreachable"/"Event loop is closed" errors on every call)."""
+    gateway = FakeDBGateway()
+    monkeypatch.setattr(multi_agent_pipeline, "get_db_gateway", lambda: gateway)
+    monkeypatch.setattr(
+        multi_agent_pipeline,
+        "evaluate_groundedness",
+        lambda answer, context_texts: {"score": 0.9, "verdict": "GROUNDED", "explanation": "fake"},
+    )
+    monkeypatch.setattr(
+        multi_agent_pipeline,
+        "evaluate_completeness",
+        lambda query, answer, reference_answer=None: {"score": 0.9, "verdict": "COMPLETE", "explanation": "fake"},
+    )
 
 
 def _patch_guardrails(monkeypatch):
@@ -31,7 +55,7 @@ async def test_single_task_query_runs_one_domain_agent_and_skips_the_reviewer_ll
         return [{"agent": "vector_kb_agent", "focus": query}]
 
     async def _fake_vector_kb_run(focus):
-        return "8 weeks paid parental leave."
+        return "8 weeks paid parental leave.", []
 
     monkeypatch.setattr(multi_agent_pipeline.planner_agent, "plan", _fake_plan)
     monkeypatch.setattr(multi_agent_pipeline.vector_kb_agent, "run", _fake_vector_kb_run)
@@ -57,7 +81,7 @@ async def test_multi_task_query_dispatches_to_both_agents_in_parallel_and_merges
         ]
 
     async def _fake_vector_kb_run(focus):
-        return "8 weeks paid."
+        return "8 weeks paid.", []
 
     async def _fake_lms_ops_run(focus, employee_id):
         return "10 days available."
@@ -106,7 +130,7 @@ async def test_enabling_memory_without_an_id_generates_one_and_saves_the_turn(mo
         return [{"agent": "vector_kb_agent", "focus": query}]
 
     async def _fake_vector_kb_run(focus):
-        return "8 weeks paid."
+        return "8 weeks paid.", []
 
     monkeypatch.setattr(multi_agent_pipeline.planner_agent, "plan", _fake_plan)
     monkeypatch.setattr(multi_agent_pipeline.vector_kb_agent, "run", _fake_vector_kb_run)
@@ -135,3 +159,70 @@ async def test_guardrail_blocked_input_raises_so_the_route_can_catch_it(monkeypa
         raised = True
 
     assert raised
+
+
+async def test_sources_come_from_vector_kb_agent_only(monkeypatch):
+    """Phase 115 - real citations: a vector_kb_agent dispatch's chunks end
+    up in the result's "sources" list."""
+    _patch_guardrails(monkeypatch)
+    real_chunk = {"document_id": "doc-1", "filename": "leave.pdf", "chunk_index": 0, "text": "8 weeks paid.", "score": 0.9}
+
+    async def _fake_plan(query):
+        return [{"agent": "vector_kb_agent", "focus": query}]
+
+    async def _fake_vector_kb_run(focus):
+        return "8 weeks paid.", [real_chunk]
+
+    monkeypatch.setattr(multi_agent_pipeline.planner_agent, "plan", _fake_plan)
+    monkeypatch.setattr(multi_agent_pipeline.vector_kb_agent, "run", _fake_vector_kb_run)
+
+    result = await multi_agent_pipeline.run_multi_agent("parental leave policy?", employee_id="EMP052")
+
+    assert result["sources"] == [real_chunk]
+
+
+async def test_a_vector_kb_only_repeat_is_cache_served(monkeypatch):
+    """Phase 115 - a query whose only dispatched task was vector_kb_agent
+    is exactly as cacheable as a genai-rag answer (same static index)."""
+    _patch_guardrails(monkeypatch)
+    call_count = {"plan": 0}
+
+    async def _fake_plan(query):
+        call_count["plan"] += 1
+        return [{"agent": "vector_kb_agent", "focus": query}]
+
+    async def _fake_vector_kb_run(focus):
+        return "8 weeks paid.", []
+
+    monkeypatch.setattr(multi_agent_pipeline.planner_agent, "plan", _fake_plan)
+    monkeypatch.setattr(multi_agent_pipeline.vector_kb_agent, "run", _fake_vector_kb_run)
+
+    first = await multi_agent_pipeline.run_multi_agent("cacheable multi-agent question", employee_id="EMP052")
+    second = await multi_agent_pipeline.run_multi_agent("cacheable multi-agent question", employee_id="EMP052")
+
+    assert call_count["plan"] == 1  # only the first call ran the planner at all
+    assert second["served_from_cache"] is True
+    assert second["answer"] == first["answer"]
+
+
+async def test_a_live_data_agent_dispatch_is_never_cached(monkeypatch):
+    """Phase 115 - lms_ops_agent returns live, per-employee data; caching
+    that answer would go stale the moment it's reused."""
+    _patch_guardrails(monkeypatch)
+    call_count = {"plan": 0}
+
+    async def _fake_plan(query):
+        call_count["plan"] += 1
+        return [{"agent": "lms_ops_agent", "focus": query}]
+
+    async def _fake_lms_ops_run(focus, employee_id):
+        return "10 days available."
+
+    monkeypatch.setattr(multi_agent_pipeline.planner_agent, "plan", _fake_plan)
+    monkeypatch.setattr(multi_agent_pipeline.lms_ops_agent, "run", _fake_lms_ops_run)
+
+    await multi_agent_pipeline.run_multi_agent("what's my pto balance", employee_id="EMP052")
+    second = await multi_agent_pipeline.run_multi_agent("what's my pto balance", employee_id="EMP052")
+
+    assert call_count["plan"] == 2  # both calls did real work - never cache-served
+    assert second["served_from_cache"] is False

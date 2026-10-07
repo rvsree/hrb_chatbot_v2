@@ -24,6 +24,16 @@ async def _fake_run_agent(query, employee_id, max_iterations, enable_conversatio
         "tools_used": [{"tool_name": "SearchKnowledgeBase", "tool_input": query}],
         "iterations": 2,
         "conversation_id": conversation_id if enable_conversation_memory else None,
+        "served_from_cache": False,
+        "llm_call_count": 2,
+        "token_usage": {"prompt_tokens": 80, "completion_tokens": 16, "total_tokens": 96},
+        "latency_ms": {"total": 900.0, "retrieval": None, "generation": 900.0, "eval": 150.0},
+        "eval_scores": {
+            "groundedness": 0.9,
+            "groundedness_verdict": "GROUNDED",
+            "completeness": 0.9,
+            "completeness_verdict": "COMPLETE",
+        },
     }
 
 

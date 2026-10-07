@@ -30,6 +30,16 @@ async def _fake_run_multi_agent(query, employee_id, enable_conversation_memory=F
         ],
         "iterations": 2,
         "conversation_id": conversation_id if enable_conversation_memory else None,
+        "served_from_cache": False,
+        "llm_call_count": 4,
+        "token_usage": None,
+        "latency_ms": {"total": 2000.0, "retrieval": None, "generation": None, "eval": 300.0},
+        "eval_scores": {
+            "groundedness": 0.9,
+            "groundedness_verdict": "GROUNDED",
+            "completeness": 0.9,
+            "completeness_verdict": "COMPLETE",
+        },
     }
 
 

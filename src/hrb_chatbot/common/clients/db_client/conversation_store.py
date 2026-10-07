@@ -103,6 +103,67 @@ class ConversationStore:
         with log_backend_call(logger, "postgres", "conversation.load_turns", conversation_id=conversation_id):
             return await asyncio.to_thread(self._load_turns_sync, conversation_id)
 
+    def _get_conversation_turns_sync(self, conversation_id: str, employee_id: str) -> list[dict]:
+        with self._connect() as conn:
+            with conn.cursor(row_factory=self._dict_row_factory) as cur:
+                cur.execute(
+                    "SELECT role, content, created_at FROM conversation_turns "
+                    "WHERE conversation_id = %s AND employee_id = %s ORDER BY id ASC",
+                    (conversation_id, employee_id),
+                )
+                rows = cur.fetchall()
+        for row in rows:
+            row["created_at"] = row["created_at"].isoformat()
+        return rows
+
+    async def get_conversation_turns(self, conversation_id: str, employee_id: str) -> list[dict]:
+        """Phase 116 - same employee_id scoping as delete_conversation(): a
+        mismatched employee_id (or an unknown id) returns [] rather than
+        leaking whether the conversation exists for someone else."""
+        await self._ensure_table()
+        with log_backend_call(
+            logger, "postgres", "conversation.get_conversation_turns", conversation_id=conversation_id
+        ):
+            return await asyncio.to_thread(self._get_conversation_turns_sync, conversation_id, employee_id)
+
+    def _list_conversations_sync(self, employee_id: str) -> list[dict]:
+        with self._connect() as conn:
+            with conn.cursor(row_factory=self._dict_row_factory) as cur:
+                cur.execute(
+                    "SELECT conversation_id, role, content, created_at FROM conversation_turns "
+                    "WHERE employee_id = %s ORDER BY id ASC",
+                    (employee_id,),
+                )
+                rows = cur.fetchall()
+
+        conversations: dict[str, dict] = {}
+        for row in rows:
+            conversation_id = row["conversation_id"]
+            if conversation_id not in conversations:
+                # First turn seen for this conversation_id - always the human
+                # question, since every turn is saved in (human, ai) pairs.
+                conversations[conversation_id] = {
+                    "conversation_id": conversation_id,
+                    "title": row["content"],
+                    "started_at": row["created_at"],
+                    "last_updated_at": row["created_at"],
+                }
+            else:
+                conversations[conversation_id]["last_updated_at"] = row["created_at"]
+
+        ordered = sorted(conversations.values(), key=lambda c: c["last_updated_at"], reverse=True)
+        for conversation in ordered:
+            conversation["started_at"] = conversation["started_at"].isoformat()
+            conversation["last_updated_at"] = conversation["last_updated_at"].isoformat()
+        return ordered
+
+    async def list_conversations(self, employee_id: str) -> list[dict]:
+        """Phase 116 - one row per distinct conversation_id this employee
+        has turns in, newest-activity-first."""
+        await self._ensure_table()
+        with log_backend_call(logger, "postgres", "conversation.list_conversations", employee_id=employee_id):
+            return await asyncio.to_thread(self._list_conversations_sync, employee_id)
+
     def _save_turn_sync(self, conversation_id: str, employee_id: str | None, role: str, content: str) -> None:
         # Postgres TEXT columns hard-reject any embedded NUL byte - some
         # PDFs extract ligatures (e.g. "offers" -> "o\x00ers") with one in

@@ -11,15 +11,17 @@ async def test_search_knowledge_base_formats_chunks(monkeypatch):
 
     monkeypatch.setattr(agentic_tools, "retrieve_chunks", _fake_retrieve_chunks)
 
-    result = await agentic_tools.search_knowledge_base("What's the 401k match?")
+    result, chunks = await agentic_tools.search_knowledge_base("What's the 401k match?")
 
     assert "401k.pdf" in result
     assert "Match is 100% up to 5%." in result
+    assert chunks == [{"filename": "401k.pdf", "text": "Match is 100% up to 5%."}]
 
 
 async def test_search_knowledge_base_empty_query_is_an_error_string_not_a_crash():
-    result = await agentic_tools.search_knowledge_base("")
+    result, chunks = await agentic_tools.search_knowledge_base("")
     assert result.startswith("Error:")
+    assert chunks == []
 
 
 async def test_search_knowledge_base_defaults_to_similarity(monkeypatch):
@@ -70,9 +72,10 @@ async def test_search_knowledge_base_no_results(monkeypatch):
 
     monkeypatch.setattr(agentic_tools, "retrieve_chunks", _fake_retrieve_chunks)
 
-    result = await agentic_tools.search_knowledge_base("obscure question")
+    result, chunks = await agentic_tools.search_knowledge_base("obscure question")
 
     assert "No relevant" in result
+    assert chunks == []
 
 
 async def test_search_knowledge_base_vector_db_failure_is_an_error_string_not_a_crash(monkeypatch):
@@ -83,9 +86,10 @@ async def test_search_knowledge_base_vector_db_failure_is_an_error_string_not_a_
 
     monkeypatch.setattr(agentic_tools, "retrieve_chunks", _fake_retrieve_chunks_raising)
 
-    result = await agentic_tools.search_knowledge_base("What's the 401k match?")
+    result, chunks = await agentic_tools.search_knowledge_base("What's the 401k match?")
 
     assert result.startswith("Error:")
+    assert chunks == []
 
 
 async def test_get_leave_balance_tool_formats_mcp_content(monkeypatch):
@@ -94,14 +98,16 @@ async def test_get_leave_balance_tool_formats_mcp_content(monkeypatch):
 
     monkeypatch.setattr(agentic_tools, "get_leave_balance", _fake_get_leave_balance)
 
-    result = await agentic_tools.get_leave_balance_tool("EMP052")
+    result, chunks = await agentic_tools.get_leave_balance_tool("EMP052")
 
     assert "available" in result
+    assert chunks == []
 
 
 async def test_get_leave_balance_tool_missing_employee_id_is_an_error_string():
-    result = await agentic_tools.get_leave_balance_tool("")
+    result, chunks = await agentic_tools.get_leave_balance_tool("")
     assert result.startswith("Error:")
+    assert chunks == []
 
 
 async def test_get_leave_balance_tool_wraps_failure_as_error_string_not_crash(monkeypatch):
@@ -113,9 +119,10 @@ async def test_get_leave_balance_tool_wraps_failure_as_error_string_not_crash(mo
 
     monkeypatch.setattr(agentic_tools, "get_leave_balance", _fake_get_leave_balance_raising)
 
-    result = await agentic_tools.get_leave_balance_tool("EMP052")
+    result, chunks = await agentic_tools.get_leave_balance_tool("EMP052")
 
     assert result.startswith("Error:")
+    assert chunks == []
 
 
 async def test_get_leave_history_tool_wraps_failure_as_error_string_not_crash(monkeypatch):
@@ -124,6 +131,7 @@ async def test_get_leave_history_tool_wraps_failure_as_error_string_not_crash(mo
 
     monkeypatch.setattr(agentic_tools, "get_leave_history", _fake_get_leave_history_raising)
 
-    result = await agentic_tools.get_leave_history_tool("EMP052")
+    result, chunks = await agentic_tools.get_leave_history_tool("EMP052")
 
     assert result.startswith("Error:")
+    assert chunks == []

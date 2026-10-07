@@ -11,6 +11,7 @@ from src.hrb_chatbot.common.enums import Role
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rate_limiting.rate_limiter import enforce_rate_limit
 from src.hrb_chatbot.models.agentic_rag import AgenticRagRequest, AgenticRagResponse, ToolCallInfo
+from src.hrb_chatbot.models.rag import EvalScores, ExplainabilityInfo, LatencyInfo, TokenUsageInfo
 
 logger = get_logger("query_agent")
 
@@ -33,10 +34,21 @@ async def query(payload: AgenticRagRequest, request: Request):
     except GuardrailBlockedError as error:
         return json_error(422, str(error), code=error_codes.INPUT_GUARDRAIL_BLOCKED)
 
+    token_usage = result.get("token_usage")
+    eval_scores = result.get("eval_scores")
     return AgenticRagResponse(
         query=payload.query,
         answer=result["answer"],
         tools_used=[ToolCallInfo(**call) for call in result["tools_used"]],
+        sources=result.get("sources") or [],
         iterations=result["iterations"],
+        explainability_info=ExplainabilityInfo(
+            served_from_cache=result["served_from_cache"],
+            llm_call_count=result["llm_call_count"],
+            latency_ms=LatencyInfo(**result["latency_ms"]),
+            token_usage=TokenUsageInfo(**token_usage) if token_usage else None,
+            routed_to=None,
+            eval_scores=EvalScores(**eval_scores) if eval_scores else None,
+        ),
         conversation_id=result.get("conversation_id"),
     )

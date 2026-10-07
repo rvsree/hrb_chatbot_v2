@@ -46,6 +46,10 @@ async def _fake_answer_query(params):
         "vector_db": params.vector_db or "chromadb",
         "search_strategy": params.search_strategy or "similarity",
         "applied_filter": {"doc_description": {"$eq": "401k"}} if params.use_self_query else None,
+        "served_from_cache": False,
+        "llm_call_count": 1,
+        "token_usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+        "latency_ms": {"total": 500.0, "retrieval": 150.0, "generation": 350.0},
     }
 
 
@@ -62,6 +66,39 @@ def test_well_formed_query_returns_a_grounded_answer(monkeypatch):
     assert body["answer_info"]["answer"] == "This is a fake grounded answer."
     assert body["answer_info"]["model_used"] == "gpt-4.1-mini"
     assert body["retrieval_info"]["sources"][0]["filename"] == "JPMC Healthcare Benefits.pdf"
+
+
+def test_mcp_routed_answer_reports_routed_to_in_explainability(monkeypatch):
+    async def _fake_mcp_answer_query(params):
+        return {
+            "query": params.query,
+            "answer": "You have 12 days of PTO remaining.",
+            "model_used": "mcp:get_leave_balance",
+            "sources": [],
+            "vector_db": "n/a (mcp)",
+            "search_strategy": "n/a (mcp)",
+            "applied_filter": None,
+            "served_from_cache": False,
+            "llm_call_count": 0,
+            "token_usage": None,
+            "latency_ms": {"total": 80.0, "retrieval": None, "generation": None},
+            "routed_to": "get_leave_balance",
+        }
+
+    monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _fake_mcp_answer_query)
+
+    response = client.post("/v1/genai-rag-retrieval/query", json=_body(query="What's my PTO balance?"))
+
+    assert response.status_code == 200
+    assert response.json()["explainability_info"]["routed_to"] == "get_leave_balance"
+
+
+def test_non_mcp_answer_has_null_routed_to(monkeypatch):
+    monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _fake_answer_query)
+
+    response = client.post("/v1/genai-rag-retrieval/query", json=_body(query="How many weeks of PTO do I get?"))
+
+    assert response.json()["explainability_info"]["routed_to"] is None
 
 
 def test_empty_query_string_is_rejected_before_reaching_the_pipeline():

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from src.hrb_chatbot.models.agentic_rag import ToolCallInfo
 from src.hrb_chatbot.models.common import UserProfile
+from src.hrb_chatbot.models.rag import ExplainabilityInfo, RetrievedChunk
 
 
 class MultiAgenticRagRequest(BaseModel):
@@ -34,7 +35,16 @@ class MultiAgenticRagResponse(BaseModel):
     tools_used: list[ToolCallInfo] = Field(
         ..., description="Every tool call any sub-agent made, in order, aggregated across all of them."
     )
+    sources: list[RetrievedChunk] = Field(
+        default_factory=list, description="Phase 115 - real chunks from vector_kb_agent dispatches, if any."
+    )
     iterations: int = Field(..., description="Total reasoning rounds across every sub-agent.")
+    explainability_info: ExplainabilityInfo = Field(
+        ...,
+        description="Phase 110/115 - total latency + llm_call_count + eval scores + real caching "
+        "(cache-eligible only when every dispatched task was vector_kb_agent, see RAG-ROADMAP.md "
+        "Phase 115). token_usage is still always null - not yet captured per-domain-agent (BACKLOG.md).",
+    )
     conversation_id: str | None = Field(
         None,
         description="Echoed/generated when enable_conversation_memory was true - pass it back on the next "

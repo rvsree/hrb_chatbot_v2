@@ -35,6 +35,77 @@ def _store_with_fake_connection(monkeypatch):
     return store, recorded_calls
 
 
+class _FakeCursor:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def execute(self, sql, params=None):
+        pass
+
+    def fetchall(self):
+        return self._rows
+
+
+class _FakeRowConnection:
+    """Stands in for the connection list_conversations()/get_conversation_turns()
+    use - they open their own cursor(row_factory=...) rather than calling
+    execute() directly on the connection."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def cursor(self, row_factory=None):
+        return _FakeCursor(self._rows)
+
+
+async def test_get_conversation_turns_converts_datetime_to_isoformat_string(monkeypatch):
+    from datetime import datetime, timezone
+
+    store = ConversationStore(host="fake-host", port="5432", db_name="fake_db", user="fake_user", password="fake_pw")
+    store._table_ready = True
+    rows = [
+        {"role": "human", "content": "What is the dental plan?", "created_at": datetime(2026, 10, 7, tzinfo=timezone.utc)},
+        {"role": "ai", "content": "Two options.", "created_at": datetime(2026, 10, 7, 0, 0, 1, tzinfo=timezone.utc)},
+    ]
+    monkeypatch.setattr(store, "_connect", lambda: _FakeRowConnection(rows))
+
+    turns = await store.get_conversation_turns("conv-1", "EMP052")
+
+    assert len(turns) == 2
+    assert turns[0] == {"role": "human", "content": "What is the dental plan?", "created_at": "2026-10-07T00:00:00+00:00"}
+
+
+async def test_list_conversations_groups_by_conversation_id(monkeypatch):
+    from datetime import datetime, timezone
+
+    store = ConversationStore(host="fake-host", port="5432", db_name="fake_db", user="fake_user", password="fake_pw")
+    store._table_ready = True
+    rows = [
+        {"conversation_id": "conv-1", "role": "human", "content": "What is the dental plan?", "created_at": datetime(2026, 10, 7, 0, 0, 0, tzinfo=timezone.utc)},
+        {"conversation_id": "conv-1", "role": "ai", "content": "Two options.", "created_at": datetime(2026, 10, 7, 0, 0, 1, tzinfo=timezone.utc)},
+        {"conversation_id": "conv-2", "role": "human", "content": "What is the PTO policy?", "created_at": datetime(2026, 10, 7, 0, 1, 0, tzinfo=timezone.utc)},
+    ]
+    monkeypatch.setattr(store, "_connect", lambda: _FakeRowConnection(rows))
+
+    conversations = await store.list_conversations("EMP052")
+
+    assert len(conversations) == 2
+    assert conversations[0]["conversation_id"] == "conv-2"  # most recently active first
+    assert conversations[1]["title"] == "What is the dental plan?"
+
+
 async def test_a_nul_byte_in_content_is_stripped_before_the_insert(monkeypatch):
     store, recorded_calls = _store_with_fake_connection(monkeypatch)
 

@@ -366,13 +366,20 @@ class FakeConversationStore:
 
     def __init__(self):
         self._turns: dict[str, list[dict]] = {}
+        self._next_created_at = 0
+
+    def _tick(self):
+        self._next_created_at += 1
+        return f"2026-10-07T00:00:{self._next_created_at:02d}Z"
 
     async def load_turns(self, conversation_id):
         return list(self._turns.get(conversation_id, []))
 
     async def save_turn(self, conversation_id, employee_id, role, content):
         turns = self._turns.setdefault(conversation_id, [])
-        turns.append({"employee_id": employee_id, "role": role, "content": content})
+        turns.append(
+            {"employee_id": employee_id, "role": role, "content": content, "created_at": self._tick()}
+        )
 
     async def delete_conversation(self, conversation_id, employee_id):
         turns = self._turns.get(conversation_id, [])
@@ -382,6 +389,30 @@ class FakeConversationStore:
         deleted_count = len(turns)
         self._turns.pop(conversation_id, None)
         return deleted_count
+
+    async def get_conversation_turns(self, conversation_id, employee_id):
+        turns = self._turns.get(conversation_id, [])
+        if not turns or any(turn["employee_id"] != employee_id for turn in turns):
+            return []
+        return [{"role": t["role"], "content": t["content"], "created_at": t["created_at"]} for t in turns]
+
+    async def list_conversations(self, employee_id):
+        conversations = []
+        for conversation_id, turns in self._turns.items():
+            own_turns = [t for t in turns if t["employee_id"] == employee_id]
+            if not own_turns:
+                continue
+            first_human = next((t for t in own_turns if t["role"] == "human"), own_turns[0])
+            conversations.append(
+                {
+                    "conversation_id": conversation_id,
+                    "title": first_human["content"],
+                    "started_at": own_turns[0]["created_at"],
+                    "last_updated_at": own_turns[-1]["created_at"],
+                }
+            )
+        conversations.sort(key=lambda c: c["last_updated_at"], reverse=True)
+        return conversations
 
     def health_check(self):
         return {"provider": "postgres", "status": "healthy"}
@@ -456,6 +487,7 @@ class FakeAnswerCache:
 
     def __init__(self):
         self._entries: dict[str, dict] = {}
+        self._convo_tags: dict[str, set[str]] = {}
         self.clear_all_call_count = 0
 
     async def get(self, cache_key):
@@ -463,6 +495,17 @@ class FakeAnswerCache:
 
     async def set(self, cache_key, query, answer):
         self._entries[cache_key] = answer
+
+    async def tag_conversation(self, conversation_id, cache_key):
+        self._convo_tags.setdefault(conversation_id, set()).add(cache_key)
+
+    async def clear_for_conversation(self, conversation_id):
+        cache_keys = self._convo_tags.pop(conversation_id, set())
+        deleted = 0
+        for cache_key in cache_keys:
+            if self._entries.pop(cache_key, None) is not None:
+                deleted += 1
+        return deleted
 
     async def clear_all(self):
         count = len(self._entries)

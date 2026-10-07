@@ -25,6 +25,26 @@ def _fake_answer_cache(monkeypatch):
     monkeypatch.setattr(pipeline, "get_db_gateway", lambda: gateway)
 
 
+@pytest.fixture(autouse=True)
+def _fake_eval_judges(monkeypatch):
+    """Phase 109: answer_query() now scores every live (non-empty-sources)
+    answer via evaluate_groundedness()/evaluate_completeness(), which make
+    a real OpenAI call each - fake both for every test in this file, or a
+    test with non-empty fake chunks silently costs money and takes real
+    network latency (confirmed: this file's run time went from ~4s to
+    ~40s before this fixture was added)."""
+    monkeypatch.setattr(
+        pipeline,
+        "evaluate_groundedness",
+        lambda answer, context_texts: {"score": 0.9, "verdict": "GROUNDED", "explanation": "fake"},
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "evaluate_completeness",
+        lambda query, answer, reference_answer=None: {"score": 0.9, "verdict": "COMPLETE", "explanation": "fake"},
+    )
+
+
 def _patch_conversation_store(monkeypatch, conversation_store=None):
     gateway = FakeDBGateway(conversation_store=conversation_store or FakeConversationStore())
     monkeypatch.setattr(conversation_memory, "get_db_gateway", lambda: gateway)
@@ -248,9 +268,11 @@ async def test_a_cache_hit_skips_retrieval_and_generation_entirely(monkeypatch):
     assert first["answer"] == second["answer"] == "fake answer"
 
 
-async def test_conversation_memory_enabled_requests_never_use_the_answer_cache(monkeypatch):
-    """Phase 78 - a memory-enabled answer depends on prior turns, so it must
-    never be served from (or written to) the cache, even for a repeated query."""
+async def test_two_fresh_memory_enabled_conversations_can_share_a_cache_hit(monkeypatch):
+    """Phase 101 - the FIRST message of a memory-enabled conversation has no
+    prior turns yet, so it's just as cacheable as a non-memory query. Two
+    independent fresh conversations asking the identical question should
+    share one cache entry, each still getting its OWN conversation_id."""
     _patch_conversation_store(monkeypatch)
     _patch_guardrails(monkeypatch)
     call_count = {"generate": 0}
@@ -268,6 +290,218 @@ async def test_conversation_memory_enabled_requests_never_use_the_answer_cache(m
     first = await pipeline.answer_query(RagQueryParams(query="what is my balance?", enable_conversation_memory=True))
     second = await pipeline.answer_query(RagQueryParams(query="what is my balance?", enable_conversation_memory=True))
 
-    assert call_count["generate"] == 2  # both calls did real work - never cache-served
-    assert first["answer"] == "answer #1"
-    assert second["answer"] == "answer #2"
+    assert call_count["generate"] == 1  # second call was cache-served, not a real generation
+    assert first["answer"] == second["answer"] == "answer #1"
+    assert first["conversation_id"] != second["conversation_id"]  # never leaks one caller's id to another
+
+    # The cache-served turn was still saved under THIS caller's own
+    # conversation - a follow-up in conversation #2 still has it in history.
+    saved = await conversation_memory.load_history(second["conversation_id"])
+    assert [m.content for m in saved] == ["what is my balance?", "answer #1"]
+
+
+async def test_a_repeated_question_mid_conversation_is_now_cache_served(monkeypatch):
+    """Phase 105 - user explicitly chose speed over per-turn context-
+    freshness: a repeated exact-text question later in the SAME
+    conversation is now cache-served too, not just a fresh conversation's
+    first message. The cached turn is still appended under this caller's
+    own conversation history, not skipped."""
+    _patch_conversation_store(monkeypatch)
+    _patch_guardrails(monkeypatch)
+    call_count = {"generate": 0}
+
+    async def _fake_retrieve(query, top_k=5, vector_db=None, search_strategy=None, **kwargs):
+        return ([{"filename": "x", "chunk_index": 0, "text": "y"}], None)
+
+    def _counting_generate(query, chunks, model_name=None, temperature=0.0, max_tokens=None, chat_history=None):
+        call_count["generate"] += 1
+        return {"answer": f"answer #{call_count['generate']}", "model_used": "gpt-4.1-mini"}
+
+    monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve)
+    monkeypatch.setattr(pipeline, "generate_answer", _counting_generate)
+
+    first = await pipeline.answer_query(RagQueryParams(query="what is my balance?", enable_conversation_memory=True))
+    second = await pipeline.answer_query(
+        RagQueryParams(
+            query="what is my balance?",
+            enable_conversation_memory=True,
+            conversation_id=first["conversation_id"],
+        )
+    )
+
+    assert call_count["generate"] == 1  # second call was cache-served, not a real generation
+    assert first["answer"] == second["answer"] == "answer #1"
+    assert second["conversation_id"] == first["conversation_id"]
+
+    saved = await conversation_memory.load_history(first["conversation_id"])
+    assert [m.content for m in saved] == ["what is my balance?", "answer #1", "what is my balance?", "answer #1"]
+
+
+async def test_a_different_employee_in_a_different_conversation_shares_the_cache(monkeypatch):
+    """Phase 105 - the cache key never includes employee_id (see
+    build_cache_key()), so two different employees asking the identical
+    question in two independent conversations also share one cache
+    entry - not just the same employee repeating themselves."""
+    _patch_conversation_store(monkeypatch)
+    _patch_guardrails(monkeypatch)
+    call_count = {"generate": 0}
+
+    async def _fake_retrieve(query, top_k=5, vector_db=None, search_strategy=None, **kwargs):
+        return ([{"filename": "x", "chunk_index": 0, "text": "y"}], None)
+
+    def _counting_generate(query, chunks, model_name=None, temperature=0.0, max_tokens=None, chat_history=None):
+        call_count["generate"] += 1
+        return {"answer": f"answer #{call_count['generate']}", "model_used": "gpt-4.1-mini"}
+
+    monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve)
+    monkeypatch.setattr(pipeline, "generate_answer", _counting_generate)
+
+    first = await pipeline.answer_query(
+        RagQueryParams(query="what is my balance?", employee_id="EMP001", enable_conversation_memory=True)
+    )
+    second = await pipeline.answer_query(
+        RagQueryParams(query="what is my balance?", employee_id="EMP002", enable_conversation_memory=True)
+    )
+
+    assert call_count["generate"] == 1
+    assert first["answer"] == second["answer"] == "answer #1"
+    assert first["conversation_id"] != second["conversation_id"]
+
+
+async def test_live_generation_reports_real_explainability_fields(monkeypatch):
+    """Phase 107 - a live (non-cached) call reports served_from_cache=False,
+    llm_call_count=1, real retrieval/generation timing, and whatever
+    token_usage generate_answer() returned."""
+    _patch_guardrails(monkeypatch)
+
+    async def _fake_retrieve(query, top_k=5, vector_db=None, search_strategy=None, **kwargs):
+        return ([{"filename": "x", "chunk_index": 0, "text": "y"}], None)
+
+    def _fake_generate(query, chunks, model_name=None, temperature=0.0, max_tokens=None, chat_history=None):
+        return {
+            "answer": "fake answer",
+            "model_used": "gpt-4.1-mini",
+            "token_usage": {"prompt_tokens": 42, "completion_tokens": 8, "total_tokens": 50},
+        }
+
+    monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve)
+    monkeypatch.setattr(pipeline, "generate_answer", _fake_generate)
+
+    result = await pipeline.answer_query(RagQueryParams(query="explainability check one"))
+
+    assert result["served_from_cache"] is False
+    assert result["llm_call_count"] == 1
+    assert result["token_usage"] == {"prompt_tokens": 42, "completion_tokens": 8, "total_tokens": 50}
+    assert result["latency_ms"]["retrieval"] is not None
+    assert result["latency_ms"]["generation"] is not None
+    assert result["latency_ms"]["total"] is not None
+
+
+async def test_cache_hit_reports_zero_llm_calls_and_null_token_usage(monkeypatch):
+    """Phase 107 - a cache-served answer made zero LLM/retrieval calls this
+    time, so served_from_cache=True, llm_call_count=0, token_usage=None,
+    retrieval/generation timing both None - regardless of what the
+    original (now-cached) generation's own token_usage was."""
+    _patch_guardrails(monkeypatch)
+
+    async def _fake_retrieve(query, top_k=5, vector_db=None, search_strategy=None, **kwargs):
+        return ([{"filename": "x", "chunk_index": 0, "text": "y"}], None)
+
+    def _fake_generate(query, chunks, model_name=None, temperature=0.0, max_tokens=None, chat_history=None):
+        return {
+            "answer": "fake answer",
+            "model_used": "gpt-4.1-mini",
+            "token_usage": {"prompt_tokens": 42, "completion_tokens": 8, "total_tokens": 50},
+        }
+
+    monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve)
+    monkeypatch.setattr(pipeline, "generate_answer", _fake_generate)
+
+    await pipeline.answer_query(RagQueryParams(query="explainability check two"))
+    second = await pipeline.answer_query(RagQueryParams(query="explainability check two"))
+
+    assert second["served_from_cache"] is True
+    assert second["llm_call_count"] == 0
+    assert second["token_usage"] is None
+    assert second["latency_ms"]["retrieval"] is None
+    assert second["latency_ms"]["generation"] is None
+    assert second["latency_ms"]["total"] is not None
+
+
+async def test_live_generation_with_sources_includes_eval_scores(monkeypatch):
+    """Phase 109 - a live answer grounded in retrieved chunks gets real
+    (faked-in-this-test) groundedness/completeness scores."""
+    _patch_guardrails(monkeypatch)
+
+    async def _fake_retrieve(query, top_k=5, vector_db=None, search_strategy=None, **kwargs):
+        return ([{"filename": "x", "chunk_index": 0, "text": "y"}], None)
+
+    def _fake_generate(query, chunks, model_name=None, temperature=0.0, max_tokens=None, chat_history=None):
+        return {"answer": "fake answer", "model_used": "gpt-4.1-mini", "token_usage": None}
+
+    monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve)
+    monkeypatch.setattr(pipeline, "generate_answer", _fake_generate)
+
+    result = await pipeline.answer_query(RagQueryParams(query="eval scoring check one"))
+
+    assert result["eval_scores"] == {
+        "groundedness": 0.9,
+        "groundedness_verdict": "GROUNDED",
+        "completeness": 0.9,
+        "completeness_verdict": "COMPLETE",
+    }
+    assert result["latency_ms"]["eval"] is not None
+
+
+async def test_live_generation_with_no_sources_skips_eval_scoring(monkeypatch):
+    """Phase 109 - nothing to check groundedness against when retrieval found nothing."""
+    _patch_guardrails(monkeypatch)
+
+    async def _fake_retrieve(query, top_k=5, vector_db=None, search_strategy=None, **kwargs):
+        return ([], None)
+
+    def _fake_generate(query, chunks, model_name=None, temperature=0.0, max_tokens=None, chat_history=None):
+        return {"answer": "I don't know.", "model_used": "gpt-4.1-mini", "token_usage": None}
+
+    monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve)
+    monkeypatch.setattr(pipeline, "generate_answer", _fake_generate)
+
+    result = await pipeline.answer_query(RagQueryParams(query="eval scoring check two"))
+
+    assert result["eval_scores"] is None
+    assert result["latency_ms"]["eval"] is None
+
+
+async def test_cache_hit_reuses_eval_scores_without_rejudging(monkeypatch):
+    """Phase 109 - a cache hit must not call the eval judges again: same
+    answer, same (question, context) triple, so the original score still
+    applies - and re-judging would defeat part of the point of caching."""
+    _patch_guardrails(monkeypatch)
+    judge_call_count = {"groundedness": 0, "completeness": 0}
+
+    def _counting_groundedness(answer, context_texts):
+        judge_call_count["groundedness"] += 1
+        return {"score": 0.9, "verdict": "GROUNDED", "explanation": "fake"}
+
+    def _counting_completeness(query, answer, reference_answer=None):
+        judge_call_count["completeness"] += 1
+        return {"score": 0.9, "verdict": "COMPLETE", "explanation": "fake"}
+
+    monkeypatch.setattr(pipeline, "evaluate_groundedness", _counting_groundedness)
+    monkeypatch.setattr(pipeline, "evaluate_completeness", _counting_completeness)
+
+    async def _fake_retrieve(query, top_k=5, vector_db=None, search_strategy=None, **kwargs):
+        return ([{"filename": "x", "chunk_index": 0, "text": "y"}], None)
+
+    def _fake_generate(query, chunks, model_name=None, temperature=0.0, max_tokens=None, chat_history=None):
+        return {"answer": "fake answer", "model_used": "gpt-4.1-mini", "token_usage": None}
+
+    monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve)
+    monkeypatch.setattr(pipeline, "generate_answer", _fake_generate)
+
+    first = await pipeline.answer_query(RagQueryParams(query="eval scoring check three"))
+    second = await pipeline.answer_query(RagQueryParams(query="eval scoring check three"))
+
+    assert judge_call_count == {"groundedness": 1, "completeness": 1}  # only the first call judged
+    assert second["served_from_cache"] is True
+    assert second["eval_scores"] == first["eval_scores"]
