@@ -7,6 +7,21 @@ time, to apply RAG concepts from the Interview Kickstart FDE cohort - see
 current status (that file is the source of truth for "what's done" - this
 README doesn't repeat it).
 
+## Environments
+
+| App | Local | AWS (production) |
+| --- | --- | --- |
+| Backend (this repo, `hrb_chatbot_v2`) | `http://127.0.0.1:8093` | `https://hrb-chatbot.rvsree.dev` |
+| Frontend (`hrb_chatbot_ui`, separate repo) | `http://localhost:5173` (`npm run dev`) | `https://hrb-chatbot-ui.rvsree.dev` |
+
+The AWS backend runs on App Runner (Phase 10, see
+[AWS-DEVOPS-RUNBOOK.md](docs/agent-reference/AWS-DEVOPS-RUNBOOK.md)); the AWS
+frontend is a static build on S3 behind CloudFront (Phase 117, manually
+provisioned - no CI/CD pipeline for it yet, unlike the backend's `deploy.yml`).
+Both point at each other by default: the frontend's `.env.production` bakes
+in the production backend URL above, and the backend's CORS config
+(`main.py`) allows the production frontend origin.
+
 ## Prerequisites
 
 - **Python 3.12** - not 3.13/3.14. `chromadb` depends on Pydantic v1
