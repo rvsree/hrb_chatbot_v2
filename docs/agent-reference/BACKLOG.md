@@ -1329,4 +1329,36 @@ data the same way `GetLeaveBalance` can, and there's no cheap per-node
 signal yet (unlike single-agentic-rag's `tools_used` list) to tell a
 cacheable turn from a live-data one without one. Both are real, scoped
 follow-ups, not silently skipped - see `RAG-ROADMAP.md`'s Phase 110 entry
-for the full reasoning.
+for the full reasoning. **Update 2026-10-07 (Phase 115): multi-agentic-rag
+now does have caching** - the `token_usage`-stays-null half of this finding
+is still accurate, but the caching half is resolved, see Phase 115's own
+roadmap entry.
+
+## `HRB_LMS_MCP_URL` never configured on AWS - MCP-dependent tools fail live in production (found 2026-10-07)
+
+`GetLeaveBalance`/`GetLeaveHistory` (single-agentic-rag) and the MCP
+fast-path (genai-rag) all call out to `hrb_lms_mcp`, a separate sibling
+project (its own GitHub repo, `rvsree/hrb_lms_mcp`). Every verification
+of this integration on record (Phase 49/50/53, this file's "MCP
+integration & cross-project schema standardization" section above) was
+done against a **locally-running** `hrb_lms_mcp` instance - `mcp_tools/
+__init__.py`'s `read_setting(None, "HRB_LMS_MCP_URL", "http://
+127.0.0.1:8190/mcp")` falls back to localhost when the setting is unset.
+
+**Confirmed broken live, 2026-10-07**: checked App Runner's actual
+runtime configuration (`aws apprunner describe-service`) - no
+`HRB_LMS_MCP_URL`/`HRB_LMS_MCP_OAUTH_*` keys exist there at all, neither
+as plain env vars nor as secrets. A real `POST /v1/single-agentic-rag-
+retrieval/query` asking "How many PTO days do I have left?" against
+`https://hrb-chatbot.rvsree.dev` confirms the failure mode: the agent
+correctly picks `GetLeaveBalance` as the tool to call, then gets a
+connection failure (the container tries to reach `127.0.0.1:8190` on
+*itself*, where nothing listens) and falls back to a generic "unable to
+retrieve... due to a connection issue" answer instead of a real number.
+
+**Not fixed here** - this needs a real decision: either deploy
+`hrb_lms_mcp` somewhere AWS can reach it (its own App Runner service, or
+similar) and wire the real URL/OAuth2 credentials into this project's
+App Runner config, or accept that leave-balance/leave-history questions
+are a local-dev-only demo capability for now and say so in the UI/docs.
+Both are legitimate choices - flagging, not deciding unilaterally.
