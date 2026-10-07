@@ -80,6 +80,11 @@ async def index_document(
         resolved_chunk_overlap,
     )
 
+    # Phase 100: both the sync upload path and the async Lambda path call
+    # this one function - setting status here gives both the same granular
+    # progress for free, instead of duplicating these calls in each caller.
+    await get_db_gateway().metadata_store().update_status(document_id, "chunking")
+
     text = extract_text_from_pdf(file_path)
     # Computed here (possibly again) only so the response can report what
     # actually ran - decide_chunking_strategy()/decide_chunk_size() are pure, so this always agrees.
@@ -91,6 +96,8 @@ async def index_document(
         chunk_size=resolved_chunk_size,
         chunk_overlap=resolved_chunk_overlap,
     )
+
+    await get_db_gateway().metadata_store().update_status(document_id, "embedding")
     # Module 1's own explicit step (Phase 44) - embeddings are computed here,
     # not inside write_chunks(), and attached directly to each chunk's node.
     embeddings = await generate_embeddings(chunks, embedding_model=resolved_embedding_model)

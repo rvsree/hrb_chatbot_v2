@@ -91,11 +91,18 @@ async def _index_one(bucket: str, key: str) -> None:
     local_path = TMP_DIRECTORY / document_id / filename
     local_path.parent.mkdir(parents=True, exist_ok=True)
 
+    metadata_store = get_db_gateway().metadata_store()
+    # Checked before the download (not after, like before Phase 103) so a
+    # real, possibly-slow S3 transfer has a status to show while it runs -
+    # only possible when the row already exists (the presigned-upload
+    # path); the row-less fallback path below still has nothing to update yet.
+    existing = await metadata_store.get_document(document_id)
+    if existing is not None:
+        await metadata_store.update_status(document_id, "downloading")
+
     s3 = boto3.client("s3")
     s3.download_file(bucket, key, str(local_path))
 
-    metadata_store = get_db_gateway().metadata_store()
-    existing = await metadata_store.get_document(document_id)
     if existing is None:
         # No API step created this row yet - the Phase 88 direct-S3-put
         # fallback path, still useful for manual testing. Phase 89's real
@@ -107,7 +114,9 @@ async def _index_one(bucket: str, key: str) -> None:
     else:
         index_kwargs = _pending_overrides_kwargs(existing)
 
-    await metadata_store.update_status(document_id, "indexing")
+    # Phase 100: index_document() itself now sets status to "chunking" as
+    # its very first action - a separate "indexing" update here would be
+    # overwritten within microseconds, so it's not worth a second DB write.
 
     try:
         await pipeline.index_document(document_id, str(local_path), **index_kwargs)
