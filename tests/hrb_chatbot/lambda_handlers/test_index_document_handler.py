@@ -7,8 +7,6 @@ this project's existing fake-based test convention."""
 import asyncio
 import json
 
-import pytest
-
 from src.hrb_chatbot.lambda_handlers import index_document_handler
 from tests.conftest import FakeDBGateway, FakeMetadataStore
 
@@ -99,10 +97,11 @@ def test_existing_document_is_not_recreated_idempotency(monkeypatch):
     result = index_document_handler.lambda_handler(event, context=None)
 
     assert result == {"batchItemFailures": []}
-    # Status still moves forward (to "indexing") even though create_document()
-    # was skipped - the fake index_document() stub doesn't flip it to
-    # "indexed" itself, that's the real pipeline's write_chunks() job.
-    assert gateway.metadata_store().documents["doc-123"]["status"] == "indexing"
+    # Phase 103: the handler itself now sets "downloading" for an existing
+    # row, before the S3 download - the rest of the progression
+    # (chunking/embedding/indexed) lives inside the real index_document(),
+    # faked out here, so it never fires past this point.
+    assert gateway.metadata_store().documents["doc-123"]["status"] == "downloading"
 
 
 def test_indexing_failure_marks_the_document_failed_and_reports_batch_item_failure(monkeypatch):

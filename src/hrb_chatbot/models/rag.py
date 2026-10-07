@@ -93,12 +93,51 @@ class RetrievalInfo(BaseModel):
     sources: list[RetrievedChunk] = Field(..., description="The chunks the answer was actually grounded in.")
 
 
+class LatencyInfo(BaseModel):
+    total: float = Field(..., description="Total wall-clock time for this call, in milliseconds.")
+    retrieval: float | None = Field(None, description="Time spent retrieving chunks, in milliseconds. Null on a cache hit.")
+    generation: float | None = Field(None, description="Time spent generating the answer, in milliseconds. Null on a cache hit.")
+    eval: float | None = Field(None, description="Time spent on live eval-judge scoring, in milliseconds. Null when no eval ran this call (cache hit, MCP, or no context).")
+
+
+class TokenUsageInfo(BaseModel):
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
+class EvalScores(BaseModel):
+    """Phase 109 - live LLM-as-judge scores, same prompts/parsing as the
+    offline golden-dataset harness (golden_dataset_harness.py), run
+    synchronously per live response at the user's explicit request
+    (accepted tradeoff: 2 extra judge LLM calls per live - not cached -
+    generation). 0.0-1.0, not 0-10 - already normalized by the judge."""
+
+    groundedness: float = Field(..., description="Is the answer supported by the retrieved context? 0.0-1.0.")
+    groundedness_verdict: str = Field(..., description="GROUNDED (>=0.7), PARTIAL (>=0.4), or HALLUCINATED.")
+    completeness: float = Field(..., description="Does the answer fully address the question? 0.0-1.0.")
+    completeness_verdict: str = Field(..., description="COMPLETE (>=0.7), PARTIAL (>=0.4), or INCOMPLETE.")
+
+
+class ExplainabilityInfo(BaseModel):
+    """Phase 107/109 - real latency/token/cache-vs-live/eval numbers,
+    genai-rag only. Dollar cost is deliberately excluded (see BACKLOG.md)."""
+
+    served_from_cache: bool = Field(..., description="True if this answer came from the answer cache, not a live retrieval+generation call.")
+    llm_call_count: int = Field(..., description="How many LLM calls this request made - 0 on a cache hit or MCP fast-path, 1 otherwise. Excludes eval-judge calls.")
+    latency_ms: LatencyInfo
+    token_usage: TokenUsageInfo | None = Field(None, description="Null on a cache hit, MCP fast-path, or a no-context answer that never called the LLM.")
+    routed_to: str | None = Field(None, description="The MCP tool name if this answer was dynamically routed there instead of RAG (Phase 49/108). Null otherwise.")
+    eval_scores: EvalScores | None = Field(None, description="Null for an MCP answer or a no-context answer (nothing to check groundedness against). Reused as-is on a cache hit - same answer, same score, not re-judged.")
+
+
 class RagQueryResponse(BaseModel):
     """What POST /query returns."""
 
     query: str = Field(..., description="The question that was asked.")
     answer_info: AnswerInfo
     retrieval_info: RetrievalInfo
+    explainability_info: ExplainabilityInfo
     conversation_id: str | None = Field(
         None,
         description="Echoed/generated when enable_conversation_memory was true - pass it back on the next "

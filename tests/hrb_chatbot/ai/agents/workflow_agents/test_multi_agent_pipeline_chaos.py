@@ -5,7 +5,30 @@ repeatable test. This deliberately forces one domain agent to fail and
 confirms the other agents' real results still reach the Reviewer, and the
 final answer stays coherent - not that the whole graph fails closed."""
 
+import pytest
+
 from src.hrb_chatbot.ai.agents.workflow_agents import multi_agent_pipeline
+from tests.conftest import FakeDBGateway
+
+
+@pytest.fixture(autouse=True)
+def _fake_cache_and_eval_judges(monkeypatch):
+    """Phase 110/115: run_multi_agent() now calls get_db_gateway().answer_cache()
+    and the real eval-judge functions on every call - fake both, same
+    reasoning as test_multi_agent_pipeline.py's own fixture (this file has
+    its own fixtures, not shared with that one)."""
+    gateway = FakeDBGateway()
+    monkeypatch.setattr(multi_agent_pipeline, "get_db_gateway", lambda: gateway)
+    monkeypatch.setattr(
+        multi_agent_pipeline,
+        "evaluate_groundedness",
+        lambda answer, context_texts: {"score": 0.9, "verdict": "GROUNDED", "explanation": "fake"},
+    )
+    monkeypatch.setattr(
+        multi_agent_pipeline,
+        "evaluate_completeness",
+        lambda query, answer, reference_answer=None: {"score": 0.9, "verdict": "COMPLETE", "explanation": "fake"},
+    )
 
 
 def _patch_guardrails(monkeypatch):
@@ -29,7 +52,7 @@ async def test_one_domain_agent_failing_does_not_crash_the_graph_or_drop_the_oth
         ]
 
     async def _fake_vector_kb_run(focus):
-        return "8 weeks paid."
+        return "8 weeks paid.", []
 
     async def _failing_lms_ops_run(focus, employee_id):
         # Mirrors what lms_ops_agent.run() already returns on a real MCP

@@ -45,3 +45,24 @@ async def test_a_modified_answer_returns_the_masked_text(monkeypatch):
     result = await check_output("test", "Contact john@example.com")
 
     assert result == "Contact <MASKED>"
+
+
+async def test_a_known_safe_term_is_protected_before_the_guardrail_check(monkeypatch):
+    """Phase 113 - "Roth" must reach the guardrail wrapped, not bare, so
+    Presidio's NER can't tag it as PERSON (confirmed live: it scores
+    0.85, the same as a genuine name)."""
+    captured = {}
+
+    class SpyRails:
+        async def check_async(self, messages, rail_types=None):
+            captured["messages"] = messages
+            return FakeRailsResult("passed", content=messages[-1]["content"])
+
+    monkeypatch.setattr(guardrails_output, "get_rails", lambda: SpyRails())
+
+    answer = "You can make Roth contributions."
+    await check_output("test", answer)
+
+    sent_content = captured["messages"][-1]["content"]
+    assert sent_content != answer
+    assert "⁦Roth⁩" in sent_content

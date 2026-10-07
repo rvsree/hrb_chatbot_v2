@@ -3,7 +3,9 @@ Orchestration Agent dispatch (Send fan-out) -> 4 domain agents in parallel ->
 Reviewer Agent. Hierarchical/LangGraph-supervisor pattern, per the user's
 explicit, final direction - not Azure's flat single-agent-many-tools pattern."""
 
+import asyncio
 import operator
+import time
 from typing import Annotated, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -19,10 +21,43 @@ from src.hrb_chatbot.ai.agents.domain_agents import (
 from src.hrb_chatbot.ai.agents.workflow_agents import planner_agent, reviewer_agent
 from src.hrb_chatbot.ai.pre_processing import conversation_memory
 from src.hrb_chatbot.ai.pre_processing.guardrails_input import check_input
+from src.hrb_chatbot.ai.rag_pipeline.evaluations.golden_dataset_harness import evaluate_completeness, evaluate_groundedness
 from src.hrb_chatbot.ai.rag_pipeline.response_generation.guardrails_output import check_output
+from src.hrb_chatbot.common.clients.cache_client.answer_cache import build_cache_key
+from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
 from src.hrb_chatbot.common.logging.logger import get_logger
 
 logger = get_logger("agents.multi_agent_pipeline")
+
+# Phase 115: mirrors orchestration_agent.py's own LIVE_DATA_TOOLS, one
+# level up at the agent-dispatch granularity - every domain agent except
+# vector_kb_agent, which only queries the same static document index
+# genai-rag's own retrieval does.
+LIVE_DATA_AGENTS = {"lms_ops_agent", "sql_db_agent", "lms_analytics_agent", "web_search_agent"}
+
+
+def _elapsed_ms(started_at: float) -> float:
+    return round((time.perf_counter() - started_at) * 1000, 1)
+
+
+async def _score_live_answer(query: str, answer: str, context_texts: list[str]) -> tuple[dict | None, float | None]:
+    """Same approach as pipeline.py/orchestration_agent.py's own
+    _score_live_answer() (Phase 109/110)."""
+    if not context_texts:
+        return None, None
+
+    eval_started_at = time.perf_counter()
+    groundedness, completeness = await asyncio.gather(
+        asyncio.to_thread(evaluate_groundedness, answer, context_texts),
+        asyncio.to_thread(evaluate_completeness, query, answer),
+    )
+    eval_scores = {
+        "groundedness": groundedness["score"],
+        "groundedness_verdict": groundedness["verdict"],
+        "completeness": completeness["score"],
+        "completeness_verdict": completeness["verdict"],
+    }
+    return eval_scores, _elapsed_ms(eval_started_at)
 
 DOMAIN_AGENT_NODES = [
     "vector_kb_agent",
@@ -56,8 +91,12 @@ def dispatch_to_agents(state: MultiAgentState) -> list[Send]:
 
 
 async def vector_kb_agent_node(state: dict) -> dict:
-    result = await vector_kb_agent.run(state["focus"])
-    return {"agent_results": [{"agent": "vector_kb_agent", "focus": state["focus"], "result": result}]}
+    result, chunks = await vector_kb_agent.run(state["focus"])
+    return {
+        "agent_results": [
+            {"agent": "vector_kb_agent", "focus": state["focus"], "result": result, "sources": chunks}
+        ]
+    }
 
 
 async def lms_ops_agent_node(state: dict) -> dict:
@@ -122,12 +161,37 @@ async def run_multi_agent(
 ) -> dict:
     """Runs the Planner -> Orchestration -> domain agents -> Reviewer graph for one query.
     Guardrails run here, same layer as genai-rag's pipeline.answer_query() - the route
-    (api/multi_agentic_rag/query_agent.py) only catches GuardrailBlockedError."""
+    (api/multi_agentic_rag/query_agent.py) only catches GuardrailBlockedError.
+
+    Phase 110/115: total latency + llm_call_count + eval scores + real
+    citations + caching, same shape as genai-rag/single-agentic-rag's own
+    ExplainabilityInfo. Caching mirrors single-agentic-rag's own
+    LIVE_DATA_TOOLS pattern one level up, at agent-dispatch granularity
+    (LIVE_DATA_AGENTS) - see RAG-ROADMAP.md's Phase 115 entry. Per-
+    domain-agent token capture is still not done (would touch all 7
+    agent files this phase doesn't otherwise need to change) - a real,
+    logged gap (BACKLOG.md), not silently skipped."""
+    started_at = time.perf_counter()
     checked_query = await check_input(query)
 
     resolved_conversation_id = None
     if enable_conversation_memory:
         resolved_conversation_id = conversation_id or conversation_memory.new_conversation_id()
+
+    cache_key = build_cache_key(checked_query, pipeline="multi-agentic-rag")
+    cached_result = await get_db_gateway().answer_cache().get(cache_key)
+    if cached_result is not None:
+        logger.info("Answer cache hit for %r (multi-agentic-rag)", checked_query)
+        result = dict(cached_result)
+        result["conversation_id"] = resolved_conversation_id
+        if resolved_conversation_id:
+            await conversation_memory.save_turn(resolved_conversation_id, employee_id, checked_query, result["answer"])
+            await get_db_gateway().answer_cache().tag_conversation(resolved_conversation_id, cache_key)
+        result["served_from_cache"] = True
+        result["llm_call_count"] = 0
+        result["token_usage"] = None
+        result["latency_ms"] = {"total": _elapsed_ms(started_at), "retrieval": None, "generation": None, "eval": None}
+        return result
 
     graph = get_graph()
     final_state = await graph.ainvoke(
@@ -140,14 +204,35 @@ async def run_multi_agent(
 
     agent_results = final_state["agent_results"]
     tools_used = [{"tool_name": result["agent"], "tool_input": result["focus"]} for result in agent_results]
+    # Raw per-domain-agent result text, kept alongside tools_used - needed to eval
+    # groundedness against what was actually retrieved (Phase 69), not just the final answer.
+    agent_result_texts = [result["result"] for result in agent_results]
+    # Real citations (Phase 115) - only vector_kb_agent's own node attaches "sources".
+    sources = [chunk for result in agent_results for chunk in result.get("sources", [])]
 
-    return {
+    eval_scores, eval_ms = await _score_live_answer(checked_query, answer, agent_result_texts)
+
+    result = {
         "answer": answer,
         "tasks": final_state["tasks"],
         "tools_used": tools_used,
-        # Raw per-domain-agent result text, kept alongside tools_used - needed to eval
-        # groundedness against what was actually retrieved (Phase 69), not just the final answer.
-        "agent_result_texts": [result["result"] for result in agent_results],
+        "agent_result_texts": agent_result_texts,
+        "sources": sources,
         "iterations": len(agent_results),
         "conversation_id": resolved_conversation_id,
+        "served_from_cache": False,
+        # Planner + each dispatched domain agent + Reviewer - a real count
+        # of this run's own LLM calls, not a guess.
+        "llm_call_count": len(agent_results) + 2,
+        "token_usage": None,
+        "eval_scores": eval_scores,
+        "latency_ms": {"total": _elapsed_ms(started_at), "retrieval": None, "generation": None, "eval": eval_ms},
     }
+
+    cache_eligible = not any(task["agent"] in LIVE_DATA_AGENTS for task in final_state["tasks"])
+    if cache_eligible:
+        await get_db_gateway().answer_cache().set(cache_key, checked_query, result)
+        if resolved_conversation_id:
+            await get_db_gateway().answer_cache().tag_conversation(resolved_conversation_id, cache_key)
+
+    return result

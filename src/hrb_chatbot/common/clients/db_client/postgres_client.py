@@ -34,6 +34,8 @@ ADD_COLUMNS = [
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS vector_db TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS chunk_size INTEGER",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS chunk_overlap INTEGER",
+    # Phase 114: see sqlite_client.py's own identical column for why.
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS chunking_strategy TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS last_indexed_at TIMESTAMPTZ",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_size_bytes INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT",
@@ -265,13 +267,14 @@ class PostgresClient(BaseMetadataClient):
         embedding_model: str,
         embedding_dimension: int,
         vector_db: str,
+        chunking_strategy: str | None,
         chunk_size: int,
         chunk_overlap: int,
     ) -> int:
         with self._connect() as conn:
             row = conn.execute(
                 "UPDATE documents SET chunk_ids = %s, chunk_count = %s, embedding_model = %s, "
-                "embedding_dimension = %s, vector_db = %s, chunk_size = %s, chunk_overlap = %s, "
+                "embedding_dimension = %s, vector_db = %s, chunking_strategy = %s, chunk_size = %s, chunk_overlap = %s, "
                 "status = 'indexed', error_message = NULL, last_indexed_at = now(), updated_at = now(), "
                 "document_version = document_version + 1 WHERE id = %s RETURNING document_version",
                 (
@@ -280,6 +283,7 @@ class PostgresClient(BaseMetadataClient):
                     embedding_model,
                     embedding_dimension,
                     vector_db,
+                    chunking_strategy,
                     chunk_size,
                     chunk_overlap,
                     document_id,
@@ -401,6 +405,7 @@ class PostgresClient(BaseMetadataClient):
         embedding_model: str,
         embedding_dimension: int,
         vector_db: str,
+        chunking_strategy: str | None,
         chunk_size: int,
         chunk_overlap: int,
     ) -> int:
@@ -415,6 +420,7 @@ class PostgresClient(BaseMetadataClient):
                 embedding_model,
                 embedding_dimension,
                 vector_db,
+                chunking_strategy,
                 chunk_size,
                 chunk_overlap,
             )

@@ -200,7 +200,7 @@ Don't re-derive any of this from the code - it's already written down:
 ## Known gotchas - condensed, full detail in the docs above
 
 - **Document endpoints live under `/v1/genai-rag/ingest-document/...`, query endpoints
-  under `/v1/genai-rag/retrieve-document/...`** (`GET /health` is the one exception,
+  under `/v1/genai-rag-retrieval/...`** (`GET /health` is the one exception,
   deliberately unversioned). One shared `/v1`, then a mode segment
   (`genai-rag` today; `single-agentic-rag`/`multi-agentic-rag` reserved for
   later), then a resource segment - a fresh agent testing against an

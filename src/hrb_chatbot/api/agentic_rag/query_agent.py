@@ -3,11 +3,15 @@
 from fastapi import APIRouter, Request
 
 from src.hrb_chatbot.ai.agents.workflow_agents.orchestration_agent import run_agent
+from src.hrb_chatbot.ai.pre_processing.guardrails_input import GuardrailBlockedError
+from src.hrb_chatbot.api.dependencies import json_error
 from src.hrb_chatbot.api.gateway.rbac import require_role
+from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.enums import Role
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rate_limiting.rate_limiter import enforce_rate_limit
 from src.hrb_chatbot.models.agentic_rag import AgenticRagRequest, AgenticRagResponse, ToolCallInfo
+from src.hrb_chatbot.models.rag import EvalScores, ExplainabilityInfo, LatencyInfo, TokenUsageInfo
 
 logger = get_logger("query_agent")
 
@@ -19,18 +23,32 @@ async def query(payload: AgenticRagRequest, request: Request):
     userProfile = require_role(payload.user_profile, Role.EMPLOYEE, Role.MANAGER, Role.HR_SUPPORT)
     await enforce_rate_limit(request)
 
-    result = await run_agent(
-        payload.query,
-        userProfile.employee_id,
-        payload.max_iterations,
-        enable_conversation_memory=payload.enable_conversation_memory,
-        conversation_id=payload.conversation_id,
-    )
+    try:
+        result = await run_agent(
+            payload.query,
+            userProfile.employee_id,
+            payload.max_iterations,
+            enable_conversation_memory=payload.enable_conversation_memory,
+            conversation_id=payload.conversation_id,
+        )
+    except GuardrailBlockedError as error:
+        return json_error(422, str(error), code=error_codes.INPUT_GUARDRAIL_BLOCKED)
 
+    token_usage = result.get("token_usage")
+    eval_scores = result.get("eval_scores")
     return AgenticRagResponse(
         query=payload.query,
         answer=result["answer"],
         tools_used=[ToolCallInfo(**call) for call in result["tools_used"]],
+        sources=result.get("sources") or [],
         iterations=result["iterations"],
+        explainability_info=ExplainabilityInfo(
+            served_from_cache=result["served_from_cache"],
+            llm_call_count=result["llm_call_count"],
+            latency_ms=LatencyInfo(**result["latency_ms"]),
+            token_usage=TokenUsageInfo(**token_usage) if token_usage else None,
+            routed_to=None,
+            eval_scores=EvalScores(**eval_scores) if eval_scores else None,
+        ),
         conversation_id=result.get("conversation_id"),
     )
