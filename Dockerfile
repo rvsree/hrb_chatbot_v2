@@ -54,12 +54,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PORT=8093
 
 # curl is for the HEALTHCHECK below - without it the health check can never
-# pass. libmagic1 is what python-magic actually loads at import time (it's a
-# ctypes wrapper, not a compiled extension, so pip install needs nothing
-# extra - only the runtime import does) - confirmed by the build failing
-# without it when python-magic-bin (Windows-only) was swapped out.
+# pass. libmagic1 (for python-magic) was here but that dependency was
+# removed 2026-10-07 - never actually imported anywhere in src/, uploads
+# are validated by content-type string only (see requirements.txt).
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl libmagic1 && \
+    apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Run as a normal user. Nothing here needs root, and a container that starts

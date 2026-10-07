@@ -1240,16 +1240,12 @@ feature unless it's critical/blocking (CORS was - see RAG-ROADMAP.md
 Phase 95); everything else below is deliberately deferred, logged here
 instead of implemented.
 
-- **No way to list or fetch conversation history.**
-  `api/conversations/manage_conversations.py` has exactly one endpoint:
-  `DELETE /{conversation_id}`. There is no `GET` for a caller's own
-  conversation list or for one conversation's turns. `enable_conversation_memory`
-  + `conversation_id` on the query endpoints keep history server-side for
-  context continuation, but nothing reads it back out. The wireframed
-  "Conversation History" sidebar can't be populated from the backend
-  today - the UI's first phase holds conversation state in browser-only
-  storage (one browser, one device, lost on clear) and labels it as
-  such, rather than faking a real history feature.
+- ~~**No way to list or fetch conversation history.**~~ Resolved, Phase
+  116 (2026-10-07): `GET /v1/conversations` (own conversation list) and
+  `GET /v1/conversations/{id}` (one conversation's turns) both exist now,
+  alongside the original `DELETE`. The frontend's `ChatPage.tsx` lazy-
+  loads from these on login, merging server-side conversations into
+  local state - no longer browser-only.
 - **No feedback-submission endpoint at all.** Nothing in `src/` stores
   or accepts a "Helpful"/"Not quite" signal from a chat message. The
   wireframed feedback popup has nowhere to send its payload - the UI's
