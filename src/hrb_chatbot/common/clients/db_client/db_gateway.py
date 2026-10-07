@@ -6,6 +6,7 @@ from src.hrb_chatbot.common.clients.db_client.base_metadata_client import BaseMe
 from src.hrb_chatbot.common.clients.db_client.base_vector_db_client import BaseVectorDBClient
 from src.hrb_chatbot.common.clients.db_client.chroma_client import ChromaDBClient
 from src.hrb_chatbot.common.clients.db_client.conversation_store import ConversationStore
+from src.hrb_chatbot.common.clients.db_client.feedback_store import FeedbackStore
 from src.hrb_chatbot.common.clients.db_client.pinecone_client import PineconeClient
 from src.hrb_chatbot.common.clients.db_client.postgres_client import PostgresClient
 from src.hrb_chatbot.common.clients.db_client.sqlite_client import SQLiteClient
@@ -22,6 +23,7 @@ class DBGateway:
         self.sqlite_client = None
         self.postgres_client = None
         self.conversation_store_client = None
+        self.feedback_store_client = None
         self.embedding_cache_client = None
         self.answer_cache_client = None
 
@@ -65,6 +67,12 @@ class DBGateway:
         if self.conversation_store_client is None:
             self.conversation_store_client = ConversationStore()
         return self.conversation_store_client
+
+    def feedback_store(self) -> FeedbackStore:
+        """Return the shared feedback store, building it on first use (Phase 104)."""
+        if self.feedback_store_client is None:
+            self.feedback_store_client = FeedbackStore()
+        return self.feedback_store_client
 
     def embedding_cache(self) -> EmbeddingCache:
         """Return the shared embedding cache, building it on first use (Phase 77)."""
