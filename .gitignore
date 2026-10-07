@@ -34,3 +34,6 @@ uvicorn.log
 # real content. Keeps reappearing if these get opened again - excluded
 # permanently rather than deleted by hand each time.
 ~$*.docx
+
+# Personal IK FDE coursework, not project code.
+docs/ik-fde-course-docs/
