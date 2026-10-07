@@ -13,14 +13,18 @@ README doesn't repeat it).
 | --- | --- | --- |
 | Backend (this repo, `hrb_chatbot_v2`) | `http://127.0.0.1:8093` | `https://hrb-chatbot.rvsree.dev` |
 | Frontend (`hrb_chatbot_ui`, separate repo) | `http://localhost:5173` (`npm run dev`) | `https://hrb-chatbot-ui.rvsree.dev` |
+| MCP server (`hrb_lms_mcp`, separate repo - leave balance/history tools) | `http://127.0.0.1:8190` | `https://hrb-lms-mcp.rvsree.dev` |
 
 The AWS backend runs on App Runner (Phase 10, see
 [AWS-DEVOPS-RUNBOOK.md](docs/agent-reference/AWS-DEVOPS-RUNBOOK.md)); the AWS
 frontend is a static build on S3 behind CloudFront (Phase 117, manually
-provisioned - no CI/CD pipeline for it yet, unlike the backend's `deploy.yml`).
-Both point at each other by default: the frontend's `.env.production` bakes
-in the production backend URL above, and the backend's CORS config
-(`main.py`) allows the production frontend origin.
+provisioned - no CI/CD pipeline for it yet, unlike the backend's `deploy.yml`);
+`hrb_lms_mcp` is its own App Runner service with a real `deploy.yml` (Phase
+118). All three point at each other by default: the frontend's
+`.env.production` bakes in the production backend URL above, the backend's
+CORS config (`main.py`) allows the production frontend origin, and the
+backend's `HRB_LMS_MCP_URL`/OAuth2 settings (App Runner secrets, not
+committed anywhere) point at the production MCP server.
 
 ## Prerequisites
 
