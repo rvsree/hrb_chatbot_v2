@@ -6,9 +6,9 @@ from src.hrb_chatbot.ai.rag_pipeline.tools.agentic_tools import get_leave_balanc
 from src.hrb_chatbot.ai.rag_pipeline.tools.mcp_tools import is_leave_history_query
 
 
-async def run(focus: str, employee_id: str | None) -> str:
+async def run(focus: str, employee_id: str | None) -> tuple[str, list[dict]]:
     if not employee_id or not employee_id.strip():
-        return "Error: no employee ID available for this request."
+        return "Error: no employee ID available for this request.", []
 
     if is_leave_history_query(focus):
         return await get_leave_history_tool(employee_id)

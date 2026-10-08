@@ -19,11 +19,13 @@ def _fake_cache_and_eval_judges(monkeypatch):
     "Redis unreachable"/"Event loop is closed" errors on every call)."""
     gateway = FakeDBGateway()
     monkeypatch.setattr(multi_agent_pipeline, "get_db_gateway", lambda: gateway)
-    monkeypatch.setattr(
-        multi_agent_pipeline,
-        "evaluate_groundedness",
-        lambda answer, context_texts: {"score": 0.9, "verdict": "GROUNDED", "explanation": "fake"},
-    )
+    def _fake_evaluate_groundedness(answer, context_texts):
+        # Phase 120 regression guard - a tuple here means some domain agent's
+        # "result" wasn't unpacked before joining into agent_result_texts.
+        assert all(isinstance(t, str) for t in context_texts)
+        return {"score": 0.9, "verdict": "GROUNDED", "explanation": "fake"}
+
+    monkeypatch.setattr(multi_agent_pipeline, "evaluate_groundedness", _fake_evaluate_groundedness)
     monkeypatch.setattr(
         multi_agent_pipeline,
         "evaluate_completeness",
@@ -84,7 +86,7 @@ async def test_multi_task_query_dispatches_to_both_agents_in_parallel_and_merges
         return "8 weeks paid.", []
 
     async def _fake_lms_ops_run(focus, employee_id):
-        return "10 days available."
+        return "10 days available.", []
 
     async def _fake_review(query, agent_results):
         assert {r["agent"] for r in agent_results} == {"vector_kb_agent", "lms_ops_agent"}
@@ -216,7 +218,7 @@ async def test_a_live_data_agent_dispatch_is_never_cached(monkeypatch):
         return [{"agent": "lms_ops_agent", "focus": query}]
 
     async def _fake_lms_ops_run(focus, employee_id):
-        return "10 days available."
+        return "10 days available.", []
 
     monkeypatch.setattr(multi_agent_pipeline.planner_agent, "plan", _fake_plan)
     monkeypatch.setattr(multi_agent_pipeline.lms_ops_agent, "run", _fake_lms_ops_run)

@@ -9314,6 +9314,48 @@ Explicitly deferred to a later, separate wave - not part of the above:
     with the now-unnecessary `libmagic1` system package in `Dockerfile`.
     358 passed, 6 deselected, both before AND after the correction.
 
+- [x] **Phase 120 — User-reported bug: multi-agentic-rag 500s on any
+  query that dispatches `lms_ops_agent`.**
+  - **Spec:** Phase 115 changed `agentic_tools.py`'s `get_leave_balance_tool`/
+    `get_leave_history_tool` to return `tuple[str, list[dict]]` and
+    updated `vector_kb_agent.py`/`vector_kb_agent_node` to match, but
+    missed `lms_ops_agent.py` - its `run()` (type-hinted `-> str`) calls
+    those same tools directly and returns whatever they give back, now a
+    tuple. `multi_agent_pipeline.py`'s `lms_ops_agent_node` stores that
+    tuple as `agent_results[i]["result"]` without unpacking, and
+    `run_multi_agent()`'s `agent_result_texts = [r["result"] for r in
+    agent_results]` collects it alongside other agents' real strings -
+    `_score_live_answer()`'s `evaluate_groundedness(answer,
+    context_texts)` call then fails with `TypeError: sequence item 1:
+    expected str instance, tuple found`, a 500 on any multi-agentic-rag
+    query that dispatches `lms_ops_agent` (e.g. a combined KB+leave-data
+    question). Fix: `lms_ops_agent.py::run()` returns the tuple through
+    unchanged (matching `vector_kb_agent.py`'s own pattern exactly), and
+    `lms_ops_agent_node` unpacks it and accumulates `sources` - always
+    `[]` for this agent today, but keeps the contract uniform across all
+    5 domain agents instead of just special-casing this one.
+  - **Reusability requirement:** none - matches an existing pattern,
+    doesn't introduce a new one.
+  - **Testing plan:** a new test asserting `lms_ops_agent.run()` returns
+    a `(str, list)` tuple; a `multi_agent_pipeline.py` test dispatching
+    `lms_ops_agent` and confirming `_score_live_answer` receives a
+    clean list of strings, not a mix of strings and tuples. Live
+    verification: the exact combined question that 500'd in production
+    against `https://hrb-chatbot.rvsree.dev`.
+  - **Built and verified:** `test_lms_ops_agent.py`'s 3 tests updated to
+    unpack `(result, sources)`; the shared `evaluate_groundedness` fake
+    in `test_multi_agent_pipeline.py` now asserts every `context_texts`
+    item is a `str` - a real regression guard, proven by temporarily
+    reverting the fix and confirming the suite failed (2 tests, a
+    `NameError` since the revert left a dangling `chunks` reference -
+    same root cause, different symptom). 358 passed after the real fix
+    was restored. Live: the exact combined question that 500'd
+    (`"What is the dental plan, and how many PTO days do I have
+    left?"`) against `https://hrb-chatbot.rvsree.dev`'s
+    multi-agentic-rag endpoint now returns 200 with both the dental
+    plan (from `vector_kb_agent`) and a real PTO balance (from
+    `lms_ops_agent`) in one answer.
+
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
    document id returned, file in `data/uploads/`, SQLite row exists. **Done**,

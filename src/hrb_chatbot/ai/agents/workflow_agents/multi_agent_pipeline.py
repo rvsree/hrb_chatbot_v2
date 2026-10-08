@@ -100,8 +100,12 @@ async def vector_kb_agent_node(state: dict) -> dict:
 
 
 async def lms_ops_agent_node(state: dict) -> dict:
-    result = await lms_ops_agent.run(state["focus"], state["employee_id"])
-    return {"agent_results": [{"agent": "lms_ops_agent", "focus": state["focus"], "result": result}]}
+    result, chunks = await lms_ops_agent.run(state["focus"], state["employee_id"])
+    return {
+        "agent_results": [
+            {"agent": "lms_ops_agent", "focus": state["focus"], "result": result, "sources": chunks}
+        ]
+    }
 
 
 async def sql_db_agent_node(state: dict) -> dict:
@@ -207,7 +211,7 @@ async def run_multi_agent(
     # Raw per-domain-agent result text, kept alongside tools_used - needed to eval
     # groundedness against what was actually retrieved (Phase 69), not just the final answer.
     agent_result_texts = [result["result"] for result in agent_results]
-    # Real citations (Phase 115) - only vector_kb_agent's own node attaches "sources".
+    # Real citations (Phase 115/120) - always [] except vector_kb_agent/lms_ops_agent.
     sources = [chunk for result in agent_results for chunk in result.get("sources", [])]
 
     eval_scores, eval_ms = await _score_live_answer(checked_query, answer, agent_result_texts)
