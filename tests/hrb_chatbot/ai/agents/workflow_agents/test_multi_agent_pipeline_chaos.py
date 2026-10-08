@@ -55,9 +55,8 @@ async def test_one_domain_agent_failing_does_not_crash_the_graph_or_drop_the_oth
         return "8 weeks paid.", []
 
     async def _failing_lms_ops_run(focus, employee_id):
-        # Mirrors what lms_ops_agent.run() already returns on a real MCP
-        # failure - a string, never a raised exception reaching the graph.
-        return "Error: leave balance lookup failed (connection refused)."
+        # A real MCP failure returns an error string, never a raised exception.
+        return "Error: leave balance lookup failed (connection refused).", []
 
     captured_agent_results = {}
 
