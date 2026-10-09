@@ -308,3 +308,30 @@ async def test_apply_extracted_chunk_metadata_omits_fields_extraction_could_not_
     assert "doc_category" not in metadata
     assert "department" not in metadata
     assert "doc_description" not in metadata
+
+
+async def test_section_ids_are_stored_as_chunk_metadata_when_given(monkeypatch):
+    metadata_store, vector_store, gateway = _new_setup()
+    monkeypatch.setattr(vector_indexer, "get_db_gateway", lambda: gateway)
+
+    await metadata_store.create_document("doc-1", "policy.pdf", "data/uploads/doc-1/policy.pdf")
+    await vector_indexer.write_chunks(
+        "doc-1", ["alpha", "beta"], [[0.1], [0.2]], section_ids=["eligibility", "eligibility/employee-eligibility"]
+    )
+
+    first = vector_store.metadata_for(vector_indexer.COLLECTION_NAME, "doc-1:0")
+    second = vector_store.metadata_for(vector_indexer.COLLECTION_NAME, "doc-1:1")
+    assert first["section_id"] == "eligibility"
+    assert second["section_id"] == "eligibility/employee-eligibility"
+
+
+async def test_section_id_is_omitted_when_not_given(monkeypatch):
+    # Pinecone's update_metadata() rejects a literal None value - omitted entirely, same as doc_category etc.
+    metadata_store, vector_store, gateway = _new_setup()
+    monkeypatch.setattr(vector_indexer, "get_db_gateway", lambda: gateway)
+
+    await metadata_store.create_document("doc-1", "policy.pdf", "data/uploads/doc-1/policy.pdf")
+    await vector_indexer.write_chunks("doc-1", ["alpha"], [[0.1]])
+
+    metadata = vector_store.metadata_for(vector_indexer.COLLECTION_NAME, "doc-1:0")
+    assert "section_id" not in metadata

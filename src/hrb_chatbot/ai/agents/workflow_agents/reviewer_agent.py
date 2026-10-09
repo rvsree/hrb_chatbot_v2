@@ -8,7 +8,8 @@ from langchain_openai import ChatOpenAI
 
 from src.hrb_chatbot.ai.agents._llm_helpers import AGENT_LLM_TIMEOUT_SECONDS, build_agent_llm
 from src.hrb_chatbot.ai.pre_processing.context_builder import build_context_from_agent_results
-from src.hrb_chatbot.ai.prompts.agent_prompts import REVIEWER_SYSTEM_PROMPT
+from src.hrb_chatbot.ai.prompts.agent_prompts import FOLLOW_UP_QUESTIONS_SYSTEM_PROMPT, REVIEWER_SYSTEM_PROMPT
+from src.hrb_chatbot.ai.rag_core.response_format import TABULAR_FORMAT_INSTRUCTION, should_use_tabular_format
 from src.hrb_chatbot.common.logging.call_logger import log_backend_call
 from src.hrb_chatbot.common.logging.logger import get_logger
 
@@ -29,8 +30,11 @@ async def review(query: str, agent_results: list[dict]) -> str:
 
     combined = build_context_from_agent_results(agent_results)
     llm = _build_llm()
+    system_prompt = REVIEWER_SYSTEM_PROMPT
+    if should_use_tabular_format(query):
+        system_prompt = f"{REVIEWER_SYSTEM_PROMPT}\n\n{TABULAR_FORMAT_INSTRUCTION}"
     messages = [
-        SystemMessage(content=REVIEWER_SYSTEM_PROMPT),
+        SystemMessage(content=system_prompt),
         HumanMessage(content=f"Original question: {query}\n\nDomain agent results:\n{combined}"),
     ]
 
@@ -45,3 +49,22 @@ async def review(query: str, agent_results: list[dict]) -> str:
         )
 
     return response.content
+
+
+async def generate_follow_ups(query: str, answer: str) -> list[str]:
+    """Phase 123: 2-3 suggested follow-up questions - a nice-to-have, so any
+    failure here returns [] rather than failing the whole request."""
+    llm = _build_llm()
+    messages = [
+        SystemMessage(content=FOLLOW_UP_QUESTIONS_SYSTEM_PROMPT),
+        HumanMessage(content=f"Question: {query}\n\nAnswer: {answer}"),
+    ]
+
+    try:
+        with log_backend_call(logger, "reviewer_agent", "generate_follow_ups"):
+            response = await asyncio.wait_for(llm.ainvoke(messages), timeout=AGENT_LLM_TIMEOUT_SECONDS)
+    except Exception as error:
+        logger.warning("Follow-up question generation failed: %s: %s", type(error).__name__, error)
+        return []
+
+    return [line.strip() for line in response.content.splitlines() if line.strip()]

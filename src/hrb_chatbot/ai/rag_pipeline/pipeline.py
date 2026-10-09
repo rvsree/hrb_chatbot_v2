@@ -6,6 +6,7 @@ import time
 from src.hrb_chatbot.ai.pre_processing import conversation_memory
 from src.hrb_chatbot.ai.pre_processing.guardrails_input import check_input
 from src.hrb_chatbot.ai.rag_core.guarded_pipeline import run_guarded_pipeline
+from src.hrb_chatbot.ai.rag_core.tool_classification import classify_tool
 from src.hrb_chatbot.ai.rag_pipeline.evaluations.golden_dataset_harness import evaluate_completeness, evaluate_groundedness
 from src.hrb_chatbot.ai.rag_pipeline.query_retrieval.retriever import retrieve_chunks
 from src.hrb_chatbot.ai.rag_pipeline.response_generation.response_generator import generate_answer
@@ -75,6 +76,16 @@ async def answer_query(params: RagQueryParams) -> dict:
             "total": _elapsed_ms(started_at), "retrieval": None, "generation": None, "eval": None
         }
         mcp_result["eval_scores"] = None
+        # Phase 126 - one-entry tools_used, same shape single/multi-agentic-rag already use.
+        mcp_result["tools_used"] = [
+            {
+                "tool_name": mcp_result["routed_to"],
+                "tool_input": checked_query,
+                "tool_type": classify_tool(mcp_result["routed_to"]),
+                "latency_ms": mcp_result.get("tool_latency_ms"),
+                "success": True,  # try_route_to_mcp() already returned None on failure, falling through to RAG instead
+            }
+        ]
         return mcp_result
 
     resolved_vector_db = get_active_vector_db(params.vector_db)

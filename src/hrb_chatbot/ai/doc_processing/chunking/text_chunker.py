@@ -32,6 +32,13 @@ WHOLE_DOCUMENT_MAX_LENGTH = DEFAULT_CHUNK_SIZE
 # before chunking (Phase 75) so a table is never split across two chunks.
 TABLE_BLOCK_PATTERN = re.compile(r"\[TABLE\](.*?)\[/TABLE\]", re.DOTALL)
 
+# Phase 124 - matches this project's real KB documents' actual heading style
+# ("Section 2: Eligibility", "2.1 Employee Eligibility"), verified by regex
+# count against every real file in resources/kb_docs/ - not a markdown/HTML
+# heading guess, which never fires on real PDF-extracted text.
+SECTION_HEADING_PATTERN = re.compile(r"^Section \d+:\s*(.+)$", re.MULTILINE)
+SUBSECTION_HEADING_PATTERN = re.compile(r"^\d+\.\d+ ([A-Z].+)$", re.MULTILINE)
+
 # Above this length, a document would fragment into 10+ tiny chunks at the
 # default size, each losing surrounding context - use a larger chunk size instead.
 LARGE_DOCUMENT_MIN_LENGTH = int(read_setting(None, "CHUNK_LARGE_DOCUMENT_MIN_LENGTH", 10_000))
@@ -117,8 +124,75 @@ def chunk_none(text: str) -> list[str]:
     return [stripped] if stripped else []
 
 
+def _slugify(heading_text: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", heading_text.strip().lower())
+    return slug.strip("-")
+
+
+def chunk_by_document_structure(
+    text: str, chunk_size: int = DEFAULT_CHUNK_SIZE, chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
+) -> list[dict]:
+    """Phase 124 - splits on this project's real "Section N: Title"/"N.N
+    Subtitle" headings, tagging each chunk with a stable section_id derived
+    from the heading's own text (not its number, which can shift on a
+    renumbered edit). Falls back to plain recursive chunking with
+    section_id=None when no section headings are found - not an error."""
+    section_matches = list(SECTION_HEADING_PATTERN.finditer(text))
+    if not section_matches:
+        return [{"text": chunk, "section_id": None} for chunk in chunk_recursive(text, chunk_size, chunk_overlap)]
+
+    results: list[dict] = []
+
+    preamble = text[: section_matches[0].start()].strip()
+    if preamble:
+        results += [{"text": chunk, "section_id": None} for chunk in chunk_recursive(preamble, chunk_size, chunk_overlap)]
+
+    for index, match in enumerate(section_matches):
+        section_end = section_matches[index + 1].start() if index + 1 < len(section_matches) else len(text)
+        section_text = text[match.start() : section_end]
+        section_slug = _slugify(match.group(1))
+
+        subsection_matches = list(SUBSECTION_HEADING_PATTERN.finditer(section_text))
+        if not subsection_matches:
+            results += [
+                {"text": chunk, "section_id": section_slug}
+                for chunk in chunk_recursive(section_text, chunk_size, chunk_overlap)
+            ]
+            continue
+
+        section_intro = section_text[: subsection_matches[0].start()].strip()
+        if section_intro:
+            results += [
+                {"text": chunk, "section_id": section_slug}
+                for chunk in chunk_recursive(section_intro, chunk_size, chunk_overlap)
+            ]
+
+        for sub_index, sub_match in enumerate(subsection_matches):
+            sub_end = subsection_matches[sub_index + 1].start() if sub_index + 1 < len(subsection_matches) else len(section_text)
+            subsection_text = section_text[sub_match.start() : sub_end]
+            compound_id = f"{section_slug}/{_slugify(sub_match.group(1))}"
+            results += [
+                {"text": chunk, "section_id": compound_id}
+                for chunk in chunk_recursive(subsection_text, chunk_size, chunk_overlap)
+            ]
+
+    return results
+
+
+def chunk_document_structure(
+    text: str, chunk_size: int = DEFAULT_CHUNK_SIZE, chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
+) -> list[str]:
+    # CHUNKING_STRATEGIES-compatible wrapper, text only - call
+    # chunk_by_document_structure()/chunk_text_with_sections() directly for section ids.
+    return [chunk["text"] for chunk in chunk_by_document_structure(text, chunk_size, chunk_overlap)]
+
+
 # Every strategy a caller can pass explicitly, mapped to its function -
 # "semantic" is explicit-only (see decide_chunking_strategy), never auto-selected.
+# "document_structure" is explicit-only too (Phase 124) - unlike semantic,
+# it WOULD actually fire for every real KB document if auto-selected, so
+# auto-enabling it risks silently shifting golden-dataset scores on a
+# routine re-index; kept opt-in deliberately, not an oversight.
 CHUNKING_STRATEGIES = {
     "fixed": chunk_fixed,
     "recursive": chunk_recursive,
@@ -126,6 +200,7 @@ CHUNKING_STRATEGIES = {
     "markdown": chunk_markdown,
     "html": chunk_html,
     "none": chunk_none,
+    "document_structure": chunk_document_structure,
 }
 
 
@@ -222,7 +297,7 @@ def chunk_text(
     chunk_function = CHUNKING_STRATEGIES[strategy]
     if not text_without_tables:
         prose_chunks = []
-    elif strategy in ("fixed", "recursive"):
+    elif strategy in ("fixed", "recursive", "document_structure"):
         resolved_chunk_size = chunk_size if chunk_size is not None else decide_chunk_size(text)
         prose_chunks = chunk_function(text_without_tables, chunk_size=resolved_chunk_size, chunk_overlap=chunk_overlap)
     else:
@@ -238,3 +313,27 @@ def chunk_text(
         len(table_blocks),
     )
     return chunks
+
+
+def chunk_text_with_sections(
+    text: str,
+    chunking_strategy: str | None = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+) -> tuple[list[str], list[str | None]]:
+    """Phase 124 - like chunk_text(), but also returns a parallel list of
+    section_ids (same length/order as the chunks). Only "document_structure"
+    produces real section ids; every other strategy behaves exactly like
+    chunk_text() and gets [None] * len(chunks) - zero behavior change for
+    the other 6 strategies or chunk_text() itself."""
+    if chunking_strategy != "document_structure":
+        chunks = chunk_text(text, chunking_strategy, chunk_size, chunk_overlap)
+        return chunks, [None] * len(chunks)
+
+    text_without_tables, table_blocks = _split_out_tables(text)
+    resolved_chunk_size = chunk_size if chunk_size is not None else decide_chunk_size(text)
+
+    structured_chunks = chunk_by_document_structure(text_without_tables, resolved_chunk_size, chunk_overlap)
+    chunks = [chunk["text"] for chunk in structured_chunks] + table_blocks
+    section_ids: list[str | None] = [chunk["section_id"] for chunk in structured_chunks] + [None] * len(table_blocks)
+    return chunks, section_ids

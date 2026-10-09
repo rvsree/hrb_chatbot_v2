@@ -35,3 +35,16 @@ def generate_presigned_upload_url(document_id: str, filename: str, content_type:
         )
 
     return {"upload_url": upload_url, "expires_in_seconds": expiry_seconds}
+
+
+def delete_uploaded_object(document_id: str, filename: str) -> None:
+    """Best-effort S3 cleanup on document delete - same key convention as
+    generate_presigned_upload_url, safe to call even if this document was
+    never actually uploaded via S3 (delete_object on a missing key is a no-op)."""
+    bucket = read_setting(None, "S3_UPLOAD_BUCKET")
+    region = read_setting(None, "AWS_REGION", DEFAULT_REGION)
+    s3_client = boto3.client("s3", region_name=region)
+    key = f"{document_id}/{filename}"
+
+    with log_backend_call(logger, "s3", "delete_object", document_id=document_id):
+        s3_client.delete_object(Bucket=bucket, Key=key)

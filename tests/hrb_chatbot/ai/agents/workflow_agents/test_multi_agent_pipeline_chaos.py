@@ -19,6 +19,11 @@ def _fake_cache_and_eval_judges(monkeypatch):
     its own fixtures, not shared with that one)."""
     gateway = FakeDBGateway()
     monkeypatch.setattr(multi_agent_pipeline, "get_db_gateway", lambda: gateway)
+
+    async def _fake_generate_follow_ups(query, answer):
+        return []
+
+    monkeypatch.setattr(multi_agent_pipeline.reviewer_agent, "generate_follow_ups", _fake_generate_follow_ups)
     monkeypatch.setattr(
         multi_agent_pipeline,
         "evaluate_groundedness",

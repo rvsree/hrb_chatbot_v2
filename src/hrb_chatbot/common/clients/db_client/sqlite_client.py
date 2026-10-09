@@ -301,6 +301,21 @@ class SQLiteClient(BaseMetadataClient):
             return []
         return json.loads(row[0])
 
+    async def update_document_content(
+        self, document_id: str, filename: str, file_path: str, file_size_bytes: int, content_hash: str
+    ) -> None:
+        await self._ensure_table()
+        now = datetime.now(UTC).isoformat()
+
+        with log_backend_call(logger, "sqlite", "metadata.update_document_content", document_id=document_id):
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "UPDATE documents SET filename = ?, file_path = ?, file_size_bytes = ?, content_hash = ?, "
+                    "updated_at = ? WHERE id = ?",
+                    (filename, file_path, file_size_bytes, content_hash, now, document_id),
+                )
+                await db.commit()
+
     async def record_document_metadata(
         self,
         document_id: str,

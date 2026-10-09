@@ -10,6 +10,8 @@ from src.hrb_chatbot.ai.agents._llm_helpers import AGENT_LLM_TIMEOUT_SECONDS, bu
 from src.hrb_chatbot.ai.pre_processing import conversation_memory
 from src.hrb_chatbot.ai.prompts.agent_prompts import ORCHESTRATION_SYSTEM_PROMPT
 from src.hrb_chatbot.ai.rag_core.guarded_pipeline import run_guarded_pipeline
+from src.hrb_chatbot.ai.rag_core.response_format import TABULAR_FORMAT_INSTRUCTION, should_use_tabular_format
+from src.hrb_chatbot.ai.rag_core.tool_classification import classify_tool
 from src.hrb_chatbot.ai.rag_pipeline.evaluations.golden_dataset_harness import evaluate_completeness, evaluate_groundedness
 from src.hrb_chatbot.ai.rag_pipeline.tools.agentic_tools import (
     AGENTIC_TOOL_DEFINITIONS,
@@ -117,7 +119,10 @@ async def run_agent(
         return result
 
     async def generate(checked_query: str, chat_history: list | None) -> dict:
-        messages = [SystemMessage(content=SYSTEM_PROMPT), *(chat_history or []), HumanMessage(content=checked_query)]
+        system_prompt = SYSTEM_PROMPT
+        if should_use_tabular_format(checked_query):
+            system_prompt = f"{SYSTEM_PROMPT}\n\n{TABULAR_FORMAT_INSTRUCTION}"
+        messages = [SystemMessage(content=system_prompt), *(chat_history or []), HumanMessage(content=checked_query)]
         tools_used = []
         tool_outputs = []  # raw tool output text, kept alongside tools_used - needed to eval groundedness (Phase 69)
         sources = []  # structured RetrievedChunk-shaped dicts, for real citations (Phase 115)
@@ -167,14 +172,24 @@ async def run_agent(
                 tool_name = tool_call["name"]
                 tool_args = tool_call["args"]
                 tool_input = tool_args.get("input", "")
-                tools_used.append({"tool_name": tool_name, "tool_input": tool_input})
 
                 tool_function = TOOL_FUNCTIONS.get(tool_name)
+                tool_call_started_at = time.perf_counter()
                 if tool_function is None:
                     tool_output, tool_chunks = f"Error: unknown tool {tool_name!r}", []
                 else:
                     tool_output, tool_chunks = await tool_function(tool_args, employee_id)
+                tool_call_latency_ms = _elapsed_ms(tool_call_started_at)
 
+                tools_used.append(
+                    {
+                        "tool_name": tool_name,
+                        "tool_input": tool_input,
+                        "tool_type": classify_tool(tool_name),
+                        "latency_ms": tool_call_latency_ms,
+                        "success": not tool_output.startswith("Error:"),
+                    }
+                )
                 tool_outputs.append(tool_output)
                 sources.extend(tool_chunks)
                 logger.info("Agent called tool=%s input=%r args=%r", tool_name, tool_input[:80], tool_args)

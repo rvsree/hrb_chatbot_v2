@@ -24,6 +24,7 @@ async def _fake_run_multi_agent(query, employee_id, enable_conversation_memory=F
             {"agent": "vector_kb_agent", "focus": "parental leave policy"},
             {"agent": "lms_ops_agent", "focus": "my PTO balance"},
         ],
+        "follow_up_questions": ["How do I enroll in parental leave?", "What's my PTO accrual rate?"],
         "tools_used": [
             {"tool_name": "vector_kb_agent", "tool_input": "parental leave policy"},
             {"tool_name": "lms_ops_agent", "tool_input": "my PTO balance"},
@@ -54,6 +55,10 @@ def test_well_formed_query_returns_answer_tasks_and_tools_used(monkeypatch):
     assert body["tasks"] == [
         {"agent": "vector_kb_agent", "focus": "parental leave policy"},
         {"agent": "lms_ops_agent", "focus": "my PTO balance"},
+    ]
+    assert body["suggested_follow_up_questions"] == [
+        "How do I enroll in parental leave?",
+        "What's my PTO accrual rate?",
     ]
     assert body["iterations"] == 2
 

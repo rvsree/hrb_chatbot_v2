@@ -327,6 +327,26 @@ class PostgresClient(BaseMetadataClient):
         ):
             return await asyncio.to_thread(self._mark_superseded_sync, document_id, superseded_by)
 
+    def _update_document_content_sync(
+        self, document_id: str, filename: str, file_path: str, file_size_bytes: int, content_hash: str
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE documents SET filename = %s, file_path = %s, file_size_bytes = %s, content_hash = %s, "
+                "updated_at = now() WHERE id = %s",
+                (filename, file_path, file_size_bytes, content_hash, document_id),
+            )
+            conn.commit()
+
+    async def update_document_content(
+        self, document_id: str, filename: str, file_path: str, file_size_bytes: int, content_hash: str
+    ) -> None:
+        await self._ensure_table()
+        with log_backend_call(logger, "postgres", "metadata.update_document_content", document_id=document_id):
+            await asyncio.to_thread(
+                self._update_document_content_sync, document_id, filename, file_path, file_size_bytes, content_hash
+            )
+
     def _record_document_metadata_sync(
         self,
         document_id: str,

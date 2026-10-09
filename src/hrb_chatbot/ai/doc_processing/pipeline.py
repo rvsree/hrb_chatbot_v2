@@ -4,6 +4,7 @@ from src.hrb_chatbot.ai.doc_processing.chunking.text_chunker import (
     CHUNKING_STRATEGIES,
     DEFAULT_CHUNK_OVERLAP,
     chunk_text,
+    chunk_text_with_sections,
     decide_chunk_size,
     decide_chunking_strategy,
     extract_text_from_pdf,
@@ -90,7 +91,10 @@ async def index_document(
     # actually ran - decide_chunking_strategy()/decide_chunk_size() are pure, so this always agrees.
     resolved_chunking_strategy = chunking_strategy or decide_chunking_strategy(text)
     resolved_chunk_size = chunk_size or decide_chunk_size(text)
-    chunks = chunk_document(
+    # Phase 124 - section_ids is [None] * len(chunks) for every strategy
+    # except "document_structure"; write_chunks() stores it as the new
+    # per-chunk section_id metadata, omitted entirely when None.
+    chunks, section_ids = chunk_text_with_sections(
         text,
         chunking_strategy=chunking_strategy,
         chunk_size=resolved_chunk_size,
@@ -110,6 +114,7 @@ async def index_document(
         chunking_strategy=resolved_chunking_strategy,
         chunk_size=resolved_chunk_size,
         chunk_overlap=resolved_chunk_overlap,
+        section_ids=section_ids,
     )
 
     logger.info(

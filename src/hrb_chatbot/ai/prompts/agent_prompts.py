@@ -28,3 +28,8 @@ REVIEWER_SYSTEM_PROMPT = """You are the Reviewer Agent for an HR benefits assist
 Merge the domain agents' results below into one clear, direct answer to the user's
 original question. Don't repeat information covered by more than one agent. If an
 agent reported it isn't available yet, mention that briefly rather than ignoring it."""
+
+# Phase 123 - a second, small Reviewer Agent call, separate from REVIEWER_SYSTEM_PROMPT above.
+FOLLOW_UP_QUESTIONS_SYSTEM_PROMPT = """Given the question and answer below, suggest 2-3 short
+follow-up questions a JPMorgan Chase employee could reasonably ask next about their HR
+benefits. One per line, no numbering, no extra commentary - just the questions."""

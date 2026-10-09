@@ -188,6 +188,80 @@ file in a batch doesn't fail the good ones (unchanged from today).
 
 ---
 
+## POST /v1/genai-rag/ingest-document/documents/{document_id}/reindex — Finalized (Phase 125)
+
+In-place re-index: replaces an existing document's file content under the
+*same* `document_id`, then runs the same chunk/embed/write pipeline
+`POST /documents` already uses. Fills a real, previously-unbuilt gap - the
+`"duplicate"` status response on the upload endpoint already told callers
+"use that document_id to re-index if needed" with nowhere to actually do
+that. Single file only (replacing one document's content is inherently
+singular, unlike the batch upload endpoint) - `multipart/form-data`:
+
+- `file` - one PDF (binary)
+- `payload` - one JSON-string form field, parsed server-side:
+
+```json
+{
+  "user_profile": {
+    "employee_id": "EMP051",
+    "full_name": "Hana Support",
+    "role": "hr_support"
+  },
+  "chunk_info": {
+    "chunking_strategy": "recursive",
+    "chunk_size": 1000,
+    "chunk_overlap": 150
+  }
+}
+```
+
+No `document_metadata`/`supersedes_document_id` sub-object - those describe
+a *new* document's provenance/relationship to another; an in-place content
+replace doesn't create a new document, so neither applies. `chunk_info` is
+optional, same auto-select-if-omitted behavior as `POST /documents`.
+
+Response - `200`:
+
+```json
+{
+  "document_id": "d3f1...",
+  "filename": "401k-policy-v2.pdf",
+  "status": "reindexed",
+  "chunk_info": {
+    "chunking_strategy": "recursive",
+    "chunk_size": 1000,
+    "chunk_overlap": 150,
+    "action": "update",
+    "chunks_indexed": 14,
+    "chunks_removed": 2
+  },
+  "versioning_info": {
+    "document_version": 2,
+    "is_current": true,
+    "supersedes": null,
+    "superseded_by": null
+  },
+  "error": null,
+  "error_code": null,
+  "message": null,
+  "file_size_bytes": 128400
+}
+```
+
+Reuses `DocumentUploadResult` (same shape as one entry in `POST /documents`'
+own `results` array) - no new response model. `status` gains two new real
+values on top of the three `POST /documents` already defines:
+`"reindexed"` (content changed, full re-index ran) and `"unchanged"`
+(uploaded content's hash exactly matches what's already indexed - a
+no-op, cheap short-circuit, no embedding cost spent). `"rejected"` still
+applies (bad file type/size/empty, same validation as upload). A
+`document_id` that doesn't exist returns `404` / `DOCUMENT_NOT_FOUND`
+(existing error code, reused) - a real error here, not a per-file
+`"rejected"` result, since there's no batch to keep going for.
+
+---
+
 ## POST /v1/genai-rag-retrieval/query — Finalized
 
 Same `payload`-as-JSON-string-in-multipart pattern doesn't apply here -
@@ -343,6 +417,13 @@ Response (once implemented):
 shape) - aggregated across every sub-agent's own tool calls, not
 per-agent, matching `single-agentic-rag`'s existing flat shape rather
 than inventing a nested one.
+
+Note: this example predates `sources`/`explainability_info` (both real on
+the response today) and, as of Phase 123, `suggested_follow_up_questions:
+list[str]` - Reviewer Agent-generated, empty when no domain agent ran.
+Not rewritten here (stale example, not this phase's scope) - see
+`MultiAgenticRagResponse` in `models/multi_agentic_rag.py` for the real,
+current shape.
 
 ## GET /v1/genai-rag/ingest-document/documents, GET .../{id} — Finalized
 
