@@ -9356,6 +9356,76 @@ Explicitly deferred to a later, separate wave - not part of the above:
     plan (from `vector_kb_agent`) and a real PTO balance (from
     `lms_ops_agent`) in one answer.
 
+- [ ] **Phase 121 — User-directed: fix 3 findings from a live UI audit -
+  S3 orphaned on document delete, duplicate Explainability panels,
+  generic "Source: Live" label.**
+  - **Spec:**
+    1. **S3 cleanup (real gap, highest priority):** `documents_service.py
+       ::delete_document()` cleans up vectors/metadata/local disk/cache
+       but never touches S3 - grepped the whole codebase, zero
+       `delete_object` calls anywhere. Documents uploaded via the async
+       presigned-upload path (Phase 89) permanently orphan their source
+       PDF in `hrb-chatbot-kb-uploads` after "delete" - confirmed no
+       bucket lifecycle policy exists either, so nothing auto-expires
+       them. Fix: a new `delete_uploaded_object(document_id, filename)`
+       in `s3_upload_client.py`, same deterministic key convention
+       (`f"{document_id}/{filename}"`) `generate_presigned_upload_url`
+       already uses - S3 `delete_object` on a non-existent key is a safe
+       no-op (AWS's own documented semantics), so this can be called
+       unconditionally for every document delete, synchronous-upload or
+       S3-upload alike, with no new DB field/migration needed to track
+       which path a document came from. Best-effort (never blocks the
+       rest of deletion), same pattern as the existing
+       `_clear_answer_cache_best_effort()` right next to it.
+    2. **Duplicate Explainability panels:** `hrb_chatbot_ui`'s
+       `ExplainabilityModal.tsx` renders "Agent tasks" and "Call trace"
+       as two separate panels; for multi-agentic-rag they're always
+       identical (`tools_used` is literally `tasks` re-keyed, confirmed
+       in `multi_agent_pipeline.py`). Fix at the UI layer, not the API
+       contract (removing the `tools_used` field would be a breaking
+       response-shape change affecting the contract snapshot tests and
+       any other consumer) - suppress the "Call trace" panel when
+       `message.tasks` is already populated, since that only happens for
+       multi-agentic-rag.
+    3. **Generic "Source: Live" label:** `sourceLabel()` only ever
+       handled `genai-rag`'s response shape (`routed_to`/
+       `retrievalInfo`) - both agentic modes always fell through to the
+       generic `"Live"` string even though `message.tasks`/
+       `message.toolsUsed` already carry exactly what was really called.
+       Fix: check those fields too, building e.g. `"Multi-agent
+       (vector_kb_agent, lms_ops_agent)"` or `"Agent (SearchKnowledgeBase,
+       GetLeaveBalance)"`.
+  - **Reusability requirement:** none - `delete_uploaded_object` follows
+    the existing `s3_upload_client.py` pattern; the two UI fixes are
+    local to `ExplainabilityModal.tsx`.
+  - **Testing plan:** a new `documents_service.py` test confirming
+    `delete_document()` calls S3 delete with the right bucket/key, and
+    that a `ClientError`/404-equivalent from S3 doesn't fail the overall
+    delete (best-effort). Frontend: no new automated tests (this repo
+    has none yet beyond lint/build) - verified live via Playwright
+    against the hosted UI, both for the fixed Source label and the
+    single remaining Explainability panel.
+  - **Built and verified (backend half):** `delete_uploaded_object()`
+    added to `s3_upload_client.py`, wired into `documents_service.py`
+    best-effort, same pattern as `_clear_answer_cache_best_effort()`.
+    Live-verified against the real `hrb-chatbot-kb-uploads-dev` bucket
+    (put an object, called the function directly, confirmed removal via
+    `aws s3 ls`) - first attempt looked broken (object still present
+    after a "successful" call) but turned out to be a test-methodology
+    mistake, not a real bug: `settings.py` loads `.env` with
+    `override=True`, so a shell-prefixed env var pointing at a different
+    bucket was silently discarded and the delete call actually hit the
+    bucket `.env` names, which I wasn't checking. Re-ran against the
+    right bucket and it worked first try. 2 new route tests added
+    (`test_routes_documents.py`) - full suite 360 passed. Frontend half
+    (`ExplainabilityModal.tsx`'s duplicate panel + Source label) is
+    implemented and build/lint-clean, but that file has substantial
+    pre-existing uncommitted work (the whole panel-based redesign,
+    eval-scores panel, `sourceLabel` function itself - none of it in
+    `HEAD`) that this fix is textually embedded inside and can't be
+    cleanly git-split from; flagged to the user for a commit-scope call
+    rather than guessed at. Playwright live verification still pending.
+
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
    document id returned, file in `data/uploads/`, SQLite row exists. **Done**,

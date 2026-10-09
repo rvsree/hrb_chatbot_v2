@@ -27,6 +27,10 @@ client = TestClient(app)
 
 HR_SUPPORT_USER_PROFILE = {"employee_id": "EMP051", "full_name": "Hana Support", "role": "hr_support"}
 
+# Captured before any fixture can monkeypatch it over, so the real-function
+# tests below can restore it even after the file's own autouse no-op fixture runs.
+_REAL_DELETE_S3_BEST_EFFORT = documents_service._delete_s3_object_best_effort
+
 
 @pytest.fixture(autouse=True)
 def _no_op_answer_cache_invalidation(monkeypatch):
@@ -41,6 +45,14 @@ def _no_op_answer_cache_invalidation(monkeypatch):
         return None
 
     monkeypatch.setattr(documents_service, "_clear_answer_cache_best_effort", _noop)
+
+
+@pytest.fixture(autouse=True)
+def _no_op_s3_delete(monkeypatch):
+    """Phase 121's S3 cleanup on delete calls real boto3 - no-op it here, same
+    reasoning as the answer-cache fixture above. test_delete_calls_s3_cleanup
+    below overrides this with its own fake to verify the real wiring."""
+    monkeypatch.setattr(documents_service, "_delete_s3_object_best_effort", lambda document_id, filename: None)
 
 
 def _payload(user_profile=None, chunk_info=None, document_metadata=None) -> dict:
@@ -517,6 +529,56 @@ def test_cleanup_preview_lists_test_noise_without_deleting_it():
 
     # Still there - preview must not delete anything.
     assert _get(f"/v1/genai-rag/ingest-document/documents/{document_id}").status_code == 200
+
+
+def test_delete_one_document_removes_it_and_calls_s3_cleanup(monkeypatch):
+    captured = {}
+
+    def _capturing_delete(document_id, filename):
+        captured["document_id"] = document_id
+        captured["filename"] = filename
+
+    # Overrides the file's own autouse no-op fixture for this one test, to
+    # verify the real S3 cleanup wiring instead of skipping it.
+    monkeypatch.setattr(documents_service, "_delete_s3_object_best_effort", _capturing_delete)
+
+    upload_response = client.post(
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="to-delete.pdf"), data=_payload()
+    )
+    document_id = upload_response.json()["results"][0]["document_id"]
+
+    delete_response = _delete(f"/v1/genai-rag/ingest-document/documents/{document_id}")
+
+    assert delete_response.status_code == 200
+    body = delete_response.json()
+    assert body["document_id"] == document_id
+    assert body["filename"] == "to-delete.pdf"
+    assert captured == {"document_id": document_id, "filename": "to-delete.pdf"}
+
+    # Gone - a second GET for the same id is a 404, not a stale row.
+    assert _get(f"/v1/genai-rag/ingest-document/documents/{document_id}").status_code == 404
+
+
+def test_delete_one_document_survives_an_s3_failure(monkeypatch):
+    def _failing_delete(document_id, filename):
+        raise RuntimeError("S3 is down")
+
+    # Restores the real best-effort wrapper (overriding this file's own
+    # autouse no-op fixture) so its own internal try/except is what's
+    # actually under test here, not a fake standing in for it.
+    monkeypatch.setattr(documents_service, "_delete_s3_object_best_effort", _REAL_DELETE_S3_BEST_EFFORT)
+    monkeypatch.setattr(documents_service, "delete_uploaded_object", _failing_delete)
+
+    upload_response = client.post(
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="s3-down.pdf"), data=_payload()
+    )
+    document_id = upload_response.json()["results"][0]["document_id"]
+
+    delete_response = _delete(f"/v1/genai-rag/ingest-document/documents/{document_id}")
+
+    # S3 failing must never block an otherwise-successful delete (best-effort).
+    assert delete_response.status_code == 200
+    assert delete_response.json()["document_id"] == document_id
 
 
 def test_cleanup_delete_removes_test_noise_and_reports_deleted_by():

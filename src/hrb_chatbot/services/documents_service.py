@@ -12,7 +12,10 @@ from src.hrb_chatbot.ai.doc_processing.indexing.vector_indexer import storage_ch
 from src.hrb_chatbot.common.clients.db_client.langchain_vector_store import COLLECTION_NAME
 from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
-from src.hrb_chatbot.common.clients.storage_client.s3_upload_client import generate_presigned_upload_url
+from src.hrb_chatbot.common.clients.storage_client.s3_upload_client import (
+    delete_uploaded_object,
+    generate_presigned_upload_url,
+)
 from src.hrb_chatbot.common.config.settings import read_setting
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.utils.content_hash import compute_content_hash
@@ -42,6 +45,16 @@ async def _clear_answer_cache_best_effort() -> None:
         await get_db_gateway().answer_cache().clear_all()
     except Exception as error:
         logger.warning("Answer cache invalidation failed: %s: %s", type(error).__name__, error)
+
+
+def _delete_s3_object_best_effort(document_id: str, filename: str) -> None:
+    """Phase 121: a document delete must also remove its S3 source object,
+    or an async-uploaded (Phase 89) file orphans there forever - best-effort,
+    same reasoning as the answer-cache clear above."""
+    try:
+        delete_uploaded_object(document_id, filename)
+    except Exception as error:
+        logger.warning("S3 object delete failed for %s: %s: %s", document_id, type(error).__name__, error)
 
 
 def validate_file(upload: UploadFile, size: int) -> tuple[str, str] | None:
@@ -365,6 +378,7 @@ async def delete_document(document_id: str, deleted_by: str | None = None) -> di
     document_directory = UPLOAD_DIRECTORY / document_id
     shutil.rmtree(document_directory, ignore_errors=True)
 
+    _delete_s3_object_best_effort(document_id, document["filename"])
     await _clear_answer_cache_best_effort()
 
     logger.info("Deleted document %s (%r) - %d chunk(s) removed", document_id, document["filename"], len(chunk_ids))
