@@ -250,6 +250,108 @@ async def _index_now(
         return {"error": "Upload succeeded, but indexing failed.", "error_code": error_codes.INDEXING_FAILED}
 
 
+async def reindex_document(
+    document_id: str,
+    upload: UploadFile,
+    chunking_strategy: str | None = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+) -> DocumentUploadResult | None:
+    """Phase 125: replace an existing document's file content in place, under
+    the same document_id, and re-index it. Returns None if document_id doesn't
+    exist - the route turns that into a 404, not a per-file 'rejected' result."""
+    existing = await get_db_gateway().metadata_store().get_document(document_id)
+    if existing is None:
+        return None
+
+    try:
+        content = await upload.read()
+    except Exception as error:
+        logger.error("Could not read reindex upload %r for document %s: %s", upload.filename, document_id, error)
+        return DocumentUploadResult(
+            filename=upload.filename or "unknown",
+            document_id=document_id,
+            status="rejected",
+            error=f"Could not read the uploaded file: {error}",
+            error_code=error_codes.UPLOAD_READ_FAILED,
+        )
+
+    size = len(content)
+    validation_failure = validate_file(upload, size)
+    if validation_failure:
+        message, code = validation_failure
+        logger.warning("Rejected reindex upload %r for document %s: %s", upload.filename, document_id, message)
+        return DocumentUploadResult(
+            filename=upload.filename or "unknown",
+            document_id=document_id,
+            status="rejected",
+            error=message,
+            error_code=code,
+        )
+
+    content_hash = compute_content_hash(content)
+    if content_hash == existing.get("content_hash"):
+        logger.info("Reindex upload for document %s matches existing content - no-op", document_id)
+        return DocumentUploadResult(
+            filename=existing["filename"],
+            document_id=document_id,
+            status="unchanged",
+            error=None,
+            message="Uploaded content is identical to the current version - nothing to re-index.",
+            file_size_bytes=existing["file_size_bytes"],
+            versioning_info=VersioningInfo(document_version=existing["document_version"], is_current=True),
+        )
+
+    document_directory = UPLOAD_DIRECTORY / document_id
+    try:
+        # Old file(s) under this document_id - avoid orphaning them on disk (Phase 121's same reasoning, local disk this time).
+        shutil.rmtree(document_directory, ignore_errors=True)
+        document_directory.mkdir(parents=True, exist_ok=True)
+        file_path = document_directory / upload.filename
+        file_path.write_bytes(content)
+    except Exception as error:
+        logger.error("Failed to store reindex upload %r for document %s: %s", upload.filename, document_id, error)
+        return DocumentUploadResult(
+            filename=upload.filename,
+            document_id=document_id,
+            status="rejected",
+            error=f"Could not store the file: {error}",
+            error_code=error_codes.STORAGE_FAILURE,
+        )
+
+    logger.info("Stored reindex upload %r for document %s - re-indexing", upload.filename, document_id)
+
+    index_outcome = await _index_now(
+        document_id, file_path, chunking_strategy=chunking_strategy, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+    )
+    await get_db_gateway().metadata_store().update_document_content(
+        document_id, upload.filename, str(file_path), size, content_hash
+    )
+
+    return DocumentUploadResult(
+        filename=upload.filename,
+        document_id=document_id,
+        status="reindexed",
+        error=index_outcome.get("error"),
+        error_code=index_outcome.get("error_code"),
+        file_size_bytes=size,
+        chunk_info=ChunkInfoResult(
+            chunking_strategy=index_outcome.get("chunking_strategy"),
+            chunk_size=index_outcome.get("chunk_size"),
+            chunk_overlap=index_outcome.get("chunk_overlap"),
+            action=index_outcome.get("action"),
+            chunks_indexed=index_outcome.get("chunks_indexed"),
+            chunks_removed=index_outcome.get("chunks_removed"),
+        ),
+        versioning_info=VersioningInfo(
+            document_version=index_outcome.get("document_version", existing["document_version"]),
+            is_current=True,
+            supersedes=existing.get("supersedes"),
+            superseded_by=existing.get("superseded_by"),
+        ),
+    )
+
+
 async def request_presigned_upload(
     filename: str,
     content_type: str,

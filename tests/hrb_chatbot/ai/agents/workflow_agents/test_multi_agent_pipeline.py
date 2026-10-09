@@ -19,6 +19,12 @@ def _fake_cache_and_eval_judges(monkeypatch):
     "Redis unreachable"/"Event loop is closed" errors on every call)."""
     gateway = FakeDBGateway()
     monkeypatch.setattr(multi_agent_pipeline, "get_db_gateway", lambda: gateway)
+
+    async def _fake_generate_follow_ups(query, answer):
+        return []
+
+    monkeypatch.setattr(multi_agent_pipeline.reviewer_agent, "generate_follow_ups", _fake_generate_follow_ups)
+
     def _fake_evaluate_groundedness(answer, context_texts):
         # Phase 120 regression guard - a tuple here means some domain agent's
         # "result" wasn't unpacked before joining into agent_result_texts.
@@ -66,9 +72,13 @@ async def test_single_task_query_runs_one_domain_agent_and_skips_the_reviewer_ll
 
     assert result["answer"] == "8 weeks paid parental leave."
     assert result["tasks"] == [{"agent": "vector_kb_agent", "focus": "what is the parental leave policy?"}]
-    assert result["tools_used"] == [
-        {"tool_name": "vector_kb_agent", "tool_input": "what is the parental leave policy?"}
-    ]
+    assert len(result["tools_used"]) == 1
+    call = result["tools_used"][0]
+    assert call["tool_name"] == "vector_kb_agent"
+    assert call["tool_input"] == "what is the parental leave policy?"
+    assert call["tool_type"] == "vector_db"  # Phase 126
+    assert call["success"] is True
+    assert call["latency_ms"] is not None
     assert result["iterations"] == 1
     assert result["conversation_id"] is None
 
@@ -228,3 +238,61 @@ async def test_a_live_data_agent_dispatch_is_never_cached(monkeypatch):
 
     assert call_count["plan"] == 2  # both calls did real work - never cache-served
     assert second["served_from_cache"] is False
+
+
+async def test_follow_ups_are_empty_when_no_domain_agent_ran(monkeypatch):
+    _patch_guardrails(monkeypatch)
+
+    async def _fake_plan(query):
+        return []
+
+    monkeypatch.setattr(multi_agent_pipeline.planner_agent, "plan", _fake_plan)
+
+    async def _fail_if_called(query, answer):
+        raise AssertionError("generate_follow_ups should not be called when no domain agent ran")
+
+    monkeypatch.setattr(multi_agent_pipeline.reviewer_agent, "generate_follow_ups", _fail_if_called)
+
+    result = await multi_agent_pipeline.run_multi_agent("gibberish query", employee_id="EMP052")
+
+    assert result["follow_up_questions"] == []
+
+
+async def test_follow_ups_are_generated_when_a_domain_agent_ran(monkeypatch):
+    _patch_guardrails(monkeypatch)
+
+    async def _fake_plan(query):
+        return [{"agent": "vector_kb_agent", "focus": query}]
+
+    async def _fake_vector_kb_run(focus):
+        return "8 weeks paid parental leave.", []
+
+    async def _fake_generate_follow_ups(query, answer):
+        return ["What is my dental plan?"]
+
+    monkeypatch.setattr(multi_agent_pipeline.planner_agent, "plan", _fake_plan)
+    monkeypatch.setattr(multi_agent_pipeline.vector_kb_agent, "run", _fake_vector_kb_run)
+    monkeypatch.setattr(multi_agent_pipeline.reviewer_agent, "generate_follow_ups", _fake_generate_follow_ups)
+
+    result = await multi_agent_pipeline.run_multi_agent("what is the parental leave policy?", employee_id="EMP052")
+
+    assert result["follow_up_questions"] == ["What is my dental plan?"]
+
+
+async def test_tool_call_metrics_mark_success_false_on_an_error_result(monkeypatch):
+    _patch_guardrails(monkeypatch)
+
+    async def _fake_plan(query):
+        return [{"agent": "lms_ops_agent", "focus": query}]
+
+    async def _fake_lms_ops_run(focus, employee_id):
+        return "Error: hrb_lms_mcp unreachable", []
+
+    monkeypatch.setattr(multi_agent_pipeline.planner_agent, "plan", _fake_plan)
+    monkeypatch.setattr(multi_agent_pipeline.lms_ops_agent, "run", _fake_lms_ops_run)
+
+    result = await multi_agent_pipeline.run_multi_agent("what's my pto balance", employee_id="EMP052")
+
+    call = result["tools_used"][0]
+    assert call["success"] is False
+    assert call["tool_type"] == "mcp"

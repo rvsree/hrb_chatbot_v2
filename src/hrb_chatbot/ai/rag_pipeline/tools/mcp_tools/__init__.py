@@ -1,5 +1,7 @@
 """Manual keyword routing to hrb_lms_mcp's MCP server - a prototype before real ReAct tool selection."""
 
+import time
+
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
@@ -60,11 +62,13 @@ async def try_route_to_mcp(query: str, employee_id: str | None) -> dict | None:
     else:
         return None
 
+    call_started_at = time.perf_counter()
     try:
         mcp_result = await caller(employee_id)
     except Exception as error:
         logger.warning("MCP call to %s failed for %r, falling back to RAG: %s", tool_name, employee_id, error)
         return None
+    call_latency_ms = round((time.perf_counter() - call_started_at) * 1000, 1)
 
     answer_text = "\n".join(mcp_result["content"]) or "No data returned."
     logger.info("Routed query %r to MCP tool %s for employee_id=%s", query, tool_name, employee_id)
@@ -77,4 +81,5 @@ async def try_route_to_mcp(query: str, employee_id: str | None) -> dict | None:
         "search_strategy": "n/a (mcp)",
         "applied_filter": None,
         "routed_to": tool_name,
+        "tool_latency_ms": call_latency_ms,
     }

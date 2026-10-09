@@ -176,6 +176,28 @@ async def test_mcp_routable_query_skips_retrieval_and_generation(monkeypatch):
     assert called["generate"] is False
 
 
+async def test_mcp_routed_answer_builds_a_real_tools_used_entry(monkeypatch):
+    # Phase 126
+    async def _fake_try_route_to_mcp(query, employee_id):
+        return {
+            "query": query, "answer": "You have 12 days left.", "model_used": "mcp:get_leave_balance", "sources": [],
+            "vector_db": None, "search_strategy": None, "applied_filter": None,
+            "routed_to": "get_leave_balance", "tool_latency_ms": 42.5,
+        }
+
+    _patch_guardrails(monkeypatch)
+    monkeypatch.setattr(pipeline, "try_route_to_mcp", _fake_try_route_to_mcp)
+
+    result = await pipeline.answer_query(RagQueryParams(query="What's my PTO balance?", employee_id="EMP052"))
+
+    assert len(result["tools_used"]) == 1
+    call = result["tools_used"][0]
+    assert call["tool_name"] == "get_leave_balance"
+    assert call["tool_type"] == "mcp"
+    assert call["latency_ms"] == 42.5
+    assert call["success"] is True
+
+
 # Phase 58: server-side conversation memory - disabled by default, opt-in
 # via RagQueryParams.enable_conversation_memory.
 async def test_conversation_memory_disabled_by_default_no_conversation_id(monkeypatch):
@@ -206,7 +228,8 @@ async def test_mcp_routed_answer_echoes_conversation_id_but_does_not_save_a_turn
 
     async def _fake_try_route_to_mcp(query, employee_id):
         return {"query": query, "answer": "MCP answer", "model_used": "mcp:x", "sources": [],
-                "vector_db": "n/a (mcp)", "search_strategy": "n/a (mcp)", "applied_filter": None}
+                "vector_db": "n/a (mcp)", "search_strategy": "n/a (mcp)", "applied_filter": None,
+                "routed_to": "x", "tool_latency_ms": 50.0}
 
     _patch_guardrails(monkeypatch)
     monkeypatch.setattr(pipeline, "try_route_to_mcp", _fake_try_route_to_mcp)

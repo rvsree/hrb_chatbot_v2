@@ -218,6 +218,7 @@
       "type": "object"
     },
     "ToolCallInfo": {
+      "description": "Phase 126: moved here from models/agentic_rag.py - genai-rag's\nRagQueryResponse needs it too, and agentic_rag.py already imports\nFROM models/rag.py, so defining it there instead would circular-import.",
       "properties": {
         "tool_name": {
           "description": "Which tool the agent called.",
@@ -228,6 +229,31 @@
           "description": "What the agent passed to it.",
           "title": "Tool Input",
           "type": "string"
+        },
+        "tool_type": {
+          "default": "other",
+          "description": "Phase 126 - which kind of backend this hit: vector_db/mcp/web_search/sql_db/other.",
+          "title": "Tool Type",
+          "type": "string"
+        },
+        "latency_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Phase 126 - how long this one call took, if measured.",
+          "title": "Latency Ms"
+        },
+        "success": {
+          "default": true,
+          "description": "Phase 126 - false if this call returned an 'Error: ...' result.",
+          "title": "Success",
+          "type": "boolean"
         }
       },
       "required": [

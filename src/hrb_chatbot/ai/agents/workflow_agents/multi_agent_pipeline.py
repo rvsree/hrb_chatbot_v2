@@ -21,6 +21,7 @@ from src.hrb_chatbot.ai.agents.domain_agents import (
 from src.hrb_chatbot.ai.agents.workflow_agents import planner_agent, reviewer_agent
 from src.hrb_chatbot.ai.pre_processing import conversation_memory
 from src.hrb_chatbot.ai.pre_processing.guardrails_input import check_input
+from src.hrb_chatbot.ai.rag_core.tool_classification import classify_tool
 from src.hrb_chatbot.ai.rag_pipeline.evaluations.golden_dataset_harness import evaluate_completeness, evaluate_groundedness
 from src.hrb_chatbot.ai.rag_pipeline.response_generation.guardrails_output import check_output
 from src.hrb_chatbot.common.clients.cache_client.answer_cache import build_cache_key
@@ -74,6 +75,7 @@ class MultiAgentState(TypedDict):
     tasks: list[dict]
     agent_results: Annotated[list[dict], operator.add]
     answer: str
+    follow_up_questions: list[str]
 
 
 async def planner_node(state: MultiAgentState) -> dict:
@@ -91,41 +93,83 @@ def dispatch_to_agents(state: MultiAgentState) -> list[Send]:
 
 
 async def vector_kb_agent_node(state: dict) -> dict:
+    started_at = time.perf_counter()
     result, chunks = await vector_kb_agent.run(state["focus"])
     return {
         "agent_results": [
-            {"agent": "vector_kb_agent", "focus": state["focus"], "result": result, "sources": chunks}
+            {
+                "agent": "vector_kb_agent",
+                "focus": state["focus"],
+                "result": result,
+                "sources": chunks,
+                "latency_ms": _elapsed_ms(started_at),
+            }
         ]
     }
 
 
 async def lms_ops_agent_node(state: dict) -> dict:
+    started_at = time.perf_counter()
     result, chunks = await lms_ops_agent.run(state["focus"], state["employee_id"])
     return {
         "agent_results": [
-            {"agent": "lms_ops_agent", "focus": state["focus"], "result": result, "sources": chunks}
+            {
+                "agent": "lms_ops_agent",
+                "focus": state["focus"],
+                "result": result,
+                "sources": chunks,
+                "latency_ms": _elapsed_ms(started_at),
+            }
         ]
     }
 
 
 async def sql_db_agent_node(state: dict) -> dict:
+    started_at = time.perf_counter()
     result = await sql_db_agent.run(state["focus"])
-    return {"agent_results": [{"agent": "sql_db_agent", "focus": state["focus"], "result": result}]}
+    return {
+        "agent_results": [
+            {"agent": "sql_db_agent", "focus": state["focus"], "result": result, "latency_ms": _elapsed_ms(started_at)}
+        ]
+    }
 
 
 async def lms_analytics_agent_node(state: dict) -> dict:
+    started_at = time.perf_counter()
     result = await lms_analytics_agent.run(state["focus"])
-    return {"agent_results": [{"agent": "lms_analytics_agent", "focus": state["focus"], "result": result}]}
+    return {
+        "agent_results": [
+            {
+                "agent": "lms_analytics_agent",
+                "focus": state["focus"],
+                "result": result,
+                "latency_ms": _elapsed_ms(started_at),
+            }
+        ]
+    }
 
 
 async def web_search_agent_node(state: dict) -> dict:
+    started_at = time.perf_counter()
     result = await web_search_agent.run(state["focus"])
-    return {"agent_results": [{"agent": "web_search_agent", "focus": state["focus"], "result": result}]}
+    return {
+        "agent_results": [
+            {
+                "agent": "web_search_agent",
+                "focus": state["focus"],
+                "result": result,
+                "latency_ms": _elapsed_ms(started_at),
+            }
+        ]
+    }
 
 
 async def reviewer_node(state: MultiAgentState) -> dict:
     answer = await reviewer_agent.review(state["query"], state["agent_results"])
-    return {"answer": answer}
+    follow_up_questions = (
+        await reviewer_agent.generate_follow_ups(state["query"], answer) if state["agent_results"] else []
+    )
+    return {"answer": answer, "follow_up_questions": follow_up_questions}
 
 
 def _build_graph():
@@ -199,7 +243,14 @@ async def run_multi_agent(
 
     graph = get_graph()
     final_state = await graph.ainvoke(
-        {"query": checked_query, "employee_id": employee_id, "tasks": [], "agent_results": [], "answer": ""}
+        {
+            "query": checked_query,
+            "employee_id": employee_id,
+            "tasks": [],
+            "agent_results": [],
+            "answer": "",
+            "follow_up_questions": [],
+        }
     )
 
     answer = await check_output(checked_query, final_state["answer"])
@@ -207,7 +258,16 @@ async def run_multi_agent(
         await conversation_memory.save_turn(resolved_conversation_id, employee_id, checked_query, answer)
 
     agent_results = final_state["agent_results"]
-    tools_used = [{"tool_name": result["agent"], "tool_input": result["focus"]} for result in agent_results]
+    tools_used = [
+        {
+            "tool_name": result["agent"],
+            "tool_input": result["focus"],
+            "tool_type": classify_tool(result["agent"]),
+            "latency_ms": result.get("latency_ms"),
+            "success": not result["result"].startswith("Error:"),
+        }
+        for result in agent_results
+    ]
     # Raw per-domain-agent result text, kept alongside tools_used - needed to eval
     # groundedness against what was actually retrieved (Phase 69), not just the final answer.
     agent_result_texts = [result["result"] for result in agent_results]
@@ -219,6 +279,7 @@ async def run_multi_agent(
     result = {
         "answer": answer,
         "tasks": final_state["tasks"],
+        "follow_up_questions": final_state["follow_up_questions"],
         "tools_used": tools_used,
         "agent_result_texts": agent_result_texts,
         "sources": sources,

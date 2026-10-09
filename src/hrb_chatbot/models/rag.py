@@ -3,7 +3,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.hrb_chatbot.common.enums import LlmProvider, SearchStrategy, VectorDB
-from src.hrb_chatbot.models.common import UserProfile
+from src.hrb_chatbot.models.common import ToolCallInfo, UserProfile
 
 
 class SearchOptions(BaseModel):
@@ -138,6 +138,10 @@ class RagQueryResponse(BaseModel):
     answer_info: AnswerInfo
     retrieval_info: RetrievalInfo
     explainability_info: ExplainabilityInfo
+    tools_used: list[ToolCallInfo] = Field(
+        default_factory=list,
+        description="Phase 126 - empty on a normal RAG answer, one entry when MCP-routed (explainability_info.routed_to).",
+    )
     conversation_id: str | None = Field(
         None,
         description="Echoed/generated when enable_conversation_memory was true - pass it back on the next "

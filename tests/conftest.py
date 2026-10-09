@@ -322,6 +322,15 @@ class FakeMetadataStore(BaseMetadataClient):
         document["superseded_by"] = superseded_by
         return json.loads(document["chunk_ids"]) if document.get("chunk_ids") else []
 
+    async def update_document_content(self, document_id, filename, file_path, file_size_bytes, content_hash):
+        document = self.documents.get(document_id)
+        if document is None:
+            return
+        document["filename"] = filename
+        document["file_path"] = file_path
+        document["file_size_bytes"] = file_size_bytes
+        document["content_hash"] = content_hash
+
     async def record_document_metadata(
         self,
         document_id,

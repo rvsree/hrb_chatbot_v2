@@ -9426,6 +9426,544 @@ Explicitly deferred to a later, separate wave - not part of the above:
     cleanly git-split from; flagged to the user for a commit-scope call
     rather than guessed at. Playwright live verification still pending.
 
+- [ ] **Phase 122 — User-directed: "summarize" keyword triggers tabular/
+  hybrid response formatting across all 3 pipelines, plus a Reviewer Agent
+  table instruction for multi-agentic-rag's merge step.**
+  - **Spec:**
+    - **Context:** user asked for query-triggered tabular summaries,
+      wondering if the Reviewer Agent should decide rendering at runtime.
+      Checked `hrb_chatbot_ui/src/utils/markdownTable.ts` - the frontend
+      already parses GFM markdown tables embedded in a plain-text answer
+      and renders them as real `<table>` elements (used by `MessageBubble
+      .tsx` today). So rendering is solved; nothing currently tells the
+      LLM *when* to emit one. Also checked `reviewer_agent.py` - its only
+      job today is merging 2+ domain agents' results into one answer, and
+      it's multi-agentic-rag-only (bypassed entirely when exactly 1 agent
+      ran - `len(agent_results) == 1` returns that agent's raw text
+      directly). So "the Reviewer decides rendering" can only ever cover
+      multi-agentic-rag's 2+-agent case, not the other 2 pipelines or
+      multi-agentic-rag's 1-agent case - confirmed with the user, scoped
+      to exactly that rather than silently assumed.
+    - **Data/API contracts:** N/A - no request/response shape change. The
+      existing `query: str` field already carries whatever text the user
+      types; the table rides inside each pipeline's existing `answer`
+      string field (`RagQueryResponse.answer_info.answer`,
+      `AgenticRagResponse.answer`, `MultiAgenticRagResponse.answer`), which
+      the frontend already parses as markdown.
+    - **User-visible behavior:** a query containing a summarize-signal
+      keyword gets a markdown-table-formatted answer where the content is
+      naturally tabular (comparable items, multiple values per category) -
+      across `genai-rag`, `single-agentic-rag`, and `multi-agentic-rag`.
+      For `multi-agentic-rag` specifically, the Reviewer Agent's own merge
+      prompt also carries this instruction, so a summarized answer stays
+      tabular even when synthesized from 2+ domain agents' text.
+    - **Design (deterministic keyword trigger, not an LLM judgment call -
+      matches this project's existing crude-but-explicit MCP keyword
+      fast-path, and the user's "start simple" preference):** new shared
+      module `ai/rag_core/response_format.py` -
+      `should_use_tabular_format(query: str) -> bool` (case-insensitive
+      substring check against a small fixed list: "summarize", "summary",
+      "in a table", "table format", "tabular") and a constant
+      `TABULAR_FORMAT_INSTRUCTION` (one sentence telling the LLM to use
+      GFM markdown table syntax when the content is naturally tabular).
+      Three call sites, each appending the instruction to its own existing
+      prompt only when the check is true:
+      1. `response_generator.py`'s `generate_answer()` - add a
+         `{tabular_instruction}` placeholder to `SYSTEM_PROMPT_TEMPLATE`,
+         filled at `chain.invoke()` time (empty string when not
+         triggered). The Phase 87 `CONVERSATIONAL_FALLBACK_PROMPT`
+         (no-chunks-but-has-history case) is explicitly left alone - out
+         of scope, see below.
+      2. `orchestration_agent.py`'s `generate()` closure - append to the
+         `SystemMessage(content=SYSTEM_PROMPT)` built at line 120,
+         conditioned on `checked_query`.
+      3. `reviewer_agent.py`'s `review()` - append to the
+         `SystemMessage(content=REVIEWER_SYSTEM_PROMPT)`, conditioned on
+         the original `query` passed in. Only reached when 2+ agents ran,
+         per the existing 0/1/2+ branching - the 1-agent bypass case is
+         explicitly out of scope per the user's own "Reviewer only" scope
+         decision.
+    - **Failure modes:** N/A - this only ever adds one extra sentence to
+      an existing prompt; no new failure path. If the LLM ignores the
+      instruction (doesn't emit a table), the answer still renders fine as
+      plain text - `markdownTable.ts` only activates on real table syntax.
+    - **Retrieval quality criteria:** N/A - generation-prompt change only,
+      no chunking/indexing/retrieval touched.
+    - **Reusability requirement:** the keyword-check + instruction text
+      live in one shared module (`ai/rag_core/response_format.py`),
+      imported by all 3 call sites - not copy-pasted three times.
+    - **Testing plan:** unit tests for `should_use_tabular_format()`
+      (exhaustive over the keyword list plus negative cases); a test per
+      call site confirming the instruction text is present in the actual
+      messages sent to the (faked) LLM when the query matches, and absent
+      when it doesn't - reusing each file's existing fake-LLM test
+      pattern, not a new one.
+    - **Out of scope:** the Phase 87 conversational-fallback prompt (not
+      data-driven, nothing to tabulate); multi-agentic-rag's 1-domain-agent
+      bypass case (Reviewer never runs then - accepted gap, per the user's
+      own scope decision); soft/LLM-judged summarize-intent detection
+      beyond the fixed keyword list (deferred, matches the "start simple"
+      default over a 2nd LLM call); any change to domain-agent-level
+      prompts (`vector_kb_agent.py` etc.) - item 2 was scoped to the
+      Reviewer specifically, not every agent.
+    - **Open questions:** none - both blocking questions (Reviewer-only
+      scope, keyword vs. LLM-judged trigger) were resolved with the user
+      before this spec was written.
+  - **Built and verified:** new `ai/rag_core/response_format.py`
+    (`should_use_tabular_format()` + `TABULAR_FORMAT_INSTRUCTION`), wired
+    into `response_generator.py` (new `{tabular_instruction}` placeholder
+    in `SYSTEM_PROMPT_TEMPLATE`), `orchestration_agent.py`'s `generate()`
+    closure, and `reviewer_agent.py`'s `review()`. 15 new tests across 4
+    files (exhaustive keyword coverage for the pure function, instruction-
+    present/absent coverage at each of the 3 call sites via each file's
+    existing fake-LLM pattern) - full suite 375 passed (360 + 15 new), no
+    regressions.
+
+- [ ] **Phase 123 — User-directed: suggested follow-up questions, generated
+  by Reviewer Agent, multi-agentic-rag only.**
+  - **Spec:**
+    - **Context:** user asked whether follow-up-question generation could
+      live inside Reviewer Agent. Confirmed with the user: multi-agentic-
+      rag only for now - `genai-rag`/`single-agentic-rag` have no
+      Reviewer-equivalent step, so they get no follow-ups until a later
+      phase (explicit scope decision, not an oversight).
+    - **Data/API contracts:** new field confirmed in
+      `docs/agent-reference/endpoint-request-response-contracts.md`'s
+      multi-agentic-rag section - `suggested_follow_up_questions:
+      list[str]` added to `MultiAgenticRagResponse`
+      (`models/multi_agentic_rag.py`), empty list when no domain agent ran
+      (nothing to follow up on).
+    - **User-visible behavior:** every multi-agentic-rag answer (where at
+      least 1 domain agent actually ran) now comes back with 2-3
+      suggested follow-up questions a user could reasonably ask next,
+      generated from the question + final answer.
+    - **Design:** `reviewer_node()` - not `reviewer_agent.review()` itself
+      - is the integration point, since it's the one place every
+      multi-agentic-rag query converges regardless of 0/1/2+ domain
+      agents (unlike Phase 122's table instruction, which only reached
+      the 2+-agent LLM call inside `review()`). New function
+      `reviewer_agent.generate_follow_ups(query: str, answer: str) ->
+      list[str]` - a second, separate LLM call (small prompt, short
+      output), reusing `_build_llm()`. `reviewer_node()` calls it only
+      when `state["agent_results"]` is non-empty; returns `[]` otherwise
+      (the 0-result "I wasn't able to find an answer" case has nothing to
+      follow up on). New `follow_up_questions: list[dict]` key added to
+      `MultiAgentState`, threaded through `run_multi_agent()`'s `result`
+      dict exactly like every other field, so the existing answer-cache
+      set/get path covers it for free - no special-casing needed.
+    - **Failure modes:** the new LLM call can fail/time out like any
+      other - caught the same way `review()`'s own call is (the
+      `AGENT_LLM_TIMEOUT_SECONDS` wrapper); on failure, returns `[]`
+      rather than failing the whole request - follow-ups are a nice-to-
+      have, not core to the answer.
+    - **Retrieval quality criteria:** N/A - no retrieval/chunking touched.
+    - **Reusability requirement:** none - this is multi-agentic-rag-
+      specific by the user's own scope decision, not a shared helper.
+    - **Testing plan:** unit tests on `generate_follow_ups()` (faked LLM,
+      same pattern as `test_reviewer_agent.py`'s existing tests) and on
+      `reviewer_node()`/`run_multi_agent()` confirming `[]` when
+      `agent_results` is empty and a real call when it isn't.
+    - **Out of scope:** `genai-rag`/`single-agentic-rag` follow-ups (own
+      future phase, per the user's scope decision); frontend rendering of
+      the new field as clickable chips (a separate `hrb_chatbot_ui`
+      change, not touched here - this phase is the API/backend half
+      only); model-tiering for the new LLM call (reuses the Reviewer's
+      existing model, no new cost decision made here).
+    - **Open questions:** none.
+  - **Built and verified:** `reviewer_agent.generate_follow_ups()` added
+    (new `FOLLOW_UP_QUESTIONS_SYSTEM_PROMPT`), called from
+    `multi_agent_pipeline.py`'s `reviewer_node()` - the one place every
+    multi-agentic-rag query converges regardless of 0/1/2+ domain agents,
+    unlike Phase 122's table instruction which only reached the 2+-agent
+    case. New `suggested_follow_up_questions` field added to
+    `MultiAgenticRagResponse` and confirmed in
+    `endpoint-request-response-contracts.md`; required regenerating the
+    committed `MultiAgenticRagResponse.json` contract-snapshot test (a
+    real, intentional schema change, not a silent one - confirmed the
+    diff was exactly the one new field, nothing else). 7 new tests across
+    3 files (`generate_follow_ups()` success/failure, `reviewer_node()`'s
+    conditional dispatch, the route-level fake updated to round-trip the
+    new field) plus a global autouse-fixture fake added to both
+    `test_multi_agent_pipeline.py` and `test_multi_agent_pipeline_chaos
+    .py` (the new unconditional call would otherwise have hit a real,
+    unfaked LLM in every existing test with ≥1 domain agent) - full suite
+    379 passed, no regressions.
+
+- [ ] **Phase 124 — User-directed: document-structure-based chunking - the
+  re-index prerequisite from FAQ.md's own Q1 (stable section ids +
+  section-tagged chunk metadata; the diff step itself is a later phase).**
+  - **Spec:**
+    - **Context:** selective (section-only) re-index needs 3 things this
+      project doesn't have (FAQ.md Q1): stable section ids, a diff step,
+      and chunks tagged by section. This phase delivers the 1st and 3rd -
+      the diff step is a separate follow-on phase, not started here.
+      Checked what "document structure" actually means for this
+      project's real documents before designing anything: `chunk_markdown`
+      /`chunk_html` exist but detect `#`/`<h1>` markers that real
+      PDF-extracted text never contains (confirmed: zero markdown/HTML
+      headings in any of the 6 real `resources/kb_docs/*.pdf` files via
+      `decide_chunking_strategy()`'s own detection logic). Also checked
+      whether `pypdf`'s bookmark/outline structure (FAQ.md's other
+      suggested id source) is viable - confirmed via a direct `PdfReader
+      .outline` check against all 6 real KB PDFs: **zero bookmark entries
+      in every one.** Both of FAQ.md's suggested id sources are dead ends
+      for this project's actual documents - instead of assuming either
+      worked and building on a guess, extracted real PDF text and found
+      an actual, consistent, repeated pattern across all 6 files:
+      `"Section N: Title"` headings (5-15 per document) and `"N.N
+      Subtitle"` sub-headings (36-56 per document) - verified by direct
+      regex count against every real KB file, not assumed from one
+      sample.
+    - **Data/API contracts:** `common/enums.py`'s `ChunkingStrategy`
+      StrEnum gains `DOCUMENT_STRUCTURE = "document_structure"` (its own
+      docstring already says "must keep matching text_chunker
+      .CHUNKING_STRATEGIES" - this phase keeps that promise). No response
+      shape change - chunking strategy has always been an input parameter
+      only, section ids are new internal per-chunk vector-store metadata,
+      not a new API response field.
+    - **User-visible behavior:** `POST .../documents` (ingest) and
+      `POST .../documents/{id}/index` (re-index) can now be called with
+      `chunking_strategy: "document_structure"` explicitly - each chunk's
+      vector-store metadata gets a new `section_id` field (e.g.
+      `"eligibility"` or `"eligibility/employee-eligibility"` for a
+      sub-section), derived from the real heading text, not the section
+      *number* (a renumbered "Section 3" becoming "Section 4" after an
+      edit doesn't change its id - only the heading's own wording does;
+      still not perfectly immune to a heading being reworded, flagged
+      below, not oversold as fully solved).
+    - **Design:**
+      1. New regex patterns in `text_chunker.py`:
+         `SECTION_HEADING_PATTERN` (`^Section \d+:\s*(.+)$`) and
+         `SUBSECTION_HEADING_PATTERN` (`^\d+\.\d+ ([A-Z].+)$`), both
+         multiline.
+      2. New `chunk_by_document_structure(text: str) -> list[dict]` -
+         splits table-free text at section boundaries first, then
+         sub-section boundaries within each section; a section/sub-
+         section exceeding `chunk_size` still gets split further via the
+         existing recursive splitter, each piece keeping the same
+         `section_id`. Each returned dict: `{"text": ..., "section_id":
+         str | None}` - `section_id` is a slug of the heading's own text
+         (`"Eligibility"` -> `"eligibility"`), compound
+         (`"parent-slug/child-slug"`) for a sub-section. A document with
+         no `"Section N:"` pattern at all falls back to one chunk per
+         `chunk_recursive` result, `section_id: None` throughout -
+         graceful degradation, not a crash or an empty result.
+      3. `CHUNKING_STRATEGIES` gains `"document_structure"`, wrapped as a
+         `list[str]`-only function (same uniform interface as the other
+         6) for any caller that doesn't care about sections.
+      4. New `chunk_text_with_sections(text, chunking_strategy=None,
+         ...) -> tuple[list[str], list[str | None]]` - the only new
+         section-aware entry point. For `chunking_strategy ==
+         "document_structure"`, calls `chunk_by_document_structure()`
+         once (one real pass, so chunks and section ids can never drift
+         out of sync) and splits its result into two parallel lists. For
+         every other strategy, delegates to the existing `chunk_text()`
+         unchanged and returns `[None] * len(chunks)` - zero behavior
+         change for the other 6 strategies or any existing caller of
+         `chunk_text()` itself, which keeps its own signature untouched.
+      5. `ai/doc_processing/pipeline.py`'s `index_document()` switches to
+         `chunk_text_with_sections()`, threading `section_ids` through to
+         `write_chunks()`.
+      6. `vector_indexer.py`'s `write_chunks()` gains `section_ids:
+         list[str | None] | None = None`; `_build_chunk_metadatas()`
+         zips it in, same "omit when None" pattern `_extracted_fields()`
+         already uses (Pinecone rejects a literal `None` value).
+      7. **Deliberately explicit-only, not auto-selected** - unlike
+         `markdown`/`html` (which are auto-selectable but never actually
+         fire on real PDFs, so this is a no-op distinction for them),
+         `document_structure` *would* actually fire if added to
+         `decide_chunking_strategy()`'s auto-logic, since all 6 real KB
+         documents match its pattern - auto-enabling it would silently
+         change chunking strategy for any of them on their next re-index,
+         risking an unasked-for shift in golden-dataset retrieval scores.
+         Kept explicit-only (same treatment as `semantic`) to keep this
+         phase's blast radius to exactly what was asked: the capability
+         exists, nothing currently indexed changes behavior on its own.
+    - **Failure modes:** a document with no `"Section N:"` pattern and an
+      explicit `chunking_strategy="document_structure"` request degrades
+      to plain recursive chunking with `section_id: None` throughout,
+      not an error - consistent with every other strategy never raising
+      for "wrong" content shape.
+    - **Retrieval quality criteria:** chunk size/overlap within a
+      section still honor the caller's `chunk_size`/`chunk_overlap` (or
+      the usual auto-selected default) exactly as `chunk_recursive`
+      already does - this phase changes chunk *boundaries* to respect
+      real section structure, not the size logic itself. Not applied to
+      `resources/golden_dataset/golden_dataset.json`'s existing 22 cases
+      (explicit-only, nothing auto-changes) - golden-dataset scores
+      should be unaffected by this phase; confirmed as part of testing,
+      not assumed.
+    - **Reusability requirement:** none - this is additive (a 7th
+      strategy), not a replacement for any of the existing 6.
+    - **Testing plan:** `chunk_by_document_structure()` tested against
+      real extracted text from the actual KB PDFs (not synthetic text -
+      matches this project's own "a golden dataset built from guessed
+      answers is worse than none" principle, same reasoning applied to
+      test fixtures here), covering: section count matches the real regex
+      count already verified above, sub-section ids are correctly
+      compound, a no-sections document falls back cleanly.
+      `chunk_text_with_sections()` tested for both branches (document_
+      structure vs. every other strategy, confirming `[None] * len` for
+      the latter). `write_chunks()`/`_build_chunk_metadatas()` tested for
+      `section_id` present/omitted. One golden-dataset regression check:
+      re-run the existing 22-case harness unchanged (no `chunking_strategy`
+      override) and confirm scores match pre-phase - proves the
+      explicit-only decision actually holds, not just assumed to.
+    - **Out of scope:** the diff step itself (detecting *which* section
+      changed between two versions of a document) and the actual
+      selective re-index endpoint/logic that would use it - both a
+      separate follow-on phase, per FAQ.md's own 3-part breakdown.
+      Auto-selection in `decide_chunking_strategy()` (deliberately not
+      done, see Design #7). Tagging table blocks with a `section_id` (they
+      stay appended after section-based chunks, untagged, same as every
+      other strategy's table handling today). Retroactively re-chunking
+      any already-indexed document - this phase only changes what happens
+      on a *new* explicit request for this strategy.
+    - **Open questions:** none - the markdown/PDF-bookmark question was
+      resolved by checking real data rather than assumed, and the
+      auto-select-vs-explicit-only tradeoff was decided in favor of the
+      lower-risk option without needing to ask, consistent with the
+      "start simple" default.
+  - **Built and verified:** `ChunkingStrategy.DOCUMENT_STRUCTURE` added;
+    `text_chunker.py` gained `SECTION_HEADING_PATTERN`/
+    `SUBSECTION_HEADING_PATTERN`, `chunk_by_document_structure()`,
+    `chunk_document_structure()` (registered in `CHUNKING_STRATEGIES`),
+    and `chunk_text_with_sections()`. `vector_indexer.py`'s
+    `write_chunks()`/`_build_chunk_metadatas()` gained `section_ids`.
+    `pipeline.py`'s `index_document()` switched to
+    `chunk_text_with_sections()`. Live-verified against the real
+    `AmazingBank_Healthcare_Benefits.pdf`: 83 chunks, 71 distinct
+    section_ids, real compound ids like
+    `"claims-and-appeals/filing-claims"`, exactly 1 untagged (preamble)
+    chunk - matches the design, not just the unit tests. 10 new tests
+    (8 chunking - including a real-PDF-backed count assertion and a
+    renumbering-stability check; 2 vector-indexer - section_id
+    present/omitted) - full suite 389 passed, no regressions. Golden-
+    dataset re-run not performed (real API cost, this project's own
+    no-pytest-real-cost convention) - zero regression risk confirmed by
+    inspection instead: `decide_chunking_strategy()`'s auto-selection
+    logic was not touched by this phase, so nothing already indexed can
+    change strategy without an explicit, new request naming
+    `document_structure`.
+
+- [ ] **Phase 125 — User-directed: a real in-place document re-index
+  endpoint (same `document_id`, replacement file content) - didn't exist
+  before this phase.**
+  - **Spec:**
+    - **Context:** asked to build "selective re-index" assuming an
+      existing "re-index this document_id" path already existed. Checked
+      first: it doesn't. Every upload with different content gets a new
+      `document_id` (content-hash dedup); the only link back to an old
+      version is `supersedes_document_id`, a different document entirely.
+      `write_chunks()`'s "update" action exists for retry-safety, not a
+      reachable "user edited this content" scenario - no route ever calls
+      `index_document()` twice for the same id with different content.
+      The existing `"duplicate"` upload response already names this gap
+      directly: `"...use that document_id to re-index if needed"` - with
+      nowhere to actually do that before this phase. Confirmed with the
+      user: build this real endpoint first; section-aware/selective
+      re-index (the original ask) is an explicit follow-on phase on top
+      of it, not done here.
+    - **Data/API contracts:** confirmed in
+      `endpoint-request-response-contracts.md` - new `POST
+      .../documents/{document_id}/reindex`. Reuses `DocumentUploadResult`
+      (no new response model) with 2 new `status` values: `"reindexed"`,
+      `"unchanged"`.
+    - **User-visible behavior:** HR_SUPPORT can replace an existing
+      document's file content in place - same `document_id`, old file
+      removed, new one chunked/embedded/written via the existing
+      `index_document()` pipeline (its "update" action, already correct -
+      deletes old vector chunks before inserting new ones). Uploading
+      byte-identical content short-circuits to `"unchanged"`, no
+      re-embedding spent.
+    - **Design:**
+      1. New `BaseMetadataClient.update_document_content(document_id,
+         filename, file_size_bytes, content_hash) -> None` - a separate,
+         focused write from `record_successful_index()` (file-identity
+         facts vs. indexing facts are a different concern, not combined
+         into that method's already-large signature). Implemented in
+         `sqlite_client.py`/`postgres_client.py`, faked in
+         `tests/conftest.py`'s `FakeMetadataStore`.
+      2. New `documents_service.reindex_document(document_id, upload,
+         chunking_strategy=None, chunk_size=None, chunk_overlap=None) ->
+         DocumentUploadResult`: `get_document(document_id)` first - 404
+         path if missing. Reuses `validate_file()`/`compute_content_hash()`
+         unchanged. Content-hash match against the existing row ->
+         `"unchanged"`, returns immediately, no file write, no indexing.
+         Otherwise: `shutil.rmtree()` the old `UPLOAD_DIRECTORY/
+         {document_id}/` directory (avoid orphaning the old file under
+         the same id, same reasoning as Phase 121's S3 cleanup), write
+         the new file, call the existing `_index_now()` helper unchanged
+         (chunk/embed/index + best-effort answer-cache clear + failure
+         handling, exactly what `save_upload()` already uses), then
+         `update_document_content()` for the new filename/size/hash.
+      3. New route in `api/rag/ingest_document.py`:
+         `POST /documents/{document_id}/reindex`, single `file` (not
+         `files` - replacing one document's content is inherently
+         singular), same `payload`-as-JSON-string-form-field pattern as
+         `POST /documents` but a smaller `ReindexDocumentPayload` (just
+         `user_profile`/`chunk_info` - no `document_metadata`/
+         `supersedes_document_id`, neither applies to an in-place
+         replace). `require_role(..., Role.HR_SUPPORT)` - same gate as
+         upload.
+    - **Failure modes:** unknown `document_id` -> `404` /
+      `DOCUMENT_NOT_FOUND` (existing code, reused). Invalid file
+      (type/size/empty) -> `"rejected"` status, same `validate_file()`
+      codes as upload. A storage/indexing failure mid-reindex -> same
+      `"failed"` status path `_index_now()` already handles for a fresh
+      upload - not a new failure mode, just the existing one reached from
+      a second entry point.
+    - **Retrieval quality criteria:** N/A - reuses `index_document()`
+      unchanged; no new chunking/retrieval logic in this phase.
+    - **Reusability requirement:** `validate_file()`, `compute_content_hash
+      ()`, `_index_now()`, `_clear_answer_cache_best_effort()` all reused
+      as-is, not duplicated - confirmed by reading `save_upload()` fully
+      before writing this phase's design, not assumed reusable.
+    - **Testing plan:** route tests (reindex success with a changed file,
+      `"unchanged"` short-circuit on identical content, 404 on an unknown
+      `document_id`, rejection on an invalid file). Service-layer test
+      confirming the old file directory is actually removed before the
+      new one is written. Metadata-store test for
+      `update_document_content()` (SQLite + the fake).
+    - **Out of scope:** the selective/section-aware diff logic itself
+      (Phase 124 built the prerequisite; the actual "only re-embed changed
+      sections" logic is a separate follow-on phase, not this one -
+      this phase always does a *full* re-index, just finally through a
+      real endpoint). `supersedes_document_id`-based updates (unchanged,
+      a different, already-working mechanism for "this is a new document
+      replacing an old one" vs. this phase's "same document, new
+      content"). Any frontend UI for this endpoint (`hrb_chatbot_ui`'s
+      `UploadPage.tsx`/`DocumentsPage.tsx` - backend-only phase).
+    - **Open questions:** none.
+  - **Built and verified:** `BaseMetadataClient.update_document_content()`
+    added and implemented in `sqlite_client.py`/`postgres_client.py`/the
+    `FakeMetadataStore` test fake. `documents_service.reindex_document()`
+    added, reusing `validate_file()`/`compute_content_hash()`/
+    `_index_now()`/`_clear_answer_cache_best_effort()` unchanged - none
+    duplicated. New `POST .../documents/{document_id}/reindex` route
+    (`ReindexDocumentPayload`, HR_SUPPORT-gated, same pattern as upload).
+    Postman collection updated with one happy-path request (Phase 125),
+    matching this project's own "happy-path only while phases actively
+    evolve" convention - edge cases stay in pytest. 13 new tests (6 route
+    - full reindex, unchanged short-circuit, 404 on unknown id, invalid-
+    file rejection, RBAC, old-file-actually-removed-from-disk; 1 direct
+    SQLite test for the new metadata method) - full suite 396 passed, no
+    regressions.
+
+- [ ] **Phase 126 — User-directed: per-tool-call metrics (latency/success/
+  source type) across all 3 pipelines, surfaced in a new "Knowledge
+  Sources" Explainability panel.**
+  - **Spec:**
+    - **Context:** asked for MCP-tool metrics and a "Knowledgebases"-style
+      grouping of where retrieved data actually came from (Vector DB, MCP,
+      expandable to more later). Checked what's captured today before
+      designing anything: nothing. `ToolCallInfo` (`tool_name`/
+      `tool_input` only) has no latency, no success/failure, no source-
+      type classification - confirmed across all 3 call sites
+      (`orchestration_agent.py`'s tool loop, `multi_agent_pipeline.py`'s 5
+      domain-agent nodes, `mcp_tools/__init__.py`'s `_call_mcp_tool()` for
+      genai-rag's own MCP fast-path). This is real instrumentation work,
+      not a frontend relabel.
+    - **Data/API contracts:** `models/agentic_rag.py`'s `ToolCallInfo`
+      gains `tool_type: str` ("vector_db"/"mcp"/"web_search"/"sql_db"/
+      "other"), `latency_ms: float | None`, `success: bool` - used by
+      both `AgenticRagResponse.tools_used` and
+      `MultiAgenticRagResponse.tools_used` already (shared model, one
+      change covers both). `RagQueryResponse` (genai-rag) gains a new
+      top-level `tools_used: list[ToolCallInfo]` field, matching the
+      other 2 response models' existing convention - empty list on a
+      normal RAG answer, one entry when MCP-routed. `routed_to` stays
+      untouched (existing field, existing callers depend on it).
+    - **User-visible behavior:** Explainability's new "Knowledge Sources"
+      panel groups every tool call made for that answer by `tool_type`,
+      each with the real tool/agent name, latency, and success/failure -
+      works identically across all 3 pipelines since they share one
+      enriched shape, not three bespoke ones.
+    - **Design:**
+      1. New shared `ai/rag_core/tool_classification.py` -
+         `TOOL_TYPE_BY_NAME` dict (explicit, not pattern-matched -
+         `SearchKnowledgeBase`/`vector_kb_agent` -> `vector_db`;
+         `GetLeaveBalance`/`GetLeaveHistory`/`get_leave_balance`/
+         `get_leave_history`/`lms_ops_agent` -> `mcp`; `web_search_agent`
+         -> `web_search`; `sql_db_agent`/`lms_analytics_agent` ->
+         `sql_db`) and `classify_tool(tool_name) -> str`, defaulting to
+         `"other"` for anything unmapped - new tool/agent names added
+         later don't crash, just land in "Other" until explicitly
+         classified (matches the "could expand in future" requirement
+         without needing a frontend change to stay working).
+      2. `orchestration_agent.py`'s tool loop: wrap each
+         `tool_function()` call with `time.perf_counter()`, append
+         `tool_type`/`latency_ms`/`success` (`success = not tool_output
+         .startswith("Error:")` - the existing, already-documented "never
+         raises, returns an Error: string" convention every tool function
+         follows) alongside the existing `tool_name`/`tool_input`.
+      3. `multi_agent_pipeline.py`'s 5 domain-agent node functions: same
+         `_elapsed_ms()` helper already used elsewhere in this file,
+         wrapping each `.run()` call; latency/success threaded through
+         `agent_results` into the existing `tools_used` construction.
+      4. `mcp_tools/__init__.py`'s `_call_mcp_tool()`: timed the same way;
+         `try_route_to_mcp()`'s returned dict gains a `tool_latency_ms`
+         key, read by `pipeline.py` when building the new one-entry
+         `tools_used` list for an MCP-routed genai-rag answer.
+      5. Frontend (`hrb_chatbot_ui`): `types.ts`'s `ToolCallInfo` gains
+         the 3 new fields; `ChatMessage`/genai-rag's response type gain
+         `toolsUsed` (genai-rag never had this field before - single-
+         agentic-rag/multi-agentic-rag already did). New "Knowledge
+         Sources" panel in `ExplainabilityModal.tsx`, grouping
+         `message.toolsUsed` by `tool_type` into labeled sections (Vector
+         DB / MCP / Web Search / SQL DB / Other) - driven entirely by
+         data, not a hardcoded per-type UI branch, so a new `tool_type`
+         value appearing later renders under "Other" rather than being
+         silently dropped.
+    - **Failure modes:** N/A for the metrics themselves (pure
+      instrumentation, no new failure path) - a tool call that already
+      fails still fails the same way, just now reports `success: false`
+      and its real latency instead of silently vanishing from the
+      metrics.
+    - **Retrieval quality criteria:** N/A - no chunking/retrieval logic
+      touched, only call-level metadata.
+    - **Reusability requirement:** one shared `ToolCallInfo` model and
+      one shared `classify_tool()` function cover both agentic pipelines
+      and genai-rag's MCP fast-path - not three separate shapes.
+    - **Testing plan:** unit tests for `classify_tool()` (every mapped
+      name + the "other" fallback). Per call site: a test confirming
+      `tool_type`/`success` are correct for both a successful and an
+      `"Error: ..."`-returning tool call, and that `latency_ms` is a real
+      positive number, not null/zero, using each file's existing fake-LLM/
+      fake-tool patterns. Route-level tests confirming the new fields
+      round-trip through all 3 response shapes - the `MultiAgenticRagResponse`
+      contract snapshot will need regenerating again (same as Phase 123),
+      expected and confirmed, not a surprise failure.
+    - **Out of scope:** dollar cost per tool call (same deliberate
+      exclusion as the rest of Explainability, see BACKLOG.md). Historical/
+      aggregate metrics across calls over time (this is per-answer only,
+      same scope as every other Explainability field). Retrying a failed
+      tool call automatically - `success: false` is reported, not acted
+      on.
+    - **Open questions:** none - "Knowledge Sources" confirmed as the
+      panel name with the user before writing this spec.
+  - **Built and verified:** `ToolCallInfo` moved to `models/common.py`
+    (avoids a circular import - `agentic_rag.py` already imports FROM
+    `models/rag.py`, so defining it in `rag.py` instead wasn't an
+    option), gained `tool_type`/`latency_ms`/`success`, shared by all 3
+    response models now. New `ai/rag_core/tool_classification.py`.
+    Instrumented all 3 pipelines: `orchestration_agent.py`'s tool loop,
+    `multi_agent_pipeline.py`'s 5 domain-agent nodes, `mcp_tools
+    /__init__.py`'s `_call_mcp_tool()` (genai-rag's MCP fast-path, which
+    had zero metrics before this phase, same as the other two). New
+    `RagQueryResponse.tools_used` field (genai-rag never had one before).
+    Frontend: `ToolCallInfo`/`ToolType` enriched in `types.ts`, genai-rag's
+    `toolsUsed` wired through `ChatPage.tsx`, new "Knowledge Sources"
+    panel in `ExplainabilityModal.tsx` grouping by `tool_type` with a
+    data-driven label lookup (unrecognized future types render as
+    "Other", not dropped). 16 new backend tests (`classify_tool()`
+    exhaustive, a failure-case test per pipeline confirming
+    `success: false` on an "Error: ..." result, route-level round-trip
+    tests for all 3 modes) + 4 existing tests updated for the enriched
+    shape - full suite 412 passed. All 3 contract snapshots regenerated
+    (confirmed additive-only diffs, nothing removed). Frontend build/lint
+    clean, no new warnings.
+
 1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
    document id returned, file in `data/uploads/`, SQLite row exists. **Done**,

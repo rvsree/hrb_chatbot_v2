@@ -261,3 +261,48 @@ def test_unexpected_pipeline_failure_returns_a_clean_500(monkeypatch):
 
     assert response.status_code == 500
     assert "error" in response.json()
+
+
+def test_mcp_routed_answer_reports_tools_used(monkeypatch):
+    async def _fake_mcp_answer_query(params):
+        return {
+            "query": params.query,
+            "answer": "You have 12 days of PTO remaining.",
+            "model_used": "mcp:get_leave_balance",
+            "sources": [],
+            "vector_db": "n/a (mcp)",
+            "search_strategy": "n/a (mcp)",
+            "applied_filter": None,
+            "served_from_cache": False,
+            "llm_call_count": 0,
+            "token_usage": None,
+            "latency_ms": {"total": 80.0, "retrieval": None, "generation": None},
+            "routed_to": "get_leave_balance",
+            "tools_used": [
+                {
+                    "tool_name": "get_leave_balance",
+                    "tool_input": "What's my PTO balance?",
+                    "tool_type": "mcp",
+                    "latency_ms": 65.0,
+                    "success": True,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _fake_mcp_answer_query)
+
+    response = client.post("/v1/genai-rag-retrieval/query", json=_body(query="What's my PTO balance?"))
+
+    assert response.status_code == 200
+    tools_used = response.json()["tools_used"]
+    assert len(tools_used) == 1
+    assert tools_used[0]["tool_type"] == "mcp"
+    assert tools_used[0]["latency_ms"] == 65.0
+
+
+def test_non_mcp_answer_has_empty_tools_used(monkeypatch):
+    monkeypatch.setattr(retrieve_document.pipeline, "answer_query", _fake_answer_query)
+
+    response = client.post("/v1/genai-rag-retrieval/query", json=_body(query="How many weeks of PTO do I get?"))
+
+    assert response.json()["tools_used"] == []

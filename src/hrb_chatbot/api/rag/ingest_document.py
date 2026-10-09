@@ -17,8 +17,10 @@ from src.hrb_chatbot.models.documents import (
     DocumentListResponse,
     DocumentRecord,
     DocumentUploadResponse,
+    DocumentUploadResult,
     PresignedUploadRequest,
     PresignedUploadResponse,
+    ReindexDocumentPayload,
     TestNoiseDocument,
     TestNoisePreviewResponse,
     UploadDocumentsPayload,
@@ -92,6 +94,45 @@ async def upload_documents(
     )
 
     return response
+
+
+def _parse_reindex_payload(raw_payload: str | None) -> ReindexDocumentPayload | None:
+    if not raw_payload:
+        return ReindexDocumentPayload()
+    try:
+        return ReindexDocumentPayload.model_validate_json(raw_payload)
+    except ValidationError:
+        return None
+
+
+@router_ingest_document.post("/documents/{document_id}/reindex", response_model=DocumentUploadResult)
+async def reindex_document(
+    document_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    payload: str | None = Form(None, max_length=PAYLOAD_MAX_LENGTH),
+):
+    # Phase 125: replace this document's file content in place, under the same document_id, and re-index it.
+    parsed_payload = _parse_reindex_payload(payload)
+    if parsed_payload is None:
+        return json_error(422, "payload is not valid JSON, or doesn't match the expected shape.", code=error_codes.VALIDATION_ERROR)
+
+    require_role(parsed_payload.user_profile, Role.HR_SUPPORT)
+    await enforce_rate_limit(request)
+
+    chunk_info = parsed_payload.chunk_info
+    result = await documents_service.reindex_document(
+        document_id,
+        file,
+        chunking_strategy=chunk_info.chunking_strategy if chunk_info else None,
+        chunk_size=chunk_info.chunk_size if chunk_info else None,
+        chunk_overlap=chunk_info.chunk_overlap if chunk_info else None,
+    )
+
+    if result is None:
+        return json_error(404, f"No document found with id {document_id!r}", code=error_codes.DOCUMENT_NOT_FOUND)
+
+    return result
 
 
 @router_ingest_document.post("/documents/presigned-upload", response_model=PresignedUploadResponse)

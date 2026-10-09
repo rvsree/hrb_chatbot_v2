@@ -725,3 +725,123 @@ def test_presigned_upload_without_overrides_leaves_pending_overrides_null():
 
     document = asyncio.run(get_db_gateway().metadata_store().get_document(document_id))
     assert document["pending_overrides"] is None
+
+
+# Phase 125 - POST /documents/{document_id}/reindex
+
+
+def _reindex_payload(user_profile=None, chunk_info=None) -> dict:
+    body = {"user_profile": HR_SUPPORT_USER_PROFILE if user_profile is None else user_profile}
+    if chunk_info is not None:
+        body["chunk_info"] = chunk_info
+    return {"payload": json.dumps(body)}
+
+
+def _single_file(filename: str = "policy-v2.pdf", content: bytes | None = None):
+    if content is None:
+        content = f"%PDF-1.4 fake content {uuid.uuid4().hex}".encode()
+    return {"file": (filename, io.BytesIO(content), "application/pdf")}
+
+
+def test_reindex_replaces_content_and_runs_a_full_reindex():
+    upload_response = client.post(
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="original.pdf"), data=_payload()
+    )
+    document_id = upload_response.json()["results"][0]["document_id"]
+
+    response = client.post(
+        f"/v1/genai-rag/ingest-document/documents/{document_id}/reindex",
+        files=_single_file(filename="updated.pdf"),
+        data=_reindex_payload(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["document_id"] == document_id
+    assert body["filename"] == "updated.pdf"
+    assert body["status"] == "reindexed"
+
+
+def test_reindex_with_identical_content_is_a_no_op():
+    same_content = f"%PDF-1.4 fake content {uuid.uuid4().hex}".encode()
+    upload_response = client.post(
+        "/v1/genai-rag/ingest-document/documents",
+        files=_pdf_file(filename="original.pdf", content=same_content),
+        data=_payload(),
+    )
+    document_id = upload_response.json()["results"][0]["document_id"]
+
+    response = client.post(
+        f"/v1/genai-rag/ingest-document/documents/{document_id}/reindex",
+        files=_single_file(filename="original.pdf", content=same_content),
+        data=_reindex_payload(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "unchanged"
+
+
+def test_reindex_unknown_document_id_is_404():
+    response = client.post(
+        "/v1/genai-rag/ingest-document/documents/does-not-exist/reindex",
+        files=_single_file(),
+        data=_reindex_payload(),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "DOCUMENT_NOT_FOUND"
+
+
+def test_reindex_rejects_an_invalid_file():
+    upload_response = client.post(
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(), data=_payload()
+    )
+    document_id = upload_response.json()["results"][0]["document_id"]
+
+    response = client.post(
+        f"/v1/genai-rag/ingest-document/documents/{document_id}/reindex",
+        files={"file": ("notes.txt", io.BytesIO(b"not a pdf"), "text/plain")},
+        data=_reindex_payload(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "rejected"
+    assert body["error_code"] == "INVALID_FILE_TYPE"
+
+
+def test_reindex_requires_hr_support_role():
+    upload_response = client.post(
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(), data=_payload()
+    )
+    document_id = upload_response.json()["results"][0]["document_id"]
+    employee_profile = {"employee_id": "EMP052", "full_name": "Eddy Employee", "role": "employee"}
+
+    response = client.post(
+        f"/v1/genai-rag/ingest-document/documents/{document_id}/reindex",
+        files=_single_file(),
+        data=_reindex_payload(user_profile=employee_profile),
+    )
+
+    assert response.status_code == 403
+
+
+def test_reindex_removes_the_old_file_from_disk():
+    from pathlib import Path
+
+    upload_response = client.post(
+        "/v1/genai-rag/ingest-document/documents", files=_pdf_file(filename="original.pdf"), data=_payload()
+    )
+    document_id = upload_response.json()["results"][0]["document_id"]
+    old_file_path = Path("data/uploads") / document_id / "original.pdf"
+    assert old_file_path.exists()
+
+    client.post(
+        f"/v1/genai-rag/ingest-document/documents/{document_id}/reindex",
+        files=_single_file(filename="updated.pdf"),
+        data=_reindex_payload(),
+    )
+
+    assert not old_file_path.exists()
+    assert (Path("data/uploads") / document_id / "updated.pdf").exists()

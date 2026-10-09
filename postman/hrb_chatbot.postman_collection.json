@@ -725,6 +725,47 @@
           ]
         },
         {
+          "name": "Reindex — POST /v1/genai-rag/ingest-document/documents/{id}/reindex (Phase 125)",
+          "item": [
+            {
+              "name": "Replace content in place",
+              "request": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{base_url}}/v1/genai-rag/ingest-document/documents/{{document_id}}/reindex",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "genai-rag",
+                    "ingest-document",
+                    "documents",
+                    "{{document_id}}",
+                    "reindex"
+                  ]
+                },
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "file",
+                      "type": "file",
+                      "src": "{{kb_docs_dir}}/JPMC Healthcare Benefits.pdf"
+                    },
+                    {
+                      "key": "payload",
+                      "type": "text",
+                      "value": "{\"user_profile\": {\"employee_id\": \"EMP051\", \"full_name\": \"Hana Support\", \"role\": \"hr_support\"}}"
+                    }
+                  ]
+                },
+                "description": "Phase 125 - replaces an existing document's file content in place, under the same document_id, and runs a full re-index (chunk/embed/write), reusing the Upload flow's own pipeline. status is 'reindexed' when content changed, 'unchanged' when the uploaded content's hash exactly matches what's already indexed (no-op, no embedding cost spent). Run the Upload request first so {{document_id}} is set."
+              }
+            }
+          ]
+        },
+        {
           "name": "Cleanup (test noise) — GET/DELETE /v1/genai-rag/ingest-document/documents/cleanup",
           "item": [
             {

@@ -117,7 +117,13 @@ async def test_one_tool_call_then_final_answer(monkeypatch):
     result = await orchestration_agent.run_agent("What's the 401k match?", employee_id="EMP052")
 
     assert result["answer"] == "The match is 100% up to 5%."
-    assert result["tools_used"] == [{"tool_name": "SearchKnowledgeBase", "tool_input": "401k match?"}]
+    assert len(result["tools_used"]) == 1
+    call = result["tools_used"][0]
+    assert call["tool_name"] == "SearchKnowledgeBase"
+    assert call["tool_input"] == "401k match?"
+    assert call["tool_type"] == "vector_db"  # Phase 126
+    assert call["success"] is True
+    assert call["latency_ms"] is not None
     assert result["iterations"] == 2
 
 
@@ -445,3 +451,72 @@ async def test_sources_is_empty_for_a_non_retrieval_tool(monkeypatch):
     result = await orchestration_agent.run_agent("what's my pto balance", employee_id="EMP052")
 
     assert result["sources"] == []
+
+
+class _CapturingBoundLlm:
+    def __init__(self, responses, captured_calls):
+        self._responses = list(responses)
+        self._captured_calls = captured_calls
+
+    async def ainvoke(self, messages):
+        self._captured_calls.append(messages)
+        return self._responses.pop(0)
+
+
+class _CapturingLlm:
+    """Phase 122 - like FakeLlm, but records every messages list it was bound+called with."""
+
+    def __init__(self, responses, captured_calls):
+        self._responses = responses
+        self._captured_calls = captured_calls
+
+    def bind(self, tools):
+        return _CapturingBoundLlm(self._responses, self._captured_calls)
+
+
+async def test_tabular_instruction_added_when_query_says_summarize(monkeypatch):
+    _patch_guardrails(monkeypatch)
+    captured_calls = []
+    monkeypatch.setattr(
+        orchestration_agent, "_build_llm", lambda: _CapturingLlm([FakeResponse(content="| a | b |")], captured_calls)
+    )
+
+    await orchestration_agent.run_agent("Summarize my benefits", employee_id="EMP052")
+
+    system_message = captured_calls[0][0]
+    assert "markdown table" in system_message.content
+
+
+async def test_tabular_instruction_absent_for_a_plain_query(monkeypatch):
+    _patch_guardrails(monkeypatch)
+    captured_calls = []
+    monkeypatch.setattr(
+        orchestration_agent, "_build_llm", lambda: _CapturingLlm([FakeResponse(content="hi")], captured_calls)
+    )
+
+    await orchestration_agent.run_agent("hi", employee_id="EMP052")
+
+    system_message = captured_calls[0][0]
+    assert "markdown table" not in system_message.content
+
+
+async def test_tool_call_metrics_mark_success_false_on_an_error_result(monkeypatch):
+    _patch_guardrails(monkeypatch)
+
+    async def _fake_failing_tool(args, employee_id):
+        return "Error: leave balance service unavailable", []
+
+    monkeypatch.setattr(orchestration_agent, "TOOL_FUNCTIONS", {"GetLeaveBalance": _fake_failing_tool})
+    _patch_llm(
+        monkeypatch,
+        [
+            FakeResponse(tool_calls=[{"name": "GetLeaveBalance", "args": {}, "id": "call_1"}]),
+            FakeResponse(content="I couldn't check your balance right now."),
+        ],
+    )
+
+    result = await orchestration_agent.run_agent("what's my pto balance", employee_id="EMP052")
+
+    call = result["tools_used"][0]
+    assert call["success"] is False
+    assert call["tool_type"] == "mcp"
