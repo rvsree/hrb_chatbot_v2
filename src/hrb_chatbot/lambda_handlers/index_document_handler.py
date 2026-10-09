@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+from urllib.parse import unquote_plus
 
 import boto3
 
@@ -29,6 +30,11 @@ class _JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
+        # Phase 133: logger.error(..., exc_info=True) was already capturing
+        # the real traceback - this formatter was just dropping it before
+        # it reached the log line, making every past failure here opaque.
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
         return json.dumps(payload)
 
 
@@ -48,13 +54,17 @@ logger = _get_logger()
 
 def _parse_s3_event(sqs_record: dict) -> tuple[str, str] | None:
     """Return (bucket, key) from one SQS message body, or None for a non-upload
-    event (e.g. the s3:TestEvent S3 sends when a notification is first configured)."""
+    event (e.g. the s3:TestEvent S3 sends when a notification is first configured).
+    Phase 133: S3's own ObjectCreated notification URL-encodes the key (a
+    space becomes "+", other characters percent-encoded) - decoded here so
+    a real filename with a space in it (any real-world PDF, not just this
+    project's own underscore-named KB docs) downloads from the real key."""
     body = json.loads(sqs_record["body"])
     if body.get("Event") == "s3:TestEvent":
         return None
 
     s3_info = body["Records"][0]["s3"]
-    return s3_info["bucket"]["name"], s3_info["object"]["key"]
+    return s3_info["bucket"]["name"], unquote_plus(s3_info["object"]["key"])
 
 
 def _document_id_and_filename(key: str) -> tuple[str, str]:
@@ -114,9 +124,10 @@ async def _index_one(bucket: str, key: str) -> None:
     else:
         index_kwargs = _pending_overrides_kwargs(existing)
 
-    # Phase 100: index_document() itself now sets status to "chunking" as
-    # its very first action - a separate "indexing" update here would be
-    # overwritten within microseconds, so it's not worth a second DB write.
+    # Phase 100: index_document() itself now sets status to "parsing" as
+    # its very first action (Phase 134 - was "chunking", mislabeled at that
+    # point) - a separate status update here would be overwritten within
+    # microseconds, so it's not worth a second DB write.
 
     try:
         await pipeline.index_document(document_id, str(local_path), **index_kwargs)
@@ -127,7 +138,11 @@ async def _index_one(bucket: str, key: str) -> None:
             "Indexing failed for document %s (bucket=%s, key=%s): %s: %s",
             document_id, bucket, key, type(error).__name__, error,
         )
-        await metadata_store.update_status(document_id, "failed", str(error))
+        # Phase 134: the document's current status is the last stage it
+        # actually reached - read it before overwriting it to "failed".
+        current = await metadata_store.get_document(document_id)
+        failed_stage = current["status"] if current else "unknown"
+        await metadata_store.update_status(document_id, "failed", f"[{failed_stage}] {error}")
         raise
 
 

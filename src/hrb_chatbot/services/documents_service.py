@@ -14,6 +14,7 @@ from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.clients.db_client.db_gateway import get_db_gateway
 from src.hrb_chatbot.common.clients.storage_client.s3_upload_client import (
     delete_uploaded_object,
+    download_for_reprocessing,
     generate_presigned_upload_url,
 )
 from src.hrb_chatbot.common.config.settings import read_setting
@@ -246,7 +247,12 @@ async def _index_now(
         return result
     except Exception as error:
         logger.error("Indexing failed for document %s: %s: %s", document_id, type(error).__name__, error)
-        await get_db_gateway().metadata_store().update_status(document_id, "failed", str(error))
+        # Phase 134: the document's current status is the last stage it
+        # actually reached - read it before overwriting it to "failed" so
+        # the stage isn't lost, and prefix it onto the real error text.
+        existing = await get_db_gateway().metadata_store().get_document(document_id)
+        failed_stage = existing["status"] if existing else "unknown"
+        await get_db_gateway().metadata_store().update_status(document_id, "failed", f"[{failed_stage}] {error}")
         return {"error": "Upload succeeded, but indexing failed.", "error_code": error_codes.INDEXING_FAILED}
 
 
@@ -335,6 +341,54 @@ async def reindex_document(
         error=index_outcome.get("error"),
         error_code=index_outcome.get("error_code"),
         file_size_bytes=size,
+        chunk_info=ChunkInfoResult(
+            chunking_strategy=index_outcome.get("chunking_strategy"),
+            chunk_size=index_outcome.get("chunk_size"),
+            chunk_overlap=index_outcome.get("chunk_overlap"),
+            action=index_outcome.get("action"),
+            chunks_indexed=index_outcome.get("chunks_indexed"),
+            chunks_removed=index_outcome.get("chunks_removed"),
+        ),
+        versioning_info=VersioningInfo(
+            document_version=index_outcome.get("document_version", existing["document_version"]),
+            is_current=True,
+            supersedes=existing.get("supersedes"),
+            superseded_by=existing.get("superseded_by"),
+        ),
+    )
+
+
+async def rechunk_document(
+    document_id: str,
+    chunking_strategy: str | None = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+) -> DocumentUploadResult | None:
+    """Phase 129: re-chunk/embed/index an existing document's already-stored
+    file with new settings - no file upload, no content-hash check (the
+    whole point is reprocessing the same bytes). Returns None if document_id
+    doesn't exist - the route turns that into a 404."""
+    existing = await get_db_gateway().metadata_store().get_document(document_id)
+    if existing is None:
+        return None
+
+    # Phase 135: existing["file_path"] may be an s3:// URI (every document
+    # uploaded through the presigned-upload path) - extract_text_from_pdf()
+    # only understands a real local path, so download to one first.
+    file_path = download_for_reprocessing(existing["file_path"], document_id, existing["filename"])
+    logger.info("Re-chunking document %s with new settings (file unchanged)", document_id)
+
+    index_outcome = await _index_now(
+        document_id, file_path, chunking_strategy=chunking_strategy, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+    )
+
+    return DocumentUploadResult(
+        filename=existing["filename"],
+        document_id=document_id,
+        status="reindexed",
+        error=index_outcome.get("error"),
+        error_code=index_outcome.get("error_code"),
+        file_size_bytes=existing["file_size_bytes"],
         chunk_info=ChunkInfoResult(
             chunking_strategy=index_outcome.get("chunking_strategy"),
             chunk_size=index_outcome.get("chunk_size"),

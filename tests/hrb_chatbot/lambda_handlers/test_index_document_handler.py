@@ -6,6 +6,8 @@ this project's existing fake-based test convention."""
 
 import asyncio
 import json
+import logging
+import sys
 
 from src.hrb_chatbot.lambda_handlers import index_document_handler
 from tests.conftest import FakeDBGateway, FakeMetadataStore
@@ -119,6 +121,27 @@ def test_indexing_failure_marks_the_document_failed_and_reports_batch_item_failu
     assert "could not reach pinecone" in document["error_message"]
 
 
+def test_indexing_failure_prefixes_the_stage_it_actually_failed_at(monkeypatch):
+    # Phase 134 - the stage comes from the document's own real, live status
+    # right before the overwrite, not a guess or a stale pre-set value:
+    # _index_one() itself sets "downloading" for an existing row before
+    # calling index_document() - faking index_document() to fail
+    # immediately means "downloading" is the real last-reached stage here.
+    metadata_store = FakeMetadataStore()
+    metadata_store.documents["doc-789"] = {"id": "doc-789", "filename": "policy.pdf", "status": "uploaded"}
+
+    async def _failing_index_document(document_id, file_path, **kwargs):
+        raise ValueError("could not reach pinecone")
+
+    gateway = _wire_fakes(monkeypatch, metadata_store=metadata_store, index_document=_failing_index_document)
+    event = {"Records": [_s3_event_sqs_record("hrb-chatbot-kb-uploads", "doc-789/policy.pdf", message_id="msg-3")]}
+
+    index_document_handler.lambda_handler(event, context=None)
+
+    document = gateway.metadata_store().documents["doc-789"]
+    assert document["error_message"] == "[downloading] could not reach pinecone"
+
+
 def test_s3_test_event_is_skipped_not_treated_as_a_failure(monkeypatch):
     _wire_fakes(monkeypatch)
     test_event_body = {"Event": "s3:TestEvent"}
@@ -158,6 +181,74 @@ def test_a_batch_of_several_records_runs_on_one_shared_event_loop(monkeypatch):
     result = index_document_handler.lambda_handler(event, context=None)
 
     assert result == {"batchItemFailures": []}
+
+
+# --- Phase 133: the JSON log formatter was silently dropping real tracebacks ---
+
+
+def test_json_formatter_includes_the_traceback_when_exc_info_is_set():
+    formatter = index_document_handler._JsonFormatter()
+    try:
+        raise ValueError("could not reach pinecone")
+    except ValueError:
+        record = logging.LogRecord(
+            name="lambda_handlers.index_document", level=logging.ERROR, pathname=__file__, lineno=1,
+            msg="Failed to process SQS message msg-1", args=(), exc_info=sys.exc_info(),
+        )
+
+    payload = json.loads(formatter.format(record))
+
+    assert "could not reach pinecone" in payload["exception"]
+    assert "Traceback" in payload["exception"]
+
+
+def test_json_formatter_omits_exception_key_when_there_is_no_error():
+    formatter = index_document_handler._JsonFormatter()
+    record = logging.LogRecord(
+        name="lambda_handlers.index_document", level=logging.INFO, pathname=__file__, lineno=1,
+        msg="Polling for messages", args=(), exc_info=None,
+    )
+
+    payload = json.loads(formatter.format(record))
+
+    assert "exception" not in payload
+
+
+# --- Phase 133: a real filename with a space, URL-encoded by S3's own event notification ---
+
+
+def test_a_url_encoded_key_with_spaces_decodes_to_the_real_filename(monkeypatch):
+    # S3's ObjectCreated notification encodes a space as "+" - confirmed
+    # live against a real bucket before this fix (download with the raw
+    # encoded key 404'd, the decoded key succeeded). "Fake content" is
+    # written here under the DECODED local path - a test proving the
+    # handler actually calls download_file() with the decoded key, not
+    # the still-encoded one.
+    s3_client = _FakeS3Client()
+    gateway = _wire_fakes(monkeypatch, s3_client=s3_client)
+    encoded_key = "doc-789/Global+Data+Privacy+Statement_FY27.pdf"
+    event = {"Records": [_s3_event_sqs_record("hrb-chatbot-kb-uploads", encoded_key)]}
+
+    result = index_document_handler.lambda_handler(event, context=None)
+
+    assert result == {"batchItemFailures": []}
+    downloaded_bucket, downloaded_key, _ = s3_client.downloaded[0]
+    assert downloaded_key == "doc-789/Global Data Privacy Statement_FY27.pdf"
+    document = gateway.metadata_store().documents["doc-789"]
+    assert document["filename"] == "Global Data Privacy Statement_FY27.pdf"
+
+
+def test_percent_encoded_characters_in_the_key_are_also_decoded(monkeypatch):
+    s3_client = _FakeS3Client()
+    _wire_fakes(monkeypatch, s3_client=s3_client)
+    # "(1)" URL-encoded - parentheses are percent-encoded by S3's own notification.
+    encoded_key = "doc-999/FDE+Pulse+%281%29.pdf"
+    event = {"Records": [_s3_event_sqs_record("hrb-chatbot-kb-uploads", encoded_key)]}
+
+    index_document_handler.lambda_handler(event, context=None)
+
+    _, downloaded_key, _ = s3_client.downloaded[0]
+    assert downloaded_key == "doc-999/FDE Pulse (1).pdf"
 
 
 def test_one_bad_message_in_a_batch_does_not_block_the_others(monkeypatch):
