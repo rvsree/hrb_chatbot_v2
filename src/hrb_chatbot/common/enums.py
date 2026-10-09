@@ -35,6 +35,7 @@ class ChunkingStrategy(StrEnum):
     MARKDOWN = "markdown"
     HTML = "html"
     NONE = "none"
+    DOCUMENT_STRUCTURE = "document_structure"
 
 
 class SearchStrategy(StrEnum):

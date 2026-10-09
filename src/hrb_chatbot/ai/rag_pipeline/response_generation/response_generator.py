@@ -5,6 +5,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableLambda
 
 from src.hrb_chatbot.ai.pre_processing.context_builder import build_context_from_chunks
+from src.hrb_chatbot.ai.rag_core.response_format import TABULAR_FORMAT_INSTRUCTION, should_use_tabular_format
 from src.hrb_chatbot.common.clients.llm_client.client_gateway import get_client_gateway
 from src.hrb_chatbot.common.clients.llm_client.langchain_chat_model import GatewayChatModel
 from src.hrb_chatbot.common.enums import LlmProvider
@@ -49,7 +50,9 @@ Answer: I don't have that information in the available documents - the healthcar
 Now answer using only the context below:
 
 Context:
-{context}"""
+{context}
+
+{tabular_instruction}"""
 
 RAG_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -135,7 +138,10 @@ def generate_answer(
     chain = RAG_PROMPT | llm | RunnableLambda(_to_result)
 
     context = build_context_from_chunks(chunks)
-    result = chain.invoke({"context": context, "question": query, "chat_history": chat_history or []})
+    tabular_instruction = TABULAR_FORMAT_INSTRUCTION if should_use_tabular_format(query) else ""
+    result = chain.invoke(
+        {"context": context, "question": query, "chat_history": chat_history or [], "tabular_instruction": tabular_instruction}
+    )
 
     logger.info("Generated a %d-character answer from %d chunk(s)", len(result["answer"]), len(chunks))
     return result

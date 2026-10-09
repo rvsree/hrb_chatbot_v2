@@ -66,14 +66,25 @@ async def _lookup_existing_chunks(metadata_store, document_id: str) -> tuple[str
     return "insert", [], existing_document
 
 
-def _build_chunk_metadatas(existing_document: dict | None, chunk_count: int, now: str) -> list[dict]:
+def _build_chunk_metadatas(
+    existing_document: dict | None, chunk_count: int, now: str, section_ids: list[str | None] | None = None
+) -> list[dict]:
     # Only a re-index's existing_document has these - a first index leaves them for apply_extracted_chunk_metadata().
     extracted_fields = _extracted_fields(
         existing_document.get("doc_category") if existing_document else None,
         existing_document.get("department") if existing_document else None,
         existing_document.get("doc_description") if existing_document else None,
     )
-    return [{"chunk_index": i, "is_current": True, "indexed_at": now, **extracted_fields} for i in range(chunk_count)]
+    resolved_section_ids = section_ids if section_ids is not None else [None] * chunk_count
+    metadatas = []
+    for i in range(chunk_count):
+        metadata = {"chunk_index": i, "is_current": True, "indexed_at": now, **extracted_fields}
+        # Phase 124 - omitted when None, same reasoning as _extracted_fields():
+        # Pinecone's update_metadata() rejects a literal None value.
+        if resolved_section_ids[i] is not None:
+            metadata["section_id"] = resolved_section_ids[i]
+        metadatas.append(metadata)
+    return metadatas
 
 
 def _write_new_vector_chunks(
@@ -166,6 +177,7 @@ async def write_chunks(
     chunking_strategy: str | None = None,
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
+    section_ids: list[str | None] | None = None,
 ) -> dict:
     """Orchestrates one index run - each step is a single repo-layer call or business rule, not both mixed."""
     gateway = get_db_gateway()
@@ -177,7 +189,7 @@ async def write_chunks(
 
     now = datetime.now(UTC).isoformat()
     new_chunk_ids = build_chunk_ids(document_id, len(chunks))
-    metadatas = _build_chunk_metadatas(existing_document, len(chunks), now)
+    metadatas = _build_chunk_metadatas(existing_document, len(chunks), now, section_ids)
 
     _write_new_vector_chunks(
         vector_store_client, resolved_vector_db, document_id, old_chunk_ids, new_chunk_ids, chunks, embeddings, metadatas

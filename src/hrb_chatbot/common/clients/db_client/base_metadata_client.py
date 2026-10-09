@@ -68,6 +68,14 @@ class BaseMetadataClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def update_document_content(
+        self, document_id: str, filename: str, file_path: str, file_size_bytes: int, content_hash: str
+    ) -> None:
+        """Phase 125: record a new filename/size/hash after an in-place reindex - a
+        separate write from record_successful_index() (file-identity vs. indexing facts)."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def record_document_metadata(
         self,
         document_id: str,

@@ -160,3 +160,23 @@ def test_model_name_override_is_passed_to_gateway_chat_model(monkeypatch):
     assert captured_kwargs["model_name_override"] == "gpt-4.1-nano"
     assert result["model_used"] == "gpt-4.1-nano"
     assert result["answer"] == "overridden-model answer"
+
+
+def test_tabular_instruction_added_when_query_says_summarize(monkeypatch):
+    fake_llm = _FakeGatewayChatModel()
+    monkeypatch.setattr(response_generator, "GatewayChatModel", lambda **kwargs: fake_llm)
+
+    response_generator.generate_answer("Summarize my benefits", SAMPLE_CHUNKS)
+
+    system_message, _ = fake_llm.calls[0]
+    assert "markdown table" in system_message.content
+
+
+def test_tabular_instruction_absent_for_a_plain_query(monkeypatch):
+    fake_llm = _FakeGatewayChatModel()
+    monkeypatch.setattr(response_generator, "GatewayChatModel", lambda **kwargs: fake_llm)
+
+    response_generator.generate_answer("How much leave?", SAMPLE_CHUNKS)
+
+    system_message, _ = fake_llm.calls[0]
+    assert "markdown table" not in system_message.content

@@ -54,6 +54,15 @@ class UploadDocumentsPayload(BaseModel):
     document_metadata: DocumentMetadataInput | None = None
 
 
+class ReindexDocumentPayload(BaseModel):
+    """Phase 125 - same multipart-form-field-as-JSON-string pattern as
+    UploadDocumentsPayload, deliberately smaller: no document_metadata/
+    supersedes_document_id, neither applies to an in-place content replace."""
+
+    user_profile: UserProfile | None = None
+    chunk_info: ChunkInfoInput | None = None
+
+
 class ChunkInfoResult(BaseModel):
     chunking_strategy: str | None = None
     chunk_size: int | None = None
@@ -116,7 +125,9 @@ class DocumentUploadResult(BaseModel):
         ...,
         description=(
             "'uploaded' if a new document was stored, 'duplicate' if identical content was already "
-            "uploaded before (no new document created - see message), 'rejected' if invalid."
+            "uploaded before (no new document created - see message), 'rejected' if invalid. "
+            "Phase 125's reindex endpoint also returns this shape: 'reindexed' (content changed, "
+            "full re-index ran) or 'unchanged' (uploaded content's hash matched what was already indexed)."
         ),
     )
     chunk_info: ChunkInfoResult | None = None

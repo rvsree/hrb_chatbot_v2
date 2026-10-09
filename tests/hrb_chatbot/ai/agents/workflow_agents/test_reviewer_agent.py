@@ -53,3 +53,69 @@ async def test_two_or_more_results_are_merged_by_the_llm(monkeypatch):
     )
 
     assert answer == "Parental leave is 8 weeks paid. Your current balance is 10 days."
+
+
+class _CapturingLlm:
+    def __init__(self, response, captured_calls):
+        self._response = response
+        self._captured_calls = captured_calls
+
+    async def ainvoke(self, messages):
+        self._captured_calls.append(messages)
+        return self._response
+
+
+async def test_tabular_instruction_added_when_query_says_summarize(monkeypatch):
+    captured_calls = []
+    monkeypatch.setattr(
+        reviewer_agent, "_build_llm", lambda: _CapturingLlm(FakeResponse("| a | b |"), captured_calls)
+    )
+
+    await reviewer_agent.review(
+        "summarize my benefits",
+        [
+            {"agent": "vector_kb_agent", "focus": "benefits", "result": "8 weeks paid."},
+            {"agent": "lms_ops_agent", "focus": "balance", "result": "10 days available."},
+        ],
+    )
+
+    system_message = captured_calls[0][0]
+    assert "markdown table" in system_message.content
+
+
+async def test_tabular_instruction_absent_for_a_plain_query(monkeypatch):
+    captured_calls = []
+    monkeypatch.setattr(
+        reviewer_agent, "_build_llm", lambda: _CapturingLlm(FakeResponse("8 weeks paid, 10 days available."), captured_calls)
+    )
+
+    await reviewer_agent.review(
+        "what is the leave policy and my balance?",
+        [
+            {"agent": "vector_kb_agent", "focus": "benefits", "result": "8 weeks paid."},
+            {"agent": "lms_ops_agent", "focus": "balance", "result": "10 days available."},
+        ],
+    )
+
+    system_message = captured_calls[0][0]
+    assert "markdown table" not in system_message.content
+
+
+async def test_generate_follow_ups_parses_one_question_per_line(monkeypatch):
+    _patch_llm(monkeypatch, "What is my dental plan?\nHow do I enroll in a 401(k)?\n")
+
+    follow_ups = await reviewer_agent.generate_follow_ups("What is my PTO balance?", "You have 10 days left.")
+
+    assert follow_ups == ["What is my dental plan?", "How do I enroll in a 401(k)?"]
+
+
+async def test_generate_follow_ups_returns_empty_list_on_llm_failure(monkeypatch):
+    class _FailingLlm:
+        async def ainvoke(self, messages):
+            raise RuntimeError("LLM is down")
+
+    monkeypatch.setattr(reviewer_agent, "_build_llm", lambda: _FailingLlm())
+
+    follow_ups = await reviewer_agent.generate_follow_ups("What is my PTO balance?", "You have 10 days left.")
+
+    assert follow_ups == []

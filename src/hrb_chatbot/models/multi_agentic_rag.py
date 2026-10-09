@@ -3,7 +3,7 @@ docs/agent-reference/endpoint-request-response-contracts.md. Phase 61: the contr
 
 from pydantic import BaseModel, Field
 
-from src.hrb_chatbot.models.agentic_rag import ToolCallInfo
+from src.hrb_chatbot.models.common import ToolCallInfo
 from src.hrb_chatbot.models.common import UserProfile
 from src.hrb_chatbot.models.rag import ExplainabilityInfo, RetrievedChunk
 
@@ -32,6 +32,10 @@ class MultiAgenticRagResponse(BaseModel):
     query: str = Field(..., description="The question that was asked.")
     answer: str = Field(..., description="The final, synthesized answer.")
     tasks: list[AgentTaskInfo] = Field(..., description="Which sub-agent(s) the router dispatched to, and why.")
+    suggested_follow_up_questions: list[str] = Field(
+        default_factory=list,
+        description="Phase 123 - Reviewer Agent-generated, 2-3 questions. Empty when no domain agent ran.",
+    )
     tools_used: list[ToolCallInfo] = Field(
         ..., description="Every tool call any sub-agent made, in order, aggregated across all of them."
     )

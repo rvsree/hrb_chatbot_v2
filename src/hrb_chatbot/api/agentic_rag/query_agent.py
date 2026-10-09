@@ -10,7 +10,8 @@ from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.enums import Role
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rate_limiting.rate_limiter import enforce_rate_limit
-from src.hrb_chatbot.models.agentic_rag import AgenticRagRequest, AgenticRagResponse, ToolCallInfo
+from src.hrb_chatbot.models.agentic_rag import AgenticRagRequest, AgenticRagResponse
+from src.hrb_chatbot.models.common import ToolCallInfo
 from src.hrb_chatbot.models.rag import EvalScores, ExplainabilityInfo, LatencyInfo, TokenUsageInfo
 
 logger = get_logger("query_agent")

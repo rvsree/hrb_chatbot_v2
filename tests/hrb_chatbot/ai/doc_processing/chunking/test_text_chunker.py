@@ -11,15 +11,20 @@ from src.hrb_chatbot.ai.doc_processing.chunking.text_chunker import (
     DEFAULT_CHUNK_SIZE,
     LARGE_DOCUMENT_CHUNK_SIZE,
     LARGE_DOCUMENT_MIN_LENGTH,
+    chunk_by_document_structure,
     chunk_fixed,
     chunk_html,
     chunk_markdown,
     chunk_none,
     chunk_recursive,
     chunk_text,
+    chunk_text_with_sections,
     decide_chunk_size,
     decide_chunking_strategy,
+    extract_text_from_pdf,
 )
+
+REAL_HEALTHCARE_PDF = "resources/kb_docs/AmazingBank_Healthcare_Benefits.pdf"
 
 
 def test_text_shorter_than_chunk_size_returns_one_chunk():
@@ -200,3 +205,83 @@ def test_chunk_text_with_no_tables_behaves_exactly_as_before():
 
     assert len(chunks) > 1
     assert not any("[TABLE]" in chunk for chunk in chunks)
+
+
+# Phase 124 - document-structure chunking, tested against real extracted
+# text from a real KB PDF (not synthetic text) - matches this project's
+# "a golden dataset built from guessed answers is worse than none" principle.
+
+
+def test_chunk_by_document_structure_matches_the_real_section_count():
+    text = extract_text_from_pdf(REAL_HEALTHCARE_PDF)
+
+    chunks = chunk_by_document_structure(text)
+
+    section_ids = {chunk["section_id"] for chunk in chunks if chunk["section_id"]}
+    # Real count verified directly against this exact file before writing this phase's spec.
+    assert len(section_ids) == 71
+
+
+def test_chunk_by_document_structure_tags_subsections_with_a_compound_id():
+    text = extract_text_from_pdf(REAL_HEALTHCARE_PDF)
+
+    chunks = chunk_by_document_structure(text)
+
+    compound_ids = [chunk["section_id"] for chunk in chunks if chunk["section_id"] and "/" in chunk["section_id"]]
+    assert "claims-and-appeals/filing-claims" in compound_ids
+
+
+def test_chunk_by_document_structure_tags_the_preamble_as_none():
+    text = extract_text_from_pdf(REAL_HEALTHCARE_PDF)
+
+    chunks = chunk_by_document_structure(text)
+
+    assert chunks[0]["section_id"] is None
+
+
+def test_chunk_by_document_structure_falls_back_to_recursive_with_no_sections():
+    text = "Plain text with no section headings at all. " * 60
+
+    chunks = chunk_by_document_structure(text, chunk_size=200, chunk_overlap=20)
+
+    assert len(chunks) > 1
+    assert all(chunk["section_id"] is None for chunk in chunks)
+
+
+def test_chunk_by_document_structure_renumbering_does_not_change_the_id():
+    # The whole point of using the heading's own text, not its number -
+    # a renumbered section keeps the same id.
+    text_v1 = "Section 2: Eligibility\nSome eligibility text here that is long enough to matter."
+    text_v2 = "Section 3: Eligibility\nSome eligibility text here that is long enough to matter."
+
+    chunks_v1 = chunk_by_document_structure(text_v1)
+    chunks_v2 = chunk_by_document_structure(text_v2)
+
+    assert chunks_v1[0]["section_id"] == chunks_v2[0]["section_id"] == "eligibility"
+
+
+def test_chunk_text_with_sections_returns_none_ids_for_every_other_strategy():
+    text = "This is one sentence about JPMorgan Chase benefits policy. " * 40
+
+    chunks, section_ids = chunk_text_with_sections(text, chunking_strategy="recursive", chunk_size=500, chunk_overlap=50)
+
+    assert len(chunks) == len(section_ids)
+    assert all(section_id is None for section_id in section_ids)
+
+
+def test_chunk_text_with_sections_returns_real_ids_for_document_structure():
+    text = extract_text_from_pdf(REAL_HEALTHCARE_PDF)
+
+    chunks, section_ids = chunk_text_with_sections(text, chunking_strategy="document_structure")
+
+    assert len(chunks) == len(section_ids)
+    assert any(section_id is not None for section_id in section_ids)
+
+
+def test_chunk_text_with_sections_keeps_table_blocks_untagged():
+    text = "Section 1: Overview\nSome overview text.\n\n[TABLE]\na table\n[/TABLE]"
+
+    chunks, section_ids = chunk_text_with_sections(text, chunking_strategy="document_structure")
+
+    table_index = next(i for i, chunk in enumerate(chunks) if "[TABLE]" in chunk)
+    assert section_ids[table_index] is None

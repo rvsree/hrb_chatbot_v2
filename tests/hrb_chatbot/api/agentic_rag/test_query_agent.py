@@ -21,7 +21,15 @@ def _body(query: str = "What's the 401k match?", user_profile=None) -> dict:
 async def _fake_run_agent(query, employee_id, max_iterations, enable_conversation_memory=False, conversation_id=None):
     return {
         "answer": "The match is 100% up to 5%.",
-        "tools_used": [{"tool_name": "SearchKnowledgeBase", "tool_input": query}],
+        "tools_used": [
+            {
+                "tool_name": "SearchKnowledgeBase",
+                "tool_input": query,
+                "tool_type": "vector_db",
+                "latency_ms": 120.5,
+                "success": True,
+            }
+        ],
         "iterations": 2,
         "conversation_id": conversation_id if enable_conversation_memory else None,
         "served_from_cache": False,
@@ -45,7 +53,15 @@ def test_well_formed_query_returns_answer_and_tools_used(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["answer"] == "The match is 100% up to 5%."
-    assert body["tools_used"] == [{"tool_name": "SearchKnowledgeBase", "tool_input": "What's the 401k match?"}]
+    assert body["tools_used"] == [
+        {
+            "tool_name": "SearchKnowledgeBase",
+            "tool_input": "What's the 401k match?",
+            "tool_type": "vector_db",
+            "latency_ms": 120.5,
+            "success": True,
+        }
+    ]
     assert body["iterations"] == 2
 
 

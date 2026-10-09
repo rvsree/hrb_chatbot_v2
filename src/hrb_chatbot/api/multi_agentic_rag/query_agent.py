@@ -12,7 +12,7 @@ from src.hrb_chatbot.common import error_codes
 from src.hrb_chatbot.common.enums import Role
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rate_limiting.rate_limiter import enforce_rate_limit
-from src.hrb_chatbot.models.agentic_rag import ToolCallInfo
+from src.hrb_chatbot.models.common import ToolCallInfo
 from src.hrb_chatbot.models.multi_agentic_rag import AgentTaskInfo, MultiAgenticRagRequest, MultiAgenticRagResponse
 from src.hrb_chatbot.models.rag import EvalScores, ExplainabilityInfo, LatencyInfo
 
@@ -41,6 +41,7 @@ async def query(payload: MultiAgenticRagRequest, request: Request):
         query=payload.query,
         answer=result["answer"],
         tasks=[AgentTaskInfo(**task) for task in result["tasks"]],
+        suggested_follow_up_questions=result.get("follow_up_questions") or [],
         tools_used=[ToolCallInfo(**call) for call in result["tools_used"]],
         sources=result.get("sources") or [],
         iterations=result["iterations"],

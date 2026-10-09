@@ -3,7 +3,7 @@ Phase 45 identity-via-payload pattern as models/rag.py, not headers."""
 
 from pydantic import BaseModel, Field
 
-from src.hrb_chatbot.models.common import UserProfile
+from src.hrb_chatbot.models.common import ToolCallInfo, UserProfile
 from src.hrb_chatbot.models.rag import ExplainabilityInfo, RetrievedChunk
 
 
@@ -22,10 +22,6 @@ class AgenticRagRequest(BaseModel):
         "enable_conversation_memory is false; a new one is generated if true and this is omitted.",
     )
 
-
-class ToolCallInfo(BaseModel):
-    tool_name: str = Field(..., description="Which tool the agent called.")
-    tool_input: str = Field(..., description="What the agent passed to it.")
 
 
 class AgenticRagResponse(BaseModel):

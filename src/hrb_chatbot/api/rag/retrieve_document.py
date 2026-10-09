@@ -11,6 +11,7 @@ from src.hrb_chatbot.common.enums import Role
 from src.hrb_chatbot.common.logging.logger import get_logger
 from src.hrb_chatbot.common.rag_query_params import RagQueryParams
 from src.hrb_chatbot.common.rate_limiting.rate_limiter import enforce_rate_limit
+from src.hrb_chatbot.models.common import ToolCallInfo
 from src.hrb_chatbot.models.rag import (
     AnswerInfo,
     EvalScores,
@@ -83,6 +84,7 @@ async def _answer_query(payload: RagQueryRequest, employee_id: str | None = None
             routed_to=result.get("routed_to"),
             eval_scores=EvalScores(**eval_scores) if eval_scores else None,
         ),
+        tools_used=[ToolCallInfo(**call) for call in result.get("tools_used", [])],
         conversation_id=result.get("conversation_id"),
     )
 
