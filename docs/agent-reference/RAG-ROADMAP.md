@@ -11150,3 +11150,150 @@ Explicitly deferred to a later, separate wave - not part of the above:
       event loop, so it doesn't explain the 10-15s). Any other document
       route's sync-call-in-async pattern beyond `delete_document()` -
       not audited here, scoped to the reported symptom only.
+
+- [x] **Phase 140 — User-reported: conditional attach-icon visibility,
+  two real caching bugs found investigating a wrong-answer report, and
+  Explainability clarity/consistency fixes.**
+  - **Spec:**
+    - **Problem 1 (real bug, confirmed via live testing):** a user-reported
+      wrong answer ("check the My Rewards Portal" instead of a real PTO
+      balance) for `single-agentic-rag` was investigated by running the
+      exact same query against this backend twice, live - both times the
+      agent correctly called `GetLeaveBalance` and `served_from_cache` was
+      `false`. This means the reported bad answer most likely came from a
+      **stale cache entry written by an earlier, different run** - and
+      reading `orchestration_agent.py:217` confirms the actual bug that
+      makes this possible: `cache_eligible = not any(call["tool_name"] in
+      LIVE_DATA_TOOLS for call in result["tools_used"])` only looks at
+      which tools the LLM *actually* called that one time, not at whether
+      the query *should* require live data. If the LLM ever
+      non-deterministically answers a leave-balance/history question
+      without calling the live-data tool (an LLM mistake, not impossible),
+      that wrong answer passes this check and gets cached for
+      `DEFAULT_TTL_SECONDS` (6h) - served to every future identical query
+      with zero chance for the agent to get it right, since the cache
+      short-circuits before the agent ever runs again. **Fix:** also gate
+      `cache_eligible` on the same keyword heuristic the codebase already
+      uses for this exact purpose elsewhere -
+      `mcp_tools.is_leave_balance_query()`/`is_leave_history_query()`
+      (already used by `lms_ops_agent.py` for multi-agentic-rag's own live-
+      data routing, not a new heuristic invented here) - so a query that
+      *looks* like it's asking for personal leave data is never cached
+      regardless of which tool the LLM happened to call.
+    - **Problem 2, a related but distinct bug found auditing for the same
+      pattern in genai-rag (`pipeline.py`):** the top-level
+      `try_route_to_mcp()` check (`pipeline.py:150`) is safe - it's a
+      deterministic keyword match re-evaluated on every single call, never
+      cached, so it can't go stale. But genai-rag's **decomposition** path
+      has no such protection: `_answer_sub_question()` calls
+      `try_route_to_mcp()` per sub-question too, and a correctly-routed
+      live MCP answer (e.g. a real PTO balance) for one sub-question of a
+      multi-part query still flows into the overall merged result, which
+      the unconditional `await
+      get_db_gateway().answer_cache().set(cache_key, checked_query,
+      result)` at `pipeline.py:384` caches **regardless of whether any
+      sub-question used live MCP data** - baking a point-in-time balance
+      number into a 6-hour cache entry even when the MCP call was
+      correct. **Fix:** add the same `cache_eligible` gate
+      `orchestration_agent.py` already has (`result["tools_used"]` is
+      already populated with each sub-question's MCP tool call, if any -
+      no new tracking needed) before the write at line 384.
+    - **Problem 3:** `ChatPage.tsx`'s paperclip attach-file control is
+      visible regardless of which pipeline is selected in the dropdown,
+      even though ad-hoc document chat only makes sense for (and only
+      ever gets wired to) "GenAI RAG" mode. **Fix:** only render the
+      attach control when `mode === "genai-rag"`.
+    - **Problem 4, a real copy bug, not a logic bug:** the Latency &
+      Tokens panel's hardcoded "Tokens: n/a (**no LLM call this time**)"
+      is misleading for single/multi-agentic-rag, which show a real
+      nonzero `llm_call_count` alongside it - `token_usage` is `null`
+      there because per-agent token capture isn't built yet (a real,
+      already-logged `BACKLOG.md` gap), not because no LLM call happened.
+      **Fix:** branch the copy on `llm_call_count` - "n/a (no LLM call
+      made)" only when it's actually 0, else "not tracked per-agent yet"
+      when calls did happen but `token_usage` is still null.
+    - **Problem 5:** the "reviewer merge (prompt capture not yet built for
+      this step)" LLM Context label (`pipeline.py:324`) is an internal
+      engineering TODO note leaking into user-facing UI, not an
+      explanation a user can act on. It's real and logical - created only
+      when `decompose()` splits a query into 2+ sub-questions
+      (`pipeline.py:311`), where `reviewer_agent.review()` makes a genuine
+      extra LLM call to merge the sub-answers into one coherent response
+      (`reviewer_agent.py:42`) - but the label doesn't say any of that.
+      **Fix:** relabel to something a user can understand on its own
+      ("Merging N sub-answers into one response") and keep the technical
+      "prompt capture not yet built" detail as a secondary, clearly-
+      internal note rather than the whole label.
+    - **Problem 6:** eval (judge) LLM calls are real and already separate
+      from answer-generation calls in every pipeline (`_score_live_answer`
+      makes exactly 2 calls - groundedness + completeness - confirmed by
+      reading `golden_dataset_harness.py`, not DeepEval, matching the IK
+      FDE Module 5 pattern already documented in the UI), but today's
+      single `llm_call_count` number doesn't separate them from
+      generation/decomposition calls. **Fix:** add an explicit
+      `eval_llm_call_count` (0 or 2, derived from whether `eval_scores` is
+      populated - deterministic, no new tracking needed) to the response
+      in all 3 pipelines, and for genai-rag specifically a
+      `decomposition_llm_call_count` (0 or 1 - `decompose()` always runs
+      exactly once per call). Frontend shows a breakdown next to the
+      existing total: "LLM calls: 5 (answer: 2, eval: 2, decompose: 1)" -
+      omitting the decompose term for single/multi-agentic-rag, which
+      have no decomposition step.
+    - **Out of scope:** a full redesign of the answer-cache's correctness
+      model beyond these two confirmed gaps - not auditing every other
+      cache-eligibility path in the codebase speculatively. Per-domain-
+      agent real token capture for multi-agentic-rag (the actual
+      `BACKLOG.md`-logged gap Problem 4 only relabels around, doesn't
+      solve) - a separate, larger phase touching all 7 agent files, not
+      started here.
+  - **Built and verified:**
+    - Problems 1/2 (caching): `orchestration_agent.py` and `pipeline.py`
+      fixed as specced. New tests prove it with real call-count assertions
+      (`test_a_leave_balance_question_answered_without_the_tool_is_still_
+      never_cached`, `test_a_compound_kb_and_mcp_answer_is_never_cached`),
+      plus **live verification against the running local backend** (not
+      just fakes): the exact reported query run twice back-to-back both
+      times correctly called `GetLeaveBalance` with `served_from_cache:
+      false`; a pure-KB query cached normally on the 2nd identical call
+      (`served_from_cache: true`, `llm_call_count: 0` - unaffected by this
+      phase); the compound decomposition+MCP query run twice both times
+      showed `served_from_cache: false` with a real fresh
+      `get_leave_history` call each time - confirming the fix holds
+      end-to-end, not just against test fakes.
+    - Problem 3: `ChatPage.tsx`'s attach control now renders only when
+      `selectedMode === "genai-rag"`; switching away from GenAI RAG also
+      clears any already-attached files via the existing `clearAdhocFiles`.
+    - Problem 4: `ExplainabilityModal.tsx`'s Tokens line now reads "not
+      tracked per-agent yet" when `llm_call_count > 0` but `token_usage`
+      is null, vs. "no LLM call made" only when `llm_call_count` is
+      actually 0.
+    - Problem 5: relabeled to `f"Merging {len(sub_results)} sub-answers
+      into one response"` (`pipeline.py`); frontend badges this turn
+      "Merge" instead of "Q{n}", skips the (inapplicable) "Question:" and
+      "Response KB source:" blocks for it, and replaces the old fragile
+      `turn.label.includes("not yet built")` string-match with an explicit
+      `isMergeTurn` check plus a real explanatory sentence.
+    - Problem 6: `llmCallsBreakdownLabel()` (new, `ExplainabilityModal.tsx`)
+      derives the answer/eval/decompose split entirely from fields already
+      in the response (`llm_context !== null` as the "fresh genai-rag
+      call" signal, `eval_scores` presence for eval calls) - no backend
+      field needed, confirmed by tracing the eval mechanism first: exactly
+      2 hand-rolled LLM-as-judge calls per fresh query
+      (`golden_dataset_harness.py` - not DeepEval, matches the existing UI
+      copy), and genai-rag's `decompose()` always makes exactly 1 call
+      per fresh (non-cached, non-MCP-fast-path) query.
+    - Full suite: 490 passed, 6 deselected, 0 regressions. Bandit: 0 new
+      findings (same 2 pre-existing, untouched-file findings as before).
+      Frontend: clean `tsc -b && vite build`.
+    - **Investigated, not changed (research/analysis only, reported
+      directly to the user, not written here):** whether multi-agentic-
+      rag's KB retrieval is equivalent to genai-rag's (confirmed: same
+      `retrieve_chunks()`/same persistent Pinecone KB/same citation shape,
+      but a separately-keyed cache and a separate, parallel MCP-routing
+      implementation - not literal reuse); whether any dynamic/automatic
+      routing exists between the 3 top-level pipeline modes (confirmed:
+      none - 100% a manual per-request client choice today); real-world
+      production pattern for this (web research: a server-side router
+      escalating simple queries to a fixed pipeline and complex/multi-hop
+      ones to an agent loop is the common pattern, not a user-facing mode
+      picker - this project has no such router).

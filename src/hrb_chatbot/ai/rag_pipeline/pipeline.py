@@ -21,6 +21,15 @@ from src.hrb_chatbot.common.rag_query_params import RagQueryParams
 
 logger = get_logger("rag_pipeline.pipeline")
 
+# Phase 140: a decomposed sub-question that correctly used live MCP data
+# must not have that result cached - the top-level try_route_to_mcp() short
+# -circuit above is already safe (deterministic, never cached), but a
+# multi-sub-question query's MERGED result was being cached unconditionally
+# even when one sub-question's answer came from here. snake_case to match
+# try_route_to_mcp()'s own tool_name convention (mcp_tools/__init__.py),
+# distinct from orchestration_agent.py's PascalCase LIVE_DATA_TOOLS.
+LIVE_DATA_MCP_TOOLS = {"get_leave_balance", "get_leave_history"}
+
 
 def _elapsed_ms(started_at: float) -> float:
     return round((time.perf_counter() - started_at) * 1000, 1)
@@ -317,11 +326,16 @@ async def answer_query(params: RagQueryParams) -> dict:
             answer = await reviewer_agent.review(generate_query, agent_results)
             llm_call_count += 1  # the merge call
             # Phase 132: the merge call happened and shaped the final
-            # answer, but its own prompt isn't captured yet - named
-            # explicitly as a gap, not silently left out of the turn list.
+            # answer, but its own prompt isn't captured yet - a real,
+            # separate LLM call that combines the sub-answers above into
+            # one response, not a sub-question in its own right. Phase 140:
+            # relabeled to something a user can understand on its own -
+            # the old label ("reviewer merge (prompt capture not yet built
+            # for this step)") was an internal TODO note leaking into
+            # user-facing UI.
             llm_context_turns.append(
                 {
-                    "label": "reviewer merge (prompt capture not yet built for this step)",
+                    "label": f"Merging {len(sub_results)} sub-answers into one response",
                     "system_prompt": None,
                     "human_message": None,
                     "chat_history": [],
@@ -381,8 +395,12 @@ async def answer_query(params: RagQueryParams) -> dict:
     # individually.
     result["latency_ms"]["total"] = _elapsed_ms(started_at)
 
-    await get_db_gateway().answer_cache().set(cache_key, checked_query, result)
-    if result.get("conversation_id"):
-        await get_db_gateway().answer_cache().tag_conversation(result["conversation_id"], cache_key)
+    # Phase 140: don't cache a result where any sub-question's answer came
+    # from live MCP data - see LIVE_DATA_MCP_TOOLS above.
+    cache_eligible = not any(call["tool_name"] in LIVE_DATA_MCP_TOOLS for call in result["tools_used"])
+    if cache_eligible:
+        await get_db_gateway().answer_cache().set(cache_key, checked_query, result)
+        if result.get("conversation_id"):
+            await get_db_gateway().answer_cache().tag_conversation(result["conversation_id"], cache_key)
 
     return result

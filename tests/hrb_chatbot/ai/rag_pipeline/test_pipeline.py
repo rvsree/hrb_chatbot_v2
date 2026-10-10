@@ -668,3 +668,51 @@ async def test_compound_kb_and_mcp_question_gets_both_halves_right(monkeypatch):
     assert len(result["tools_used"]) == 1
     assert result["tools_used"][0]["tool_name"] == "get_leave_balance"
     assert result["tools_used"][0]["tool_type"] == "mcp"
+
+
+async def test_a_compound_kb_and_mcp_answer_is_never_cached(monkeypatch):
+    """Phase 140 - the real bug this closes: a decomposed query's merged
+    result used to be cached unconditionally even when one sub-question's
+    answer came from live MCP data (e.g. a point-in-time PTO balance),
+    baking a stale number into a 6h cache entry. Same compound-query setup
+    as test_compound_kb_and_mcp_question_gets_both_halves_right above, but
+    called twice: the second call must still hit the real fakes, not a
+    cached result."""
+    _patch_guardrails(monkeypatch)
+    call_count = {"mcp": 0, "generate": 0}
+
+    async def _fake_decompose_compound(query):
+        return ["Is the 401k employer match immediately vested?", "What is my PTO balance?"]
+
+    async def _fake_try_route_to_mcp(sub_question, employee_id):
+        if "pto balance" in sub_question.lower():
+            call_count["mcp"] += 1
+            return {
+                "answer": "You have 12 PTO days left.", "model_used": "mcp:get_leave_balance",
+                "routed_to": "get_leave_balance", "tool_latency_ms": 40.0,
+                "mcp_arguments": {"employee_id": employee_id}, "mcp_raw_result": ["You have 12 PTO days left."],
+            }
+        return None
+
+    async def _fake_retrieve(query, top_k=5, vector_db=None, search_strategy=None, **kwargs):
+        return ([{"filename": "401k.pdf", "chunk_index": 0, "text": "100% immediately vested."}], None)
+
+    def _fake_generate(query, chunks, model_name=None, temperature=0.0, max_tokens=None, chat_history=None):
+        call_count["generate"] += 1
+        return {"answer": "Employer match is 100% immediately vested.", "model_used": "gpt-4.1-mini"}
+
+    async def _fake_review(query, agent_results):
+        return "Employer match is 100% immediately vested. You have 12 PTO days left."
+
+    monkeypatch.setattr(pipeline, "decompose", _fake_decompose_compound)
+    monkeypatch.setattr(pipeline, "try_route_to_mcp", _fake_try_route_to_mcp)
+    monkeypatch.setattr(pipeline, "retrieve_chunks", _fake_retrieve)
+    monkeypatch.setattr(pipeline, "generate_answer", _fake_generate)
+    monkeypatch.setattr(pipeline.reviewer_agent, "review", _fake_review)
+
+    query_text = "Is the 401k match vested and how many PTO days do I have?"
+    await pipeline.answer_query(RagQueryParams(query=query_text))
+    second = await pipeline.answer_query(RagQueryParams(query=query_text))
+
+    assert call_count == {"mcp": 2, "generate": 2}  # both calls did real work - never cache-served
+    assert second["served_from_cache"] is False
