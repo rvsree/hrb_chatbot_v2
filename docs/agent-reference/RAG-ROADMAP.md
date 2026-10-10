@@ -11106,3 +11106,47 @@ Explicitly deferred to a later, separate wave - not part of the above:
     files - flagged, not fixed this phase). Deployed to production as part
     of this phase's combined redeploy (see Phase 137's own build/deploy
     note - same two images).
+
+- [ ] **Phase 139 — User-reported: ad-hoc chat's attached-files panel
+  overlapping the response area; bulk document delete feels synchronous
+  (10-15s UI block) despite already using `Promise.all` on the frontend.**
+  - **Spec:**
+    - **Problem 1:** `ChatPage.tsx`'s adhoc attached-files panel
+      (file list + email field + rejections) renders permanently expanded
+      with no way to collapse it, so 3 attached files + the email field
+      can grow tall enough to crowd the response area directly above it -
+      exactly what the user's screenshot shows. **Fix:** wrap it in a
+      native `<details>/<summary>`, same pattern `ExplainabilityModal.tsx`'s
+      `CollapsibleSection` already established (not duplicating that
+      component - it's local to that file - just reusing the same
+      `<details>` + `.explainability-section` CSS classes for visual
+      consistency). Defaults to collapsed (closed) specifically because
+      this is the UI being complained about for taking up too much space;
+      the summary line always shows the file count so it's clear files are
+      attached even collapsed.
+    - **Problem 2, a real backend bug, not a frontend one:** the frontend's
+      `handleBulkDelete()` already fires every delete via `Promise.all` -
+      genuinely concurrent from the browser's side. The actual
+      serialization is server-side: `documents_service.py::delete_document()`
+      calls three blocking, synchronous SDK calls directly inside an
+      `async def` with no `asyncio.to_thread()` wrapper - `PineconeClient.
+      delete()`/`ChromaDBClient.delete()` (plain `def`, not `async def`)
+      and `delete_uploaded_object()` (a synchronous `boto3` S3 call). Each
+      one blocks the single asyncio event loop for its full network
+      round-trip, so N concurrent HTTP delete requests still execute one
+      at a time server-side regardless of the frontend's concurrency -
+      this is the actual 10-15s. (`answer_cache().clear_all()` is already
+      genuinely async/non-blocking via `redis.asyncio`, so it doesn't
+      contribute to this - flagged as separately wasteful, doing a full
+      cache scan once per document instead of once per batch, but not a
+      blocking-event-loop bug like the other two.) **Fix:** wrap the
+      Pinecone/Chroma `.delete()` call and `delete_uploaded_object()` in
+      `asyncio.to_thread()` - same established pattern already used in
+      `conversation_store.py`/`feedback_store.py`/`mcp_registry_client.py`
+      for exactly this reason, not a new pattern invented here.
+    - **Out of scope:** de-duplicating the N redundant `clear_all()` calls
+      across one bulk-delete batch into a single call - flagged as a minor
+      efficiency note, not the reported symptom (it doesn't block the
+      event loop, so it doesn't explain the 10-15s). Any other document
+      route's sync-call-in-async pattern beyond `delete_document()` -
+      not audited here, scoped to the reported symptom only.

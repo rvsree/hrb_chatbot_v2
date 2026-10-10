@@ -1,5 +1,6 @@
 """Saves uploaded files to disk and records their metadata - rejections are data, not raised."""
 
+import asyncio
 import json
 import shutil
 import uuid
@@ -523,7 +524,15 @@ async def delete_document(document_id: str, deleted_by: str | None = None) -> di
     if chunk_ids:
         vector_store = gateway.vector_store(provider=document.get("vector_db"))
         # LlamaIndex indexing prefixes Pinecone ids - storage_chunk_ids() is a no-op for Chroma, real for Pinecone.
-        vector_store.delete(
+        # Phase 139: vector_store.delete() is a plain synchronous SDK call
+        # (Pinecone/Chroma, not async) - calling it directly here blocked
+        # the whole event loop for its network round-trip, serializing a
+        # bulk delete's concurrent requests even though the frontend
+        # already fires them with Promise.all. Same asyncio.to_thread()
+        # pattern conversation_store.py/feedback_store.py already use for
+        # this exact reason.
+        await asyncio.to_thread(
+            vector_store.delete,
             collection_name=COLLECTION_NAME,
             ids=storage_chunk_ids(vector_store.PROVIDER_NAME, document_id, chunk_ids),
         )
@@ -534,7 +543,9 @@ async def delete_document(document_id: str, deleted_by: str | None = None) -> di
     document_directory = UPLOAD_DIRECTORY / document_id
     shutil.rmtree(document_directory, ignore_errors=True)
 
-    _delete_s3_object_best_effort(document_id, document["filename"])
+    # Phase 139: delete_uploaded_object() is a synchronous boto3 S3 call -
+    # same event-loop-blocking issue as the vector delete above.
+    await asyncio.to_thread(_delete_s3_object_best_effort, document_id, document["filename"])
     await _clear_answer_cache_best_effort()
 
     logger.info("Deleted document %s (%r) - %d chunk(s) removed", document_id, document["filename"], len(chunk_ids))
