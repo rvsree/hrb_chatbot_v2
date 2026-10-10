@@ -10851,7 +10851,7 @@ Explicitly deferred to a later, separate wave - not part of the above:
     parsing/chunking/embedding/indexing, 43 chunks written, `status:
     reindexed` returned. No stuck document left behind.
 
-- [ ] **Phase 136 — User-directed: "Chat GenAI Workflow" - ad-hoc document
+- [x] **Phase 136 — User-directed: "Chat GenAI Workflow" - ad-hoc document
   Q&A attached directly in the chat composer, deliberately NOT reusing the
   S3/vector-store architecture.**
   - **Spec:** full design doc, architecture diagram, and every decision's
@@ -10925,6 +10925,37 @@ Explicitly deferred to a later, separate wave - not part of the above:
       (including all 3 roles allowed, malformed JSON → 422 not 500,
       file-size limit). Full suite: 479 passed, 6 deselected, 0 new
       bandit findings project-wide beyond the one fixed above.
-    - **Not done yet, next:** the frontend half (attach-file UI in the
-      chat composer, the lightweight ad-hoc Explainability view) - see
-      this same phase's entry continued below once that lands.
+  - **Frontend built, verified via `tsc --noEmit`/`oxlint`/`npm run build`
+    (no browser automation tool available this session - real interactive
+    browser testing not performed, flagged rather than assumed):**
+    `ChatPage.tsx` gained an attach-file control (paperclip icon) in the
+    composer - up to 3 files, `.pdf`/`.docx`/`.csv`, 10MB each, mirroring
+    `models/adhoc_chat.py`'s real limits exactly, with visible rejections
+    (no silent drops). Attaching a file makes `handleSend()` call the new
+    `askAdhocDocumentChat()` instead of the mode-based branching,
+    regardless of which pipeline is selected - the dropdown's displayed
+    value is untouched, per the explicit "stays on GenAI RAG" instruction.
+    An optional "email the answer to" field threads `recipient_email`
+    through. New `ChatMessage.adhoc` field + a separate `AdhocExplainability`
+    component in `ExplainabilityModal.tsx` - files read, latency/tokens,
+    email-sent confirmation; none of the vector-store-oriented sections
+    (Knowledge Sources/Citations/LLM Context chunk attribution) render for
+    an ad-hoc message, since none of that applies.
+  - **Deployment status:** backend committed + pushed to
+    `feature-hrb-chatbot-subdomain`, included in open PR #21 into
+    `develop` - **not yet live in production** (the PR merge itself was
+    blocked by a safety classifier, needs the user's own approval/click,
+    same as Phases 127-135 in that same PR). Frontend **is** live
+    (`hrb-chatbot-ui.rvsree.dev`, deployed same as the rest of this
+    session's frontend work) - deployed anyway despite the backend not
+    being live yet, a deliberate call: attaching a file is a new, opt-in
+    code path, so deploying the frontend early doesn't touch or risk any
+    existing functionality (genai-rag/single-agentic-rag/multi-agentic-rag
+    chat all work completely unchanged); a user who tries the new attach-
+    file feature before the backend PR is merged will see a real,
+    handled error (the existing `ApiRequestError`/catch path), not a
+    silent failure or a broken page. **Before the email tool can actually
+    send anything in production**, two real AWS steps remain, neither
+    done this session: adding `SES_SENDER_EMAIL` as a new App Runner
+    environment variable, and verifying that sender identity in the SES
+    console (sandbox mode default) - flagged, not done silently.
