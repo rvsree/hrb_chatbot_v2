@@ -10850,3 +10850,81 @@ Explicitly deferred to a later, separate wave - not part of the above:
     Invalid argument: 's3://...'"`) - real S3 download, real
     parsing/chunking/embedding/indexing, 43 chunks written, `status:
     reindexed` returned. No stuck document left behind.
+
+- [ ] **Phase 136 — User-directed: "Chat GenAI Workflow" - ad-hoc document
+  Q&A attached directly in the chat composer, deliberately NOT reusing the
+  S3/vector-store architecture.**
+  - **Spec:** full design doc, architecture diagram, and every decision's
+    rationale live in `docs/dev-reference/genai_chat_workflow.md` (+ its
+    HTML companion, `genai-chat-workflow-architecture.html`), written
+    before implementation per explicit instruction - not duplicated here.
+    Short version: user attaches up to 3 files (PDF/Word/CSV) + a question
+    in one multipart request; a new ReAct agent (LLM tool calls only - no
+    vector DB/MCP/web-search tools exist in it) reads the attached files
+    via a `ReadDocument` tool and answers; nothing is persisted (no S3
+    object, no document row, no vector write); the pipeline dropdown stays
+    on "GenAI RAG"; an optional `SendEmailWithAnswer` tool (AWS SES via
+    `boto3`, already a dependency) emails the answer.
+    - **Decisions made without waiting for approval** (full rationale in
+      the `.md`): DOCX extraction via stdlib `zipfile`+`ElementTree`
+      instead of adding `python-docx` (avoids a new-library approval
+      while the user was away - flagged as a future upgrade, not a
+      permanent choice); open to all 3 roles, not HR_SUPPORT-only;
+      `check_input()`/`check_output()` reused as-is; ~12k char/file
+      truncation cap; stateless across turns (re-attach each message).
+    - **Data/API contracts:** new `POST /v1/adhoc-document-chat/query`
+      (multipart: `user_profile` JSON field, `question`, optional
+      `recipient_email`, up to 3 `files`). New, deliberately small
+      response shape - no `vector_db`/`search_strategy`/citations fields.
+      See the `.md` for the exact shape.
+    - **Out of scope this phase:** persisting ad-hoc conversations across
+      a reload; a general-purpose Word parser (tables/headers/footers);
+      any file type beyond PDF/DOCX/CSV; a stricter rate limit specific
+      to this endpoint (reuses the existing one as-is).
+    - **Open questions:** none blocking - SES needs a real one-time AWS
+      console step (verifying a sending identity - new accounts start in
+      sandbox mode) before email actually sends to an arbitrary
+      recipient; flagged in the design doc, not a code decision.
+  - **Backend built and verified:**
+    - New: `ai/doc_processing/adhoc_extraction.py` (PDF/DOCX/CSV
+      extraction, 12k-char/file truncation), `common/clients/email_client/
+      ses_client.py` (plain-function SES wrapper), `ai/agents/
+      workflow_agents/adhoc_document_agent.py` (the ReAct loop, 2 tools),
+      `models/adhoc_chat.py`, `api/adhoc_chat/adhoc_document_chat.py` -
+      `POST /v1/adhoc-document-chat/query`, registered in `main.py`.
+    - **A real Windows-only bug found and fixed during live
+      verification, not assumed safe:** `tempfile.NamedTemporaryFile
+      (delete=True)` holds an exclusive lock on Windows while open - pypdf's
+      own `open(file_path, "rb")` call right after failed with
+      `PermissionError` every time. Fixed with `delete=False` + an explicit
+      `os.remove()` in a `finally` block (close the handle before pypdf
+      opens it, delete only after pypdf is done).
+    - **A real security finding, fixed, not suppressed blind:** bandit
+      (`B314`, MEDIUM - would have blocked CI) flagged
+      `xml.etree.ElementTree.parse()`/`fromstring()` on this module's DOCX
+      path as an XXE/entity-expansion risk - correctly, since this content
+      is genuinely untrusted (any signed-in role can upload an arbitrary
+      `.docx`). Fixed with a zero-dependency guard
+      (`_reject_xml_entity_declarations()` - rejects any `document.xml`
+      containing a `DOCTYPE`/`ENTITY` declaration, which a real Word
+      document never legitimately has) rather than adding `defusedxml`
+      (a new-library approval the user wasn't available to give), with a
+      documented `# nosec B314` on the remaining call once the real
+      mitigation was in place right above it - not a blind suppression.
+      New test proves a crafted DOCTYPE payload is rejected, not parsed.
+    - **Full live verification, real OpenAI calls, before writing any
+      fakes:** a real PDF question ("How many weeks of parental leave?")
+      correctly called `ReadDocument`, read the real file, answered "16
+      weeks" (matching the source document); a real CSV question answered
+      correctly and the **output guardrail genuinely masked a name**
+      ("Bob" → "`<PERSON>`") - confirming it's actually wired in, not just
+      present in the code. Invalid file type and >3-files both correctly
+      rejected with `422`/`INVALID_FILE_TYPE` before reaching the agent.
+    - Tests (all faked - no real API calls, matching this project's
+      convention): 5 extraction, 3 SES client, 7 agent loop, 8 route-level
+      (including all 3 roles allowed, malformed JSON → 422 not 500,
+      file-size limit). Full suite: 479 passed, 6 deselected, 0 new
+      bandit findings project-wide beyond the one fixed above.
+    - **Not done yet, next:** the frontend half (attach-file UI in the
+      chat composer, the lightweight ad-hoc Explainability view) - see
+      this same phase's entry continued below once that lands.
