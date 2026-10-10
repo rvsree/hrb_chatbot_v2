@@ -10959,3 +10959,150 @@ Explicitly deferred to a later, separate wave - not part of the above:
     done this session: adding `SES_SENDER_EMAIL` as a new App Runner
     environment variable, and verifying that sender identity in the SES
     console (sandbox mode default) - flagged, not done silently.
+
+- [x] **Phase 137 — User-reported bug: 3 documents permanently stuck
+  "Downloading" in production AWS; local RAG retrieval erroring; adhoc
+  document chat 404s in AWS while working locally.**
+  - **Spec:**
+    - **Root cause 1 (confirmed via CloudWatch, not assumed):** the
+      `hrb-chatbot-index-document` Lambda's cold-start import chain
+      (chromadb + llama-index + langchain/langgraph + nemoguardrails/
+      presidio/spaCy) was landing at 9999-10000ms - AWS hard-caps the
+      Lambda INIT phase at 10 seconds regardless of the function's own
+      configured `Timeout`, not adjustable. All 3 stuck documents'
+      `INIT_REPORT` lines show `Status: timeout` at exactly that boundary.
+      SQS retried 3x then parked all 3 in `hrb-chatbot-ingest-dlq`.
+      **Fix:** bumped the function's memory 1024MB -> 3008MB (proportionally
+      more CPU, applied live via `update-function-configuration`), then
+      redrove the 3 DLQ messages back onto the main queue via
+      `sqs:StartMessageMoveTask`.
+    - **Root cause 2 (confirmed via `git log` + `aws apprunner
+      describe-service`):** the production App Runner service's deployed
+      image (`hrb-chatbot:latest`) was last updated 2026-09-07 - over a
+      month before Phases 127-136 were committed. None of that work,
+      including the entire `/v1/adhoc-document-chat/query` route added in
+      Phase 136, has ever actually been deployed to the backend App Runner
+      service, despite PR #21 existing and the Lambda/`hrb_lms_mcp` having
+      been redeployed separately. This is why the adhoc-chat composer
+      produces a real 404 in the hosted UI while working locally - the
+      route genuinely does not exist in the running container. **Fix:**
+      rebuild the Docker image from current `feature-hrb-chatbot-subdomain`
+      HEAD, push to ECR, trigger a fresh App Runner deployment.
+    - **Root cause 3, a real latent bug found during this investigation,
+      not previously known (see `common/clients/db_client/db_gateway.py`):**
+      `vector_store(provider)`/`metadata_store(provider)` let a per-request
+      value override the environment's configured backend down to local
+      `chromadb`/`sqlite` - which are per-instance local-disk stores, never
+      shared across App Runner's multiple instances and never reachable by
+      the separate Lambda ingestion worker at all. In production this is
+      never a legitimate choice, only a footgun (a request or default that
+      resolves to chromadb/sqlite there silently reads/writes data nothing
+      else can see). **Fix:** add `get_app_environment()` to `settings.py`;
+      `db_gateway.py`'s two dispatch methods raise a clear, typed error
+      instead of returning the local client when
+      `APP_ENVIRONMENT=="production"` and the resolved provider is
+      CHROMADB/SQLITE. Local/dev/test behavior is unchanged (still defaults
+      to chromadb/sqlite there, matching this project's whole local-first
+      testing convention). New `error_codes.LOCAL_STORE_DISABLED_IN_PRODUCTION`.
+    - **Root cause 4, found chasing why `/health` reported chromadb/sqlite
+      despite correct production env vars - a real bug, not an artifact of
+      the stale image:** `api/dependencies.py`'s `VECTOR_PROVIDER_QUERY`/
+      `METADATA_PROVIDER_QUERY` hardcode `default=VectorDB.CHROMADB`/
+      `MetadataStore.SQLITE` with descriptions literally claiming "(the
+      active store)" - stale from whenever chromadb/sqlite genuinely were
+      the only defaults, never updated once production switched to
+      pinecone/postgres via env vars. A bare `GET /health` (what any real
+      uptime monitor calls) has therefore always checked the *wrong*
+      backend in production - validating a store nothing reads or writes,
+      while never checking the one that matters, unless a caller remembers
+      to pass `?vector_provider=pinecone&metadata_provider=postgres`
+      explicitly every time. **Fix:** both defaults now resolve from
+      `get_active_vector_db()`/the `RAG_METADATA_STORE` setting at import
+      time (same source of truth every other dispatch point already uses),
+      so a bare `/health` call reflects whatever is actually active per
+      environment.
+    - **Out of scope:** a general audit of every other possible AWS/local
+      config drift - flagged as a standing risk (an App Runner image
+      silently going stale again, as happened here) rather than solved
+      structurally in this phase.
+  - **Built and verified (real AWS actions, not a local-only phase):**
+    Lambda memory 1024MB -> 3008MB (live, confirmed `LastUpdateStatus:
+    Successful`); 3 DLQ messages redriven via `sqs:StartMessageMoveTask`.
+    **A second real bug found mid-fix:** the first attempt at rebuilding
+    both container images reported exit code 0 but never actually ran -
+    Docker Desktop wasn't running locally, and the build command was
+    piped through `tail`, which silently swallowed the real (non-zero)
+    `docker buildx build` failure behind `tail`'s own successful exit
+    code. Caught by checking the ECR image's actual `imagePushedAt`
+    timestamp after the "successful" build instead of trusting the exit
+    code - it hadn't moved. Started Docker Desktop, rebuilt both images
+    for real (confirmed via new digests + fresh push timestamps), pushed
+    to ECR, redeployed both App Runner (`start-deployment`) and the
+    Lambda (`update-function-code`). **Live verification, no fakes:**
+    `GET /health` on the hosted backend now reports `pinecone`/`postgres`
+    (previously `chromadb`/`sqlite` despite correct env vars - Root cause
+    4's fix confirmed live); `POST /v1/adhoc-document-chat/query` against
+    the hosted backend with a real PDF returned a real, correctly-grounded
+    answer (previously a 404); all 3 originally-stuck documents manually
+    re-invoked through the rebuilt Lambda and confirmed `"status":
+    "indexed"` via the real `/documents` list endpoint (9/9 documents
+    indexed, 0 stuck) - the stale-image root cause also explains why their
+    exception text was never visible in CloudWatch despite `exc_info=True`
+    being correctly set in the source the whole time.
+
+- [x] **Phase 138 — User-directed: content-safety/compliance guardrails on
+  ad-hoc document chat uploads, and a real pre-send exfiltration gap found
+  while scoping it.**
+  - **Spec:**
+    - **Problem 1:** Phase 136's `/v1/adhoc-document-chat/query` runs
+      `check_input()` on the typed question only - the uploaded files'
+      extracted text goes straight into the agent's context with zero
+      content-safety screening, unlike this project's position on every
+      other untrusted-input path.
+    - **Problem 2, a real security gap found reading `adhoc_document_agent.py`
+      while scoping Problem 1, not something the user reported directly:**
+      the `SendEmailWithAnswer` tool calls `send_email()` with the agent's
+      raw generated text immediately, inside the tool-calling loop. The
+      route's own `check_output()` call only happens *after* `run_agent()`
+      returns, on the final HTTP response - meaning an email can already be
+      sent, unmasked, before any output guardrail ever sees it. A user
+      could upload a document containing PII and ask the agent to email a
+      summary to an arbitrary address, and the existing PII-masking rail
+      would never get a chance to run on that outbound email body at all.
+    - **Approach (both fixes reuse the existing, already-approved NeMo
+      Guardrails pipeline - no new library):**
+      1. In `api/adhoc_chat/adhoc_document_chat.py`, after extracting each
+         file's text and before building `file_texts`, run it through the
+         same `check_input()` used for the question. A
+         `GuardrailBlockedError` on any file rejects the whole request with
+         422/`INPUT_GUARDRAIL_BLOCKED` (reusing the existing code, not a new
+         one), naming which file triggered it. The masked/sanitized text
+         `check_input()` returns is what actually goes into `file_texts`,
+         same precedent as the question path.
+      2. In `ai/agents/workflow_agents/adhoc_document_agent.py`'s
+         `SendEmailWithAnswer` branch, `await check_output(question,
+         answer_text)` and send *that* result, never the raw tool-call
+         argument. `run_agent()` already has `question` in scope - no new
+         parameter needed.
+    - **Honest scope note:** this reuses NeMo Guardrails' existing
+      jailbreak/injection/PII-masking rail categories - it is not a
+      bespoke "legal risk" or "compliance document" classifier. Framed that
+      way to the user rather than overclaiming broader coverage.
+    - **Out of scope:** the equivalent gap on the main S3/KB document
+      upload pipeline (`ingest_document.py`) - flagged previously as
+      needing its own scoping, not re-opened here since this phase is
+      specifically about the ad-hoc chat path the user is currently
+      testing. A `recipient_email` allowlist/domain restriction - not
+      requested, would need a product decision on what's allowed.
+  - **Built and verified:** both fixes implemented as specced. New tests:
+    a file whose extracted text trips `check_input()` is rejected 422/
+    `INPUT_GUARDRAIL_BLOCKED` naming the file; the `SendEmailWithAnswer`
+    tool test now asserts the text actually passed to `send_email()` is
+    the `check_output()`-masked version, not the agent's raw tool-call
+    argument (a fake masking function swaps a literal SSN for `<SSN>` and
+    the test asserts the captured email body reflects that, not the
+    original). Full suite: 487 passed, 6 deselected, 0 regressions.
+    Bandit: 0 new findings (2 pre-existing, unrelated findings in untouched
+    files - flagged, not fixed this phase). Deployed to production as part
+    of this phase's combined redeploy (see Phase 137's own build/deploy
+    note - same two images).

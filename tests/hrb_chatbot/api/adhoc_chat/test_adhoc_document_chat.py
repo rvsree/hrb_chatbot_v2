@@ -117,6 +117,24 @@ def test_all_three_roles_are_allowed(monkeypatch):
         assert response.status_code == 200, f"role {role} was rejected"
 
 
+def test_a_file_whose_content_trips_the_input_guardrail_is_rejected_with_422(monkeypatch):
+    from src.hrb_chatbot.ai.pre_processing.guardrails_input import GuardrailBlockedError
+
+    async def _blocking_check_input(query):
+        if "DANGEROUS" in query:
+            raise GuardrailBlockedError("jailbreak attempt detected")
+        return query
+
+    _patch_guardrails_and_agent(monkeypatch)
+    monkeypatch.setattr(adhoc_document_chat, "check_input", _blocking_check_input)
+
+    response = _post(files=[("files", ("bad.csv", b"DANGEROUS,content\n1,2", "text/csv"))])
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "INPUT_GUARDRAIL_BLOCKED"
+    assert "bad.csv" in response.json()["error"]
+
+
 def test_email_sent_to_is_surfaced_when_the_agent_actually_sent_one(monkeypatch):
     _patch_guardrails_and_agent(
         monkeypatch,

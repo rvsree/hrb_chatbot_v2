@@ -10,6 +10,7 @@ import time
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from src.hrb_chatbot.ai.agents._llm_helpers import AGENT_LLM_TIMEOUT_SECONDS, build_agent_llm
+from src.hrb_chatbot.ai.rag_pipeline.response_generation.guardrails_output import check_output
 from src.hrb_chatbot.common.clients.email_client.ses_client import send_email
 from src.hrb_chatbot.common.logging.call_logger import log_backend_call
 from src.hrb_chatbot.common.logging.logger import get_logger
@@ -135,7 +136,13 @@ async def run_agent(question: str, file_texts: dict[str, str]) -> dict:
             elif tool_name == "SendEmailWithAnswer":
                 recipient = tool_args.get("recipient_email", "")
                 answer_text = tool_args.get("answer", "")
-                result = send_email(recipient, "Your answer from HR Benefits Chat", answer_text)
+                # Phase 138: the route's own check_output() only runs on the
+                # final HTTP response, after run_agent() returns - too late
+                # to stop this tool from already having emailed raw,
+                # unmasked text. Run the same output rail here, before the
+                # email actually goes out.
+                safe_answer_text = await check_output(question, answer_text)
+                result = send_email(recipient, "Your answer from HR Benefits Chat", safe_answer_text)
                 tool_output = result["message"]
                 if result["sent"]:
                     email_sent_to = recipient

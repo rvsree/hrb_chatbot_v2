@@ -70,9 +70,22 @@ async def adhoc_document_chat(
                 code=error_codes.FILE_TOO_LARGE,
             )
         try:
-            file_texts[file.filename] = extract_text(file.filename, content)
+            extracted_text = extract_text(file.filename, content)
         except ValueError as error:
             return json_error(422, str(error), code=error_codes.INVALID_FILE_TYPE)
+
+        # Phase 138: a document's content is just as untrusted as typed
+        # input - reuse the same input rails (jailbreak/injection/PII
+        # categories) rather than letting file content skip screening
+        # entirely, which was the gap before this phase.
+        try:
+            file_texts[file.filename] = await check_input(extracted_text)
+        except GuardrailBlockedError as error:
+            return json_error(
+                422,
+                f"{file.filename!r} was rejected by a safety check: {error}",
+                code=error_codes.INPUT_GUARDRAIL_BLOCKED,
+            )
 
     try:
         checked_question = await check_input(question)

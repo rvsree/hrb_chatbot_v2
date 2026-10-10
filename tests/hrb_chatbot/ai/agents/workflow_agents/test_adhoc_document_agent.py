@@ -98,6 +98,40 @@ async def test_send_email_tool_sets_email_sent_to_on_success(monkeypatch):
     assert result["email_sent_to"] == "someone@example.com"
 
 
+async def test_send_email_tool_sends_the_output_guardrail_checked_text_not_the_raw_text(monkeypatch):
+    sent_bodies = []
+
+    def _capturing_send_email(recipient, subject, body):
+        sent_bodies.append(body)
+        return {"sent": True, "message": f"Email sent to {recipient}."}
+
+    async def _masking_check_output(query, answer):
+        return answer.replace("555-12-3456", "<SSN>")
+
+    monkeypatch.setattr(adhoc_document_agent, "send_email", _capturing_send_email)
+    monkeypatch.setattr(adhoc_document_agent, "check_output", _masking_check_output)
+    _patch_llm(
+        monkeypatch,
+        [
+            FakeResponse(
+                tool_calls=[
+                    {
+                        "name": "SendEmailWithAnswer",
+                        "args": {"recipient_email": "someone@example.com", "answer": "SSN on file: 555-12-3456"},
+                        "id": "call-1",
+                    }
+                ]
+            ),
+            FakeResponse(content="Done - I've emailed the answer."),
+        ],
+    )
+
+    result = await adhoc_document_agent.run_agent("email me the answer", {"a.pdf": "text"})
+
+    assert result["email_sent_to"] == "someone@example.com"
+    assert sent_bodies == ["SSN on file: <SSN>"]
+
+
 async def test_send_email_tool_failure_leaves_email_sent_to_none(monkeypatch):
     monkeypatch.setattr(
         adhoc_document_agent, "send_email", lambda recipient, subject, body: {"sent": False, "message": "sender not verified"}
