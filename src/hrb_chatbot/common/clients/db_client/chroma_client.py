@@ -130,6 +130,16 @@ class ChromaDBClient(BaseVectorDBClient):
         ):
             collection.update(ids=ids, metadatas=metadatas)
 
+    def get_all_chunks(self, collection_name: str) -> list[dict]:
+        collection = self.get_collection(collection_name)
+        with log_backend_call(logger, "chromadb", "vector.get_all_chunks", collection=collection_name):
+            result = collection.get(include=["documents", "metadatas"])
+
+        return [
+            {"id": chunk_id, "text": document or "", "metadata": metadata or {}}
+            for chunk_id, document, metadata in zip(result["ids"], result["documents"], result["metadatas"], strict=True)
+        ]
+
     def health_check(self) -> dict:
         """Report whether this client is usable - builds the real client and calls list_collections()."""
         result = {"provider": self.PROVIDER_NAME}

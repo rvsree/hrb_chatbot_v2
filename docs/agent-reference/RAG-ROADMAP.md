@@ -7259,6 +7259,52 @@ Explicitly deferred to a later, separate wave - not part of the above:
     just that the URL generates), the Lambda applying every override
     correctly (above), and a live `422`/`INVALID_FILE_TYPE` check for a
     non-PDF content type.
+  - **Frontend wired up, 2026-10-09 (`hrb_chatbot_ui`) - this endpoint had
+    no real client until now, over a month after it went live:**
+    `UploadPage.tsx`'s main upload button now calls this endpoint instead
+    of the synchronous multipart one, `PUT`s straight to the returned
+    `upload_url`, then polls `GET /documents/{id}` (new `getDocument()` in
+    `client.ts`) until `indexed`/`failed`, showing live per-file status
+    (`requesting_url` → `uploading` → `pending_upload` → `chunking`/
+    `embedding` → `indexed`, reusing `DocumentsPage.tsx`'s existing
+    `.status-badge` CSS classes, which already had rules for these exact
+    backend status strings waiting unused). Sequential, not parallel,
+    given no Lambda reserved-concurrency cap exists. `DocumentsPage.tsx`
+    gained a "Source" column - an AWS console deep link for any document
+    with an `s3://` `file_path` (the bucket blocks public access, so a
+    plain object URL would 403; the console link is what's actually
+    openable for this project's own admin), falling back to a plain
+    "local disk" label for documents still on the old synchronous path.
+    User-confirmed decision: switch the default Upload page over
+    entirely, not add S3 as a second option - documents already indexed
+    via the old path are unaffected, `DocumentsPage.tsx`'s own "replace"
+    action still uses the old synchronous endpoint (not changed this
+    pass, flagged as the natural next step, not done silently).
+    `tsc --noEmit`/`oxlint` clean.
+  - **Real bug found and fixed, 2026-10-09: this claimed "no live
+    re-verification needed" above was wrong.** User reported "Document
+    Upload is not working after selecting multiple files" - traced to
+    both S3 buckets (`hrb-chatbot-kb-uploads-dev` AND the real production
+    `hrb-chatbot-kb-uploads`) having **no CORS configuration at all**
+    (`aws s3api get-bucket-cors` → `NoSuchCORSConfiguration` on both,
+    confirmed directly, not assumed). Every presigned `PUT` this frontend
+    change makes goes straight from the browser to S3 - a genuine
+    cross-origin request - and CORS is enforced by the *browser*, not S3
+    itself, so Phase 88/89's own "live" tests (`curl`, App Runner's STS
+    creds, a server-side script) could never have caught this: none of
+    them are a browser, none of them send an `Origin` header a preflight
+    would check. This is exactly why "the backend endpoint works" and
+    "the browser can actually call it" are different claims - confirmed
+    the gap with a real simulated preflight (`curl -X OPTIONS` with
+    `Origin`/`Access-Control-Request-Method` headers) before fixing, then
+    the same request again after, 403→200 with the right
+    `Access-Control-Allow-*` headers both times. Fixed: `aws s3api
+    put-bucket-cors` on both buckets - dev allows `PUT`/`Content-Type`
+    from `http://localhost:5173`/`5174`/`5175` (common Vite dev ports);
+    production allows the same from `https://hrb-chatbot-ui.rvsree.dev`
+    only. Real AWS infrastructure change, not a code change - flagged
+    here since it touches production, same as every other direct AWS CLI
+    change this project makes.
 
 - [x] **Phase 90 (done, verified live, 2026-10-06) — User-directed: local
   Lambda worker + CI/CD automation, so Phases 88-89 can be built/tested
@@ -9964,7 +10010,722 @@ Explicitly deferred to a later, separate wave - not part of the above:
     (confirmed additive-only diffs, nothing removed). Frontend build/lint
     clean, no new warnings.
 
-1. `GET /health?deep=true` → vector + metadata database checks healthy. **Done.**
+- [ ] **Phase 127 — User-directed: echo the actual `temperature` used back
+  on genai-rag's response, for Explainability's new "LLM Context" panel.**
+  - **Spec:**
+    - **Context:** part of a larger Explainability redesign (user-directed,
+      confirmed sequencing). Checked first: `RagQueryRequest` already
+      accepts `temperature` via `GenerationOptions` and `pipeline.py`
+      already computes `resolved_temperature` and passes it into
+      `generate_answer()` - but never writes it back into the result dict,
+      so the actual value used never reaches the response. Confirmed
+      genai-rag-only: single-agentic-rag/multi-agentic-rag hardcode
+      `temperature=0` in `_llm_helpers.py`'s `build_agent_llm()`, not a
+      user-configurable request field at all for either.
+    - **Data/API contracts:** `ExplainabilityInfo` (shared by all 3
+      response models, `models/rag.py`) gains `temperature: float | None`
+      - genai-rag always populates it; single/multi-agentic-rag leave it
+        `null` (honest - their temperature isn't user-configurable, so
+        reporting the hardcoded `0` as if it were a real setting would be
+        misleading, same reasoning `routed_to` already uses this shared
+        model for a genai-rag-only field).
+    - **User-visible behavior:** Explainability can now show the real
+      temperature a genai-rag answer was generated with, not just what
+      was requested (defaults/clamping could otherwise make them differ).
+    - **Design:** `pipeline.py`'s `generate()` closure adds
+      `"temperature": resolved_temperature` to its returned dict (both the
+      normal path and anywhere else `result` is built);
+      `retrieve_document.py`'s route reads `result.get("temperature")`
+      into `ExplainabilityInfo`.
+    - **Failure modes:** N/A - a plain value add, no new failure path.
+    - **Retrieval quality criteria:** N/A.
+    - **Reusability requirement:** none - genai-rag-specific value on an
+      already-shared model, same precedent as `routed_to`.
+    - **Testing plan:** a test confirming `answer_query()`'s result
+      includes the real `resolved_temperature` (not the raw request
+      value, in case of future clamping/defaulting logic), and a route
+      test confirming it reaches `ExplainabilityInfo.temperature`.
+    - **Out of scope:** adding temperature support to single/multi-agentic-
+      rag (neither has user-configurable temperature today - a separate,
+      bigger decision, not assumed here).
+    - **Open questions:** none.
+  - **Built and verified:** `ExplainabilityInfo.temperature` added;
+    `pipeline.py`'s `generate()` now returns `resolved_temperature`, the
+    MCP fast-path returns `null` (no LLM call happened). 2 new tests
+    (pipeline-level + route-level) - full suite 414 passed. All 3 contract
+    snapshots regenerated (additive-only, confirmed).
+
+- [ ] **Phase 128 — User-directed: expose the active embedding model via
+  `/health`, read-only display in the UI Settings panel.**
+  - **Spec:**
+    - **Context:** part of the Settings-panel improvement list. Checked
+      first: `embedding_model` is already stored per-document and already
+      returned by `GET /documents`/`GET /documents/{id}` - but the
+      Settings panel isn't document-specific, it's the chat-session-level
+      config area, so showing "the configured embedding model new
+      queries/documents will use" needs a different, document-independent
+      source. Confirmed `OpenAIEmbeddingClient.get_configuration()`
+      already exists, already returns `{base_url, model, organization,
+      project}` with no secrets, and makes no network call (just reads
+      stored attributes) - nothing to build there, just needed wiring.
+    - **Data/API contracts:** `GET /health`'s response (a plain dict,
+      `health_checks.py`'s `check_all_backend_services()`) gains a new
+      top-level `embedding_model: str` key, read from
+      `get_client_gateway().openai_embedding().get_configuration()
+      ["model"]` - not wrapped as a `{status, message}` check like the
+      other 3 entries, since there's no real call to make or fail; it's a
+      static config value.
+    - **User-visible behavior:** the Settings panel shows a read-only
+      "Embedding Model" field (e.g. `text-embedding-3-small`).
+    - **Design:** backend: one new field in `check_all_backend_services()`.
+      Frontend: `ChatPage.tsx` fetches `/health` once (or reuses an
+      existing app-load health check if one already runs - needs a quick
+      check before assuming a new fetch is required) and displays
+      `embedding_model` in the Settings section, genai-rag-scoped same as
+      Retrieval/Temperature (the only mode where this is directly
+      relevant today).
+    - **Failure modes:** `/health` unreachable - Settings panel shows
+      nothing for this field rather than blocking the rest of the UI.
+    - **Retrieval quality criteria:** N/A.
+    - **Reusability requirement:** none - reuses the existing client
+      method as-is.
+    - **Testing plan:** a test confirming `/health`'s response includes
+      `embedding_model` with the real configured value.
+    - **Out of scope:** the query-time mismatch guard (a separate,
+      larger, correctness-sensitive feature - needs its own phase, not
+      rushed alongside a display-only change).
+    - **Open questions:** none.
+  - **Built and verified:** `check_all_backend_services()` gains
+    `embedding_model`, read via the existing, no-network-call
+    `get_configuration()`. `FakeEmbeddingClient`/`FakeClientGateway` in
+    `tests/conftest.py` extended to support this (`get_configuration()`
+    added, `model` now settable). 1 new test - full suite 415 passed.
+
+- [ ] **Phase 129 — User-directed: change an already-indexed document's
+  chunking strategy without re-uploading its file.**
+  - **Spec:**
+    - **Context:** asked for a "change chunking strategy" control on
+      Manage Documents. Checked first whether Phase 125's `/reindex`
+      endpoint already covers this: it doesn't - it requires a *new* file
+      upload, and its content-hash check means re-submitting the *same*
+      file short-circuits to `"unchanged"` without ever re-chunking.
+      Settings-only reprocessing of the file already on disk is a
+      genuinely different operation, not something `/reindex` does today.
+    - **Data/API contracts:** new `POST .../documents/{document_id}
+      /rechunk` - plain JSON body (no file, no multipart - the file
+      already exists at the document's stored `file_path`), `{"user_profile":
+      ..., "chunk_info": {"chunking_strategy": ..., "chunk_size": ...,
+      "chunk_overlap": ...}}`. Response: reuses `DocumentUploadResult`
+      (same shape as `/reindex`, `status: "reindexed"`).
+    - **User-visible behavior:** HR_SUPPORT can change chunking strategy/
+      size/overlap for an existing document and have it re-chunk/re-embed/
+      re-index immediately, without needing the original PDF file again.
+    - **Design:** `documents_service.rechunk_document(document_id,
+      chunking_strategy, chunk_size, chunk_overlap) -> DocumentUploadResult
+      | None` - looks up the existing document (404 path if missing, same
+      as `/reindex`), calls the existing `_index_now()` helper directly
+      against the document's already-stored `file_path` (no file write,
+      no content-hash check - intentionally reprocessing the same bytes).
+      No `update_document_content()` call needed either - filename/size/
+      hash are unchanged. New route in `api/rag/ingest_document.py`,
+      HR_SUPPORT-gated, same pattern as `/reindex`.
+    - **Failure modes:** unknown `document_id` → `404`/`DOCUMENT_NOT_FOUND`.
+      Missing/corrupted local file (e.g. deleted out-of-band) → same
+      `"failed"` status path `_index_now()` already handles.
+    - **Retrieval quality criteria:** N/A - reuses `index_document()`
+      unchanged.
+    - **Reusability requirement:** `_index_now()` reused as-is, same as
+      `/reindex` already does - the only genuinely new code is the
+      file-path lookup + route wiring.
+    - **Testing plan:** route test confirming a chunking-strategy change
+      actually re-indexes (chunk_count/chunking_strategy changes in the
+      response) without requiring a file in the request; 404 on unknown id.
+    - **Out of scope:** changing the embedding model this way (a model
+      change needs real re-embedding + the Phase 128-adjacent mismatch
+      guard - separate, bigger decision, not assumed here).
+    - **Open questions:** none.
+  - **Built and verified:** `documents_service.rechunk_document()` added,
+    reusing `_index_now()` unchanged. New `POST .../documents/{id}/rechunk`
+    route, reusing `ReindexDocumentPayload` (identical shape, no new
+    model needed). 3 new tests - full suite 418 passed.
+
+- [ ] **Phase 130 — User-directed: genai-rag query decomposition - the
+  gap Phase 68 explicitly left open, reopened by user request after a
+  real failure (compound KB + MCP question answered only half-correctly).**
+  - **Spec:**
+    - **Context:** live failure: "Whether 401(k) employer contributions
+      immediately vested... how many days of PTO I have" - genai-rag
+      answered the 401k half correctly but said it had no PTO
+      information, because its MCP keyword check
+      (`is_leave_balance_query()`) didn't match this exact phrasing, and
+      even if it had, genai-rag's MCP routing is all-or-nothing (a match
+      skips retrieval+generation entirely) - a compound question can
+      never get both halves right today, regardless of keyword quality.
+      Traced this to a real, previously-recorded gap: CLAUDE.md's own
+      architecture section has always described genai-rag's pipeline as
+      "decompose -> retrieve -> generate," but `ai/pre_processing
+      /query_decompose.py` was never implemented (confirmed - 16 lines,
+      entirely a docstring). Phase 68 (2026-10-04) tested same-domain
+      decomposition for the *agentic* modes (Planner already handles it,
+      no separate component needed) and explicitly recorded genai-rag's
+      own case as "still genuinely open" - never picked back up until now,
+      by explicit user request, not silently reopened.
+    - **Data/API contracts:** no response shape change - decomposition is
+      entirely internal to `pipeline.py`'s `generate()` closure. `LatencyInfo`
+      (`models/rag.py`) gains `decomposition: float | None` alongside the
+      existing `retrieval`/`generation`/`eval` sub-timings.
+    - **User-visible behavior:** a genai-rag question with multiple
+      independent parts (same-KB-topic, or KB + MCP/live-data mixed) gets
+      a real answer to *each* part, merged into one response - not just
+      the first part the old single-shot logic happened to handle.
+    - **Design:**
+      1. `ai/pre_processing/query_decompose.py` becomes real:
+         `DecomposedQuery(BaseModel)` (`sub_questions: list[str]`),
+         `decompose(query: str) -> list[str]` - one structured-output LLM
+         call, exact same pattern as `planner_agent.plan()` (`build_agent_llm
+         ("OPENAI_DECOMPOSE_MODEL")` - new cheap-tier setting, same Phase 65
+         precedent; `include_raw=True` for token logging; never returns
+         empty - falls back to `[query]` unchanged on a parse failure or an
+         empty result, so a decomposition hiccup degrades to today's exact
+         behavior, never a crash or a lost question). New
+         `DECOMPOSE_SYSTEM_PROMPT` in `ai/prompts/agent_prompts.py`, matching
+         where every other agent prompt already lives.
+      2. `pipeline.py`'s `generate()` closure: calls `decompose()` first on
+         every call (not just ones that look compound - see Open questions
+         for why). For **every** sub-question returned (1 or more, no
+         special-casing by count): check `try_route_to_mcp()` first (reused
+         as-is), else `retrieve_chunks()` + `generate_answer()` (both reused
+         as-is). This uniform per-sub-question MCP check is a deliberate,
+         real side benefit: decomposition's LLM-paraphrased sub-question
+         ("What is my PTO balance?") can match the keyword list even when
+         the user's own raw phrasing didn't - partially closing the
+         phrasing-sensitivity gap from the live failure, without touching
+         the keyword list itself.
+      3. Merge: 1 sub-question - that sub-question's own answer, no merge
+         step, no extra LLM call (matches today's cost exactly, modulo the
+         one new decompose call). 2+ - reuse `reviewer_agent.review()`
+         directly (confirmed its only real dependency,
+         `build_context_from_agent_results()`, reads just `result['agent']`/
+         `result['result']` - genai-rag's sub-results fit that shape with no
+         adapter needed). Sources aggregated across every sub-question's
+         retrieval, same pattern `multi_agent_pipeline.py` already uses.
+      4. `llm_call_count`/token usage updated to reflect the real total
+         (1 decompose + N sub-question calls + 0-or-1 merge), not hardcoded.
+    - **Failure modes:** `decompose()` itself never raises (falls back to
+      `[query]`); a single sub-question's retrieve/generate failing doesn't
+      abort the others - same "answer what you can" principle the Reviewer
+      merge step already embodies for multi-agentic-rag.
+    - **Retrieval quality criteria:** no chunking/indexing change. Golden-
+      dataset regression check: re-run the existing 22 cases unchanged and
+      confirm scores don't regress - all 22 are single-topic questions
+      today, so each should decompose to exactly 1 sub-question and take
+      the no-merge path, but this needs confirming live, not assumed.
+    - **Reusability requirement:** `try_route_to_mcp()`, `retrieve_chunks()`,
+      `generate_answer()`, and `reviewer_agent.review()` all reused
+      unchanged - the only genuinely new code is `decompose()` itself and
+      the per-sub-question loop wiring it together.
+    - **Testing plan:** `decompose()` tested directly (compound query ->
+      2+ sub-questions, atomic query -> 1, parse failure -> falls back to
+      `[query]`), via a faked structured-output LLM, same pattern as
+      `test_planner_agent.py`. `generate()` tested for: an atomic question
+      behaves identically to pre-Phase-130 (1 decompose call + 1 retrieve/
+      generate, no merge); a compound KB-only question merges 2 real
+      answers; a compound KB+MCP question (the actual failure case) gets
+      both halves right; a 22-case golden-dataset regression run, live-
+      verified not just unit-tested.
+    - **Out of scope:** decomposition for single/multi-agentic-rag (multi-
+      agentic-rag's Planner already does this; single-agentic-rag's tool-
+      calling loop can already call multiple tools in one turn without a
+      separate decompose step - genai-rag is the only pipeline missing
+      this). Widening the MCP keyword list directly (superseded in spirit
+      by #2's per-sub-question re-check).
+    - **Open questions:** always-decompose (every genai-rag query pays one
+      extra LLM call, even simple ones) vs. a cheap heuristic gate first
+      (cents cheaper on average, adds a real chance of misclassifying a
+      genuinely compound question as atomic and skipping decomposition
+      silently). Chose always-decompose for this implementation - simpler,
+      no heuristic-accuracy risk, matches CLAUDE.md's stated fixed 3-step
+      pipeline literally - cost impact is real and should be watched, not
+      unmeasured.
+  - **Built and verified:** `query_decompose.py` implemented for real
+    (`decompose()`, `DecomposedQuery`), `pipeline.py`'s `generate()`
+    rewritten around a new `_answer_sub_question()` helper, merge via
+    `reviewer_agent.review()` reused unchanged. 17 new tests (7 for
+    `decompose()` itself, 3 integration tests in `test_pipeline.py`
+    including the exact live-failure case) + a new autouse fixture
+    faking `decompose()` across the whole file (it was making real,
+    uncounted OpenAI calls before the fixture existed - caught by the
+    test run itself going from instant to 35s). `LatencyInfo.decomposition`
+    added - all 3 contract snapshots regenerated (additive-only). Full
+    suite 427 passed.
+
+    **Live-verified against the real local backend, real local
+    `hrb_lms_mcp`**, the exact failing query from the bug report:
+    - First attempt still failed - traced live to the real cause:
+      decomposition correctly split the question, but its own LLM
+      paraphrase ("How many days of PTO do I have?") still didn't match
+      the MCP keyword list, same gap as the original phrasing. The
+      "side benefit" the spec predicted (decomposition's rewording
+      closing the phrasing gap) didn't happen on its own - confirmed
+      live, not assumed.
+    - Fixed by extending `DECOMPOSE_SYSTEM_PROMPT` to require an exact
+      canonical phrasing ("What is my leave balance?") for any live-data
+      sub-question - re-verified live: real MCP call fired
+      (`tool_name: get_leave_balance`, 937.8ms, `success: true`), real
+      answer returned ("you currently have 11 days available"), *and*
+      the 401k half stayed correct in the same response - both halves
+      right, exactly the reported failure, fixed.
+    - Also live-verified a plain single-topic question still works
+      unchanged (1 extra decompose call ~2.1s, same grounded answer as
+      before) - confirms the no-regression path for ordinary questions,
+      not just the compound case.
+
+- [x] **Phase 131 — User-directed: real Keyword (BM25) and Hybrid search
+  strategies, plus exposing MMR's fetch_k/lambda_mult - the Retrieval
+  dropdown has only ever had 2 of the requested 4 options.**
+  - **Spec:**
+    - **Context:** `SEARCH_STRATEGIES` (`retriever.py`) has only ever had
+      `similarity`/`mmr` - confirmed directly, no keyword/BM25/hybrid
+      exists anywhere in the codebase, not even a fake `$contains`
+      substring version. Blocked on one real thing: BM25 needs a new
+      dependency (`rank_bm25`), which per the user's own standing rule
+      can't be added without explicit sign-off - confirmed and approved
+      before this spec was written, not assumed.
+    - **Data/API contracts:** `common/enums.py`'s `SearchStrategy` gains
+      `KEYWORD = "keyword"` and `HYBRID = "hybrid"`. `models/rag.py`'s
+      `SearchOptions` gains `lambda_mult: float | None` (MMR's diversity
+      knob, 0=max diversity, 1=max relevance per LangChain's own
+      convention - not exposed at all today despite `search_mmr()`
+      already accepting `fetch_k`).
+    - **User-visible behavior:** the Retrieval dropdown gets 2 new real
+      options. Keyword does true BM25 ranking, not substring matching.
+      Hybrid merges BM25 + vector results via Reciprocal Rank Fusion.
+      MMR gains a real diversity control, not just `fetch_k`.
+    - **Design:**
+      1. New `BaseVectorDBClient.get_all_chunks(collection_name) ->
+         list[dict]` (`{"id", "text", "metadata"}` per chunk, no filtering
+         - `is_current` filtering happens in `retriever.py`, same "clients
+         never branch on provider-specific logic beyond their own API"
+         principle as every other client method). Chroma: `collection
+         .get()` with no filter, already returns everything. Pinecone: no
+         single "list everything" call exists - `index.list(namespace=...)`
+         (paginated ids) then `index.fetch(ids=..., namespace=...)` in
+         batches for metadata/text, reusing the existing `document`-key
+         convention `query()` already extracts from metadata.
+      2. New `ai/rag_pipeline/query_retrieval/bm25_search.py` -
+         `search_keyword(query, top_k, vector_db, extra_filter) ->
+         list[dict]`: fetch all chunks via `get_all_chunks()`, filter to
+         `is_current` in Python (not a backend filter - keeps
+         `get_all_chunks()` itself filter-free and simple), build a
+         `BM25Okapi` corpus fresh per call (plain `.lower().split()`
+         tokenizing - no NLTK/spaCy), score, return top_k. **Deliberately
+         rebuilt per query, not cached/persisted** - fine at this
+         project's real scale (6 documents today), flagged explicitly as
+         a scale limitation, not silently assumed to be free.
+         `search_hybrid(...)`: runs `search_keyword()` and
+         `search_similarity()` each fetching `top_k * 2`, merges via RRF
+         (`score = sum(1 / (60 + rank))` per result list, standard RRF
+         constant), returns top `top_k` by combined score.
+      3. `search_mmr()` gains `lambda_mult: float | None = None`, passed
+         through to `store.max_marginal_relevance_search(...,
+         lambda_mult=lambda_mult or 0.5)` (LangChain's own default,
+         preserved when not given). Threaded from `SearchOptions
+         .lambda_mult` through `RagQueryParams`/`retrieve_chunks()`.
+      4. `SEARCH_STRATEGIES` gains `"keyword": search_keyword, "hybrid":
+         search_hybrid`.
+    - **Failure modes:** `get_all_chunks()` failing (e.g. Pinecone
+      pagination error) - propagates as a real error, same as any other
+      retrieval failure today (no silent empty-result fallback that would
+      look like "no chunks matched" when it was actually a fetch error).
+    - **Retrieval quality criteria:** BM25/Hybrid tested against real
+      golden-dataset-style content (same KB text used elsewhere this
+      session), not synthetic strings - confirming real keyword matches
+      (e.g. "dental" literally appearing) actually rank near the top.
+    - **Reusability requirement:** `search_similarity()` reused as-is
+      inside `search_hybrid()`, not duplicated.
+    - **Testing plan:** `get_all_chunks()` tested against the existing
+      `EphemeralChromaVectorStore` test pattern already used in
+      `test_vector_indexer.py`. `search_keyword()`/`search_hybrid()`
+      tested with a small real-text corpus (not single-word toy strings)
+      confirming ranking makes sense. `lambda_mult` threading tested at
+      the `retrieve_chunks()` level (captures what was actually passed to
+      the store).
+    - **Out of scope:** BM25 respecting Self-Query's parsed metadata
+      filter (keyword/hybrid search the whole current corpus, unfiltered -
+      a real, named limitation, not silently dropped). A persistent/
+      cached BM25 index (same scale reasoning as #2 above - revisit if
+      the KB ever grows past a few dozen documents). Pinecone-specific
+      pagination performance tuning beyond "it works correctly."
+    - **Open questions:** none - `rank_bm25` approved before this spec.
+  - **Built and verified:**
+    - `rank-bm25==0.2.2` added to `requirements.txt`, installed, no new
+      transitive deps (numpy already present).
+    - `BaseVectorDBClient.get_all_chunks()` added as abstract; implemented
+      in both `ChromaDBClient` (`collection.get()`) and `PineconeClient`
+      (`index.list(namespace=...)` for paginated ids, `index.fetch(ids=...,
+      namespace=...)` in batches of 100 - both real SDK method signatures
+      confirmed via direct introspection before writing the code, not
+      guessed). Adding this abstract method broke every existing fake
+      `BaseVectorDBClient` subclass that pytest relies on
+      (`EphemeralChromaVectorStore` in `test_vector_indexer.py`,
+      `FakeVectorStore` in `tests/conftest.py`) - caught by running the
+      full suite immediately after, not assumed safe; both fakes now
+      implement it for real (`FakeVectorStore.get_all_chunks()` reads its
+      own in-memory dict, reused by the new BM25 tests).
+    - New `ai/rag_pipeline/query_retrieval/bm25_search.py`:
+      `search_keyword()` (BM25Okapi over `get_all_chunks()`, `is_current`
+      enforced the same way `CURRENT_CHUNKS_ONLY` does for the vector
+      strategies, scores `<= 0` dropped as the strategy's own relevance
+      bar) and `search_hybrid()` (`search_keyword()` + `search_similarity()`
+      each fetching `3x top_k`, merged via RRF, `k=60`). Went further than
+      this spec's own "out of scope" line: `extra_filter` (Self-Query's
+      parsed metadata filter) IS honored by both, via a small flat
+      equality/`$ne` matcher mirroring `conftest.py`'s `FakeVectorStore
+      ._matches_where` - cheap given that pattern already existed, so left
+      in rather than removed to match the original "unfiltered" scope
+      exactly. Flagging this as a deliberate scope change, not hiding it.
+    - Registering `"keyword"`/`"hybrid"` into `SEARCH_STRATEGIES` from
+      `bm25_search.py` created a real circular import with `retriever.py`
+      (which `bm25_search.py` needs, for `search_similarity()`) - resolved
+      by importing `search_similarity` lazily inside `search_hybrid()`
+      itself rather than at module top, confirmed working in both import
+      orders directly (not just the order the test file happened to use).
+    - `search_mmr()` gained `lambda_mult`, threaded end-to-end: `SearchOptions
+      .lambda_mult` → `RagQueryParams.lambda_mult` → `retrieve_chunks()` →
+      `search_mmr()` → `store.max_marginal_relevance_search()`, defaulting
+      to `0.5` (LangChain's own default) when not given. Also added to
+      `build_cache_key()`'s params so a different `lambda_mult` can't
+      silently hit a cached answer generated under a different one.
+    - `SearchStrategy.KEYWORD`/`HYBRID` added to `common/enums.py`.
+    - Tests: `test_chroma_client.py`/`test_pinecone_client.py` (new -
+      `get_all_chunks()` against a real tmp_path-backed Chroma client and a
+      fake Pinecone `Index` built to the confirmed real `list()`/`fetch()`
+      shapes, including a 150-id case proving `fetch()` batches past 100).
+      `test_bm25_search.py` (new - `search_keyword`/`search_hybrid`
+      against real multi-chunk text corpora; one early run hit BM25's own
+      idf-degenerates-to-0 edge case at exactly 2 documents, confirmed
+      directly against `rank_bm25`'s real `_calc_idf()` source rather than
+      guessed, fixed by padding every corpus with filler chunks). 3 new
+      `lambda_mult` tests in `test_retriever.py` (threaded through,
+      defaults to 0.5, ignored for non-mmr strategies without raising).
+      Full suite: 442 passed, 6 deselected, no regressions.
+    - Frontend (`hrb_chatbot_ui`): `types.ts`'s `SearchStrategy` gained
+      `"keyword"`/`"hybrid"` (its own comment claiming "no keyword/hybrid
+      backend exists" was stale - corrected). `ChatPage.tsx`'s
+      `SEARCH_STRATEGY_LABELS` now lists all 4; a `lambdaMult` control
+      (number input, 0-1) appears in the tuning bar only when `mmr` is
+      selected, threaded through `GenaiRagOptions` → `client.ts`'s
+      `askQuery()` → `search_options.lambda_mult`. `tsc --noEmit` clean.
+
+- [x] **Phase 132 — User-directed: "LLM Context" panel in Explainability -
+  what was actually sent to the LLM/MCP tools, genai-rag only for now.**
+  - **Spec:**
+    - **Context:** Explainability already shows Knowledge Sources/Latency/
+      Eval Scores/Citations, but never the actual prompt content sent to
+      the LLM - a real gap for understanding *why* an answer came out the
+      way it did. User confirmed scope directly: "full raw payload," not a
+      summarized view.
+    - **Data/API contracts:** `models/rag.py` gains `ChatHistoryMessage
+      {role, content}`, `McpToolCallDetail {tool_name, arguments, raw_result}`,
+      `LlmContextTurn {label, system_prompt, human_message, chat_history,
+      response}`, `LlmContextInfo {turns: list[LlmContextTurn],
+      mcp_tool_calls: list[McpToolCallDetail]}`. `ExplainabilityInfo` gains
+      `llm_context: LlmContextInfo | None` (null for single/multi-agentic-rag,
+      same established pattern as `temperature`/`latency_ms` already being
+      genai-rag-only).
+    - **Design:**
+      1. `response_generator.py::generate_answer()` renders the real prompt
+         via `RAG_PROMPT.format_messages(**inputs)` (or
+         `CONVERSATIONAL_FALLBACK_PROMPT` for the history-only path) right
+         before `chain.invoke()` - same inputs, so this is the exact
+         content actually sent, not a re-derived guess. Splits the
+         rendered `BaseMessage` list into `system_prompt`
+         (`SystemMessage.content`), `chat_history`
+         (`HumanMessage`/`AIMessage` pairs before the final turn, as
+         `{role, content}`), `human_message` (the final `HumanMessage
+         .content`). Returned as a new `"llm_context_turn"` key in
+         `generate_answer()`'s result dict - `None` for the zero-LLM-call
+         no-context path.
+      2. `mcp_tools.try_route_to_mcp()`'s returned dict gains
+         `"mcp_raw_result": mcp_result["content"]` (the raw MCP text
+         blocks, already computed locally but previously discarded after
+         being joined into `answer_text`) and `"mcp_arguments"`.
+      3. `pipeline.py::_answer_sub_question()` passes `llm_context_turn`
+         (labeled with the sub-question text) and, for an MCP-routed
+         sub-question, an `McpToolCallDetail` built from the two new keys
+         above, both up to `generate()`.
+      4. `generate()` aggregates every sub-result's turn/tool-call into
+         `LlmContextInfo.turns`/`.mcp_tool_calls` and attaches it to the
+         final result dict as `"llm_context"`.
+    - **User-visible behavior:** Explainability's new "LLM Context" panel
+      (genai-rag messages only) shows, per turn: the exact system prompt,
+      chat history sent, the human message, and the raw answer text: and
+      separately, any MCP tool call's tool name/arguments/raw result. Long
+      text scrolls inside its own bounded region (horizontal + vertical),
+      not by growing the whole modal.
+    - **Explicitly out of scope, flagged not hidden:** single-agentic-rag/
+      multi-agentic-rag (`null` for both, same as `temperature` today - a
+      real follow-up, not this phase). The Reviewer Agent's own merge-call
+      prompt (2+ sub-questions case) is NOT captured this phase - its turn
+      label says so explicitly rather than silently omitting the gap.
+      Tavily web search payload capture - genai-rag has no web-search tool,
+      so nothing to capture; multi-agentic-rag's web_search_agent is out of
+      scope with the rest of that pipeline.
+    - **Failure modes:** prompt rendering reuses the exact same inputs the
+      real LLM call gets - if `format_messages()` itself ever raised, the
+      real `chain.invoke()` call right after would raise the identical way,
+      so this adds no new failure mode.
+    - **Testing plan:** unit tests on `generate_answer()`'s new
+      `llm_context_turn` key (system prompt/chat history/human message
+      content matches what was actually templated in), `_answer_sub_question()`'s
+      MCP-tool-call capture, and `generate()`'s aggregation across 1 vs 2+
+      sub-questions. Contract snapshots regenerated (additive field only).
+    - **Out of scope:** per-request toggle to disable capture (always
+      computed - cheap, no extra LLM/network call).
+    - **Open questions:** none.
+  - **Built and verified:**
+    - `models/rag.py`: `ChatHistoryMessage`, `McpToolCallDetail`,
+      `LlmContextTurn`, `LlmContextInfo` added; `ExplainabilityInfo` gained
+      `llm_context`. `response_generator.py::generate_answer()` gained
+      `_render_llm_context_turn()`, wired into both the RAG path and the
+      conversational-fallback path - deliberately returns a plain dict,
+      not the new Pydantic models directly (`ai/` has never imported from
+      `models/` anywhere else in this codebase; kept that layering intact,
+      Pydantic wrapping stays at the route layer). `mcp_tools.try_route_to_mcp()`
+      gained `mcp_arguments`/`mcp_raw_result` on its return dict.
+      `pipeline.py`: both `_answer_sub_question()` branches and the
+      top-level MCP fast-path in `answer_query()` now build `llm_context`;
+      `generate()` aggregates per-sub-question turns (relabeled by
+      sub-question text when there's more than one) plus a flagged
+      placeholder turn for the Reviewer Agent's merge call, whose own
+      prompt isn't captured yet; the answer-cache-hit path explicitly
+      overwrites `llm_context` to `None` (it describes the original call
+      that populated the cache entry, not this one). `api/rag/
+      retrieve_document.py` wraps it into `LlmContextInfo` at the route.
+    - Frontend (`hrb_chatbot_ui`): `types.ts` gained the 4 matching
+      interfaces. `ExplainabilityModal.tsx` gained an "LLM Context" panel -
+      one block per turn (chat history/system prompt/human message/
+      response) plus one per MCP tool call (arguments/raw result), each
+      long-text block in its own `<pre>` with `overflow: auto` (both
+      axes) and a capped `max-height` so it scrolls independently instead
+      of growing the whole modal. `explainability-card` widened
+      720px→860px for the extra content. `tsc --noEmit`/`oxlint` clean.
+    - Tests: 4 new in `test_generator.py` (turn is `None` with no LLM
+      call, real rendered system/human content captured, chat-history
+      role/content pairs, the conversational-fallback path captured too).
+      Adding the two new keys to `try_route_to_mcp()`'s return broke 4
+      existing `test_pipeline.py` fakes that construct that dict by hand
+      (`KeyError: 'mcp_arguments'`) - caught by running the suite, not
+      assumed safe, all 4 fixed. 3 contract snapshots regenerated,
+      confirmed additive-only (`git diff --stat`: insertions only, zero
+      deletions, across all 3 files). Full suite: 446 passed, 6
+      deselected, no regressions.
+
+- [x] **Phase 133 — Real bug: Lambda indexing silently stuck at "downloading"
+  forever for any filename with a space (or other URL-encoded character).**
+  - **Spec:**
+    - **Context:** user reported real uploads (filenames with spaces -
+      "Global Data Privacy Statement_FY27.pdf" etc., unlike this
+      project's own underscore-named KB docs, which never triggered this)
+      stuck at status `downloading`, 0 chunks, for 3+ minutes, retried by
+      the local worker every ~2 minutes with only
+      `"Failed to process SQS message <id>"` logged - no detail. Root-
+      caused directly, not assumed: S3 `ObjectCreated` event notifications
+      URL-encode the object key (a space becomes `+`, other characters
+      percent-encoded) - confirmed live by downloading with the literal
+      encoded key (`Global+Data+Privacy+Statement_FY27.pdf`) and getting a
+      real `404`/`NoSuchKey`, then with the real key and getting a real
+      `200`. `_parse_s3_event()` has never decoded this. Calling
+      `_index_one()` directly with the correct key succeeds end to end in
+      ~12s (real chunking/embedding/indexing/metadata-extraction all run)
+      - confirming the bug is exactly and only the un-decoded key, nothing
+      about the handler's own indexing logic. This bug has existed since
+      Phase 88 - never caught because every manual/live test this project
+      ever ran used a filename with no space in it.
+    - **Compounding, separately real bug - the diagnosis took longer than
+      it should have because of this:** `_JsonFormatter.format()` only
+      serializes `record.getMessage()` - `logger.error(..., exc_info=True)`
+      a few lines away in the same file captures the real traceback, but
+      the formatter drops it on the floor before it ever reaches the log
+      line. Every past and future Lambda failure has been/would be just
+      as opaque as this one was.
+    - **Design:** `_parse_s3_event()` decodes the key with
+      `urllib.parse.unquote_plus()` (handles both `+`-for-space and
+      `%XX` percent-encoding, the standard decode for an S3 event
+      notification key - confirmed this is what AWS's own notification
+      payload actually uses, not guessed). `_JsonFormatter.format()` adds
+      `"exception": self.formatException(record.exc_info)` when
+      `record.exc_info` is set, so a future failure's real traceback
+      reaches the log line instead of just a one-line summary.
+    - **User-visible behavior:** any filename containing a space or other
+      URL-reserved character now indexes correctly via the S3 path, same
+      as the old synchronous path always handled them.
+    - **Failure modes:** none new - `unquote_plus()` on an already-plain
+      key (no encoded characters) is a no-op, so this can't regress a
+      filename that happened to work before.
+    - **Testing plan:** unit test `_parse_s3_event()` with a real
+      `+`-and-`%XX`-encoded key (matching S3's actual notification shape)
+      asserting the decoded key comes back with real spaces/special
+      characters restored. A live re-verification wasn't re-run against
+      production Lambda this phase (dev-only bug reproduction and fix,
+      same file deploys to both - the fix is unconditionally correct
+      either way, not environment-specific).
+    - **Out of scope:** redeploying the real AWS Lambda (`hrb-chatbot-
+      index-document`) with this fix - a manual `docker buildx build` +
+      `update-function-code` step, same as every other Lambda deploy this
+      project has done (Phase 89's own real bug: nothing auto-redeploys
+      it). Flagged as a required follow-up before this fix is live in
+      production, not done silently as part of this phase.
+    - **Open questions:** none.
+  - **Built and verified:**
+    - `_parse_s3_event()` now decodes the key with `unquote_plus()`;
+      `_JsonFormatter.format()` includes `record.exc_info`'s formatted
+      traceback when set. 4 new tests (2 for the decode - a `+`-for-space
+      case and a `%XX`-percent-encoded case, both asserting the exact
+      decoded key `download_file()` is called with; 2 for the formatter -
+      traceback present when `exc_info` is set, `"exception"` key absent
+      when it isn't). Full suite: 450 passed, 6 deselected, no
+      regressions.
+    - **Real, live re-verification - the 3 documents the user's own bug
+      report named, not synthetic data:** the local worker (killed and
+      restarted to pick up the fix) was still holding stale in-memory
+      code, so the 2 still-stuck documents were reprocessed directly by
+      calling the fixed `_index_one()` (same code path, same result a
+      redelivered SQS message would get) - both completed in ~5-8s each:
+      real chunking (57 and 24 chunks), real embedding, real Chroma
+      write, real metadata extraction. The 3rd had already succeeded
+      during root-cause diagnosis (that direct call is what confirmed the
+      bug in the first place). All 3 confirmed `indexed` via
+      `GET /documents/{id}` - no manual workaround left behind, no stuck
+      rows remaining.
+    - **The user's "this used to be async and parallel, now it's broken"
+      concern - checked directly, not dismissed:** `documents_service
+      .save_uploads()`'s own comment has always said "One at a time, not
+      in parallel" - the old synchronous endpoint was never parallel
+      either; it just blocked the whole HTTP request until every file
+      finished, so the UI never had anything to show mid-upload. What
+      actually changed is real per-file visibility (new, not a
+      regression) landing at the same time as two genuine bugs (CORS,
+      this phase's key-encoding one) that happened to make that new
+      visibility show a failure the old blocking UI would have hidden
+      until final timeout.
+    - **Not done this phase, flagged:** redeploying the real AWS Lambda
+      with this fix (see Out of scope above) - local dev/testing is
+      fixed and verified; production's Lambda still runs the old,
+      buggy code until that manual deploy happens.
+    - **Frontend (`hrb_chatbot_ui`), same pass - user-requested UI
+      cleanup alongside the bug report:** new `src/utils/documentStatus.ts`
+      - `statusLabel()` initially collapsed the raw interim statuses down
+      to 2 human labels ("Uploading"/"Processing"); **superseded directly
+      below in Phase 134's own frontend follow-up**, which reversed this
+      to show each real stage by name instead, per explicit follow-up
+      feedback. `DocumentsPage.tsx` gained an "Elapsed" column (clickable,
+      opens a small modal with real `created_at`/`last_indexed_at`/
+      `updated_at` timestamps via `toLocaleString()`) using a new
+      `formatElapsed()` helper - this part unchanged by the later pass.
+
+- [x] **Phase 134 — User-directed: finer-grained indexing status
+  (Parsing/Chunking/Embedding/Indexing, not just "chunking" covering both
+  parsing and chunking) and a failure's error_message names the stage it
+  failed at.**
+  - **Spec:**
+    - **Context:** `index_document()`'s own status sequence today is
+      `downloading` (Lambda handler) → `chunking` (set before PDF text
+      extraction even starts) → `embedding` → `indexed`/`failed` - no
+      separate "parsing" (PDF text extraction) or "indexing" (the actual
+      vector-store write, `write_chunks()`) status exists, and a failure
+      overwrites whatever status came before it, losing which stage it
+      actually failed in.
+    - **Data/API contracts:** no new fields - `status`/`error_message` are
+      already plain strings on `DocumentRecord`. `error_message` gains a
+      `"[<stage>] "` prefix on failure; frontend's existing `statusLabel()`
+      map gains two new keys.
+    - **Design:** `index_document()`: `update_status(document_id,
+      "parsing")` moved to right before `extract_text_from_pdf()` (was
+      mislabeled "chunking" at that point before this phase); a real
+      `update_status(document_id, "chunking")` added right before
+      `chunk_text_with_sections()` instead; `update_status(document_id,
+      "indexing")` added right before `write_chunks()`. The existing
+      `embedding` status and the terminal `indexed` (set inside
+      `write_chunks()`'s `record_successful_index()`) are unchanged.
+      Failure path (`_index_now()` in `documents_service.py`, and
+      `index_document_handler.py`'s own except block): read the
+      document's *current* status (the last stage it actually reached)
+      before overwriting it to `"failed"`, prefix it onto the real
+      exception text: `f"[{current_status}] {error}"`.
+    - **User-visible behavior:** Upload/Documents pages show
+      Downloading → Parsing → Chunking → Embedding → Indexing → Indexed,
+      one label per real stage. A failure shows e.g. "Error - Embedding"
+      instead of a bare "Failed" with no stage context.
+    - **Failure modes:** none new - reading current status before
+      overwriting it is one extra read, same resilience as every other
+      status transition (never raises, logged not re-raised if it does).
+    - **Testing plan:** unit tests on the new status sequence (asserting
+      `update_status` is called with each stage name in order, not just
+      the final one) and the stage-prefixed error message on a forced
+      failure at a known stage.
+    - **Out of scope:** retrying from the failed stage instead of from
+      scratch (today's behavior - a full re-index always starts over -
+      unchanged).
+    - **Open questions:** none.
+  - **Built and verified:** `index_document()`'s status sequence is now
+    `parsing` → `chunking` → `embedding` → `indexing` → `indexed`/`failed`.
+    Both failure sites (`documents_service._index_now()`,
+    `index_document_handler.py`'s except block) read the document's real
+    current status before overwriting it to `"failed"`, prefixing
+    `f"[{stage}] {error}"`. 3 new tests (the 4-stage sequence in order;
+    `_index_now()`'s stage prefix, plus a document-row-gone edge case;
+    the Lambda handler's own stage prefix, which caught a real detail -
+    `_index_one()` itself sets `"downloading"` for an existing row right
+    before calling `index_document()`, so a fake that fails immediately
+    correctly shows `"downloading"` as the last-reached stage, not
+    whatever status the test pre-seeded). 1 existing test's hardcoded
+    `["chunking", "embedding"]` assertion updated to the real 4-stage
+    sequence. Full suite: 453 passed, 6 deselected, no regressions.
+  - **Frontend follow-up, same day - direct response to the backend
+    status-granularity work above:** `documentStatus.ts`'s `statusLabel()`
+    rewritten to show every real stage by its own name (Downloading,
+    Parsing, Chunking, Embedding, Indexing, Indexed) instead of the
+    earlier collapsed "Processing" bucket - reversed per explicit
+    follow-up feedback once the backend actually had distinct stages to
+    show. A failure now reads "Error - <Stage>" (parses the `[stage]`
+    prefix Phase 134's backend half adds to `error_message`, falling back
+    to a bare stage label if a legacy message has no prefix). New CSS for
+    `.status-badge.status-parsing`/`.status-indexing` (same in-progress
+    blue + pulsing-dot treatment already used for the other active
+    stages). `UploadPage.tsx`'s batch upload switched from a sequential
+    `for` loop to `Promise.all()` - concurrent per-file presigned-upload/
+    S3-PUT/poll, by explicit request; flagged the real tradeoff this
+    reverses (RAG-ROADMAP.md Phase 88 - no Lambda reserved-concurrency
+    cap exists, so a large concurrent batch competes for the account's
+    shared pool) rather than silently dropping it. `tsc --noEmit`/
+    `oxlint` clean - no new backend work needed, this reuses Phase 134's
+    stage data as-is.
+
+- **Explainability modal restructure, same day, `hrb_chatbot_ui` only -
+  no backend change:** `ExplainabilityModal.tsx` reorganized into 3
+  native `<details>`/`<summary>` collapsible sections (no new state
+  management - the browser already handles independent expand/collapse
+  per section) - (1) "Metrics, Knowledge Sources & Eval Scores", open by
+  default, with Latency & Tokens + Eval Scores now visually nested inside
+  one new "Metrics" parent panel rather than sitting as two independent
+  panels; (2) "LLM Context", collapsed by default; (3) "KB Retrieved
+  Inputs (Vector DB)", collapsed by default - replaces the old bare
+  "Citations" list with (researched against how LangSmith/Langfuse
+  structure a retrieval trace - log the query, the retrieved chunks with
+  their scores/ids, and the metadata around them as its own step, not
+  folded into the generation step): the original user query (new
+  `ChatPage.tsx` lookup - scans backward from the AI message for the
+  nearest preceding `role: "user"` message, passed down as a new
+  `originalQuery` prop), the signed-in user's profile (`useIdentity()`,
+  called directly in the modal rather than threading a 4th prop),
+  retrieval metadata (vector_db/search_strategy/applied_filter, already
+  on `RetrievalInfo` but previously unused in this modal), and each
+  retrieved chunk numbered in rank order with its filename/chunk
+  index/score/document_id/full text. Per-chunk metadata beyond what's
+  already in `RetrievedChunk` (doc_category/department/etc.) is NOT
+  shown - that would need a new backend field, flagged as a real
+  follow-up, not done silently. `tsc --noEmit`/`oxlint` clean.
 2. `POST /rag/documents` with a real PDF from `resources/kb_docs/` → 200,
    document id returned, file in `data/uploads/`, SQLite row exists. **Done**,
    including the batch partial-success case.
@@ -9972,3 +10733,567 @@ Explicitly deferred to a later, separate wave - not part of the above:
    `ai/doc_processing/`, not a crash.
 4. `POST /rag/query` → same stubbed-but-clear behavior, naming
    `ai/rag_pipeline/`.
+
+- **Frontend-only follow-ups, same day, `hrb_chatbot_v2` backend unchanged:**
+  - `DocumentsPage.tsx`: multi-select checkboxes (header select-all +
+    per-row, pruned automatically when `documents` refreshes so a stale
+    selection can't outlive a deleted/no-longer-polled row) + a "Delete
+    selected" bulk action (loops `deleteDocumentById()` concurrently via
+    `Promise.all`, one confirm upfront naming every target file, partial
+    failures reported by filename without silently dropping the rows that
+    did succeed).
+  - `UploadPage.tsx`: file validation moved client-side and made visible -
+    `validateAndMergeFiles()` rejects non-PDF and >20MB files with a
+    reason shown per file (previously `isPdf()` silently dropped a
+    rejected file with zero feedback). The 20MB limit mirrors
+    `models/documents.py`'s real `MAX_FILE_SIZE_BYTES` exactly. Word
+    (.docx)/CSV explicitly NOT accepted yet - `ai/doc_processing/` only
+    has `extract_text_from_pdf()`, no extraction path for either format
+    exists server-side - widening the picker without that would let a
+    file through that then fails confusingly server-side instead of here.
+  - `ExplainabilityModal.tsx` restructured again per direct follow-up
+    feedback: one "Metrics" parent section (Knowledge Sources + Agent
+    Tasks + Latency & Tokens + Eval Scores, expanded by default) - Eval
+    Scores gained two honest lines instead of a fabricated F1 Score: the
+    real judge mechanism (hand-rolled LLM-as-judge prompts matching the
+    IK FDE cohort's own Module 5 demo - confirmed from that module's own
+    docstring, not DeepEval or any third-party library) and why F1 isn't
+    computed live (needs a known relevant-chunk set, which only exists
+    offline). "LLM Context" ("(what was actually sent)" removed from the
+    title) is collapsed by default, each turn now its own nested
+    collapsible labeled "Q1"/"Q2"/etc. showing Question/System Prompt/
+    Human Message/Response/"Response KB source" (the full retrieved set
+    when there's one turn, an honest "not tracked per-sub-question yet"
+    note otherwise). "Citations", collapsed by default, redesigned from
+    an always-expanded text list into click-to-reveal: each citation is a
+    button; clicking one reveals a detail grid (filename/document
+    ID/chunk index/score/retrieval metadata) plus the chunk's full text.
+    `tsc --noEmit`/`oxlint` clean throughout.
+- **MCP employee-data "mismatch" investigated, not a real data-sync bug:**
+  user's MCP server console log showed `get_leave_balance` failing with
+  "Employee not found with ID: E200," asking whether hrb_chatbot_v2's own
+  employee data is out of sync with hrb_lms_mcp's. Checked directly:
+  `E200` does not appear anywhere in `src/hrb_chatbot/` (a real grep
+  across the whole source tree - matches were only unrelated third-party
+  library code) - it was never a real identity in this project's own
+  `KNOWN_PERSONAS` roster (`common/known_personas.py`, Phase 106:
+  EMP051/EMP052/EMP053 only). `LoginPage.tsx`'s own validation would
+  reject "E200" outright today - the real explanation is
+  `IdentityContext.tsx` loads a previously-stored identity straight from
+  `localStorage` on mount with **no backend re-validation**, so a session
+  signed in before Phase 106's roster gate existed can keep presenting a
+  now-invalid identity indefinitely. Fix for the user: sign out and back
+  in with a real known persona - not a database-sync issue between
+  hrb_chatbot_v2 and hrb_lms_mcp. Real follow-up flagged, not done this
+  pass: re-validate a stored identity against the roster on app load, not
+  just at sign-in time.
+
+- [x] **Phase 135 — Real bug: re-chunking a document uploaded via the S3
+  path fails every time ("[Errno 22] Invalid argument") because
+  `extract_text_from_pdf()` is handed an `s3://` URI as if it were a local path.**
+  - **Spec:**
+    - **Context:** confirmed live, not guessed - `GET /documents/{id}`
+      for a real stuck document showed `file_path:
+      "s3://hrb-chatbot-kb-uploads-dev/<id>/AmazingBank_Sedgwick_Unpaid_Timeoff.pdf"`,
+      `status: "failed"`, `error_message: "[parsing] [Errno 22] Invalid
+      argument: 's3://...'"`. `rechunk_document()` (Phase 129, predates
+      the S3 upload switch) reads `existing["file_path"]` and passes it
+      straight to `_index_now()` → `index_document()` →
+      `extract_text_from_pdf()`, which calls `pypdf`/local file I/O on
+      whatever string it's given - never taught about `s3://` URIs,
+      because no document had one when Phase 129 was built. Every
+      document uploaded through the (now-default) presigned-upload path
+      has exactly this `file_path` shape, so re-chunking ANY of them
+      fails the same way, 100% reproducible, not intermittent.
+    - **Design:** new `download_for_reprocessing(file_path: str,
+      document_id: str, filename: str) -> str` in `s3_upload_client.py`
+      (same plain-function convention as `generate_presigned_upload_url`/
+      `delete_uploaded_object` already there) - a no-op returning
+      `file_path` unchanged for a local path, or for an `s3://` URI,
+      downloads the object to `UPLOAD_DIRECTORY/<document_id>/<filename>`
+      (the same local layout a synchronous upload already uses) and
+      returns that local path. `rechunk_document()` calls this once,
+      right after reading `existing["file_path"]`, before calling
+      `_index_now()` - the only call site with this bug today (`reindex_document()`
+      always writes a fresh local file of its own first, never reads the
+      old `file_path` at all, so it's unaffected).
+    - **User-visible behavior:** re-chunking a document uploaded via S3
+      works the same as one uploaded via the old synchronous path -
+      currently it fails for every S3-uploaded document, no exceptions.
+    - **Failure modes:** an S3 download failure (object deleted,
+      permissions) surfaces as a real error through the same
+      `_index_now()` try/except this bug's own error message came from -
+      already handled, nothing new needed.
+    - **Testing plan:** unit test `download_for_reprocessing()` with a
+      fake S3 client (no real AWS call) for both branches (local path
+      no-op, `s3://` URI downloaded); a `rechunk_document()` test
+      confirming it's called before `_index_now()` for an `s3://`
+      `file_path`.
+    - **Out of scope:** changing what `file_path` is stored as after a
+      rechunk (stays the original `s3://` URI - the local copy is a
+      scratch working file for this one operation, not a new source of
+      truth, matching how the Lambda handler's own downloads already work).
+    - **Open questions:** none.
+  - **Built and verified:** `download_for_reprocessing()` added to
+    `s3_upload_client.py`; `rechunk_document()` calls it before
+    `_index_now()`. 4 new tests (2 unit tests on the function itself -
+    local-path no-op, `s3://` URI downloaded to the right local path with
+    a fake S3 client; 2 route-level - the existing sync-upload rechunk
+    test still passes unchanged, a new test confirms an `s3://`
+    `file_path` is actually handed to `download_for_reprocessing()`
+    before indexing). Full suite: 456 passed, 6 deselected, no
+    regressions. **Live-verified against the user's own real stuck
+    document**, not just the test suite: called the fixed
+    `rechunk_document()` directly against
+    `AmazingBank_Sedgwick_Unpaid_Timeoff.pdf` (the exact document from the
+    bug report, `status: failed`, `error_message: "[parsing] [Errno 22]
+    Invalid argument: 's3://...'"`) - real S3 download, real
+    parsing/chunking/embedding/indexing, 43 chunks written, `status:
+    reindexed` returned. No stuck document left behind.
+
+- [x] **Phase 136 — User-directed: "Chat GenAI Workflow" - ad-hoc document
+  Q&A attached directly in the chat composer, deliberately NOT reusing the
+  S3/vector-store architecture.**
+  - **Spec:** full design doc, architecture diagram, and every decision's
+    rationale live in `docs/dev-reference/genai_chat_workflow.md` (+ its
+    HTML companion, `genai-chat-workflow-architecture.html`), written
+    before implementation per explicit instruction - not duplicated here.
+    Short version: user attaches up to 3 files (PDF/Word/CSV) + a question
+    in one multipart request; a new ReAct agent (LLM tool calls only - no
+    vector DB/MCP/web-search tools exist in it) reads the attached files
+    via a `ReadDocument` tool and answers; nothing is persisted (no S3
+    object, no document row, no vector write); the pipeline dropdown stays
+    on "GenAI RAG"; an optional `SendEmailWithAnswer` tool (AWS SES via
+    `boto3`, already a dependency) emails the answer.
+    - **Decisions made without waiting for approval** (full rationale in
+      the `.md`): DOCX extraction via stdlib `zipfile`+`ElementTree`
+      instead of adding `python-docx` (avoids a new-library approval
+      while the user was away - flagged as a future upgrade, not a
+      permanent choice); open to all 3 roles, not HR_SUPPORT-only;
+      `check_input()`/`check_output()` reused as-is; ~12k char/file
+      truncation cap; stateless across turns (re-attach each message).
+    - **Data/API contracts:** new `POST /v1/adhoc-document-chat/query`
+      (multipart: `user_profile` JSON field, `question`, optional
+      `recipient_email`, up to 3 `files`). New, deliberately small
+      response shape - no `vector_db`/`search_strategy`/citations fields.
+      See the `.md` for the exact shape.
+    - **Out of scope this phase:** persisting ad-hoc conversations across
+      a reload; a general-purpose Word parser (tables/headers/footers);
+      any file type beyond PDF/DOCX/CSV; a stricter rate limit specific
+      to this endpoint (reuses the existing one as-is).
+    - **Open questions:** none blocking - SES needs a real one-time AWS
+      console step (verifying a sending identity - new accounts start in
+      sandbox mode) before email actually sends to an arbitrary
+      recipient; flagged in the design doc, not a code decision.
+  - **Backend built and verified:**
+    - New: `ai/doc_processing/adhoc_extraction.py` (PDF/DOCX/CSV
+      extraction, 12k-char/file truncation), `common/clients/email_client/
+      ses_client.py` (plain-function SES wrapper), `ai/agents/
+      workflow_agents/adhoc_document_agent.py` (the ReAct loop, 2 tools),
+      `models/adhoc_chat.py`, `api/adhoc_chat/adhoc_document_chat.py` -
+      `POST /v1/adhoc-document-chat/query`, registered in `main.py`.
+    - **A real Windows-only bug found and fixed during live
+      verification, not assumed safe:** `tempfile.NamedTemporaryFile
+      (delete=True)` holds an exclusive lock on Windows while open - pypdf's
+      own `open(file_path, "rb")` call right after failed with
+      `PermissionError` every time. Fixed with `delete=False` + an explicit
+      `os.remove()` in a `finally` block (close the handle before pypdf
+      opens it, delete only after pypdf is done).
+    - **A real security finding, fixed, not suppressed blind:** bandit
+      (`B314`, MEDIUM - would have blocked CI) flagged
+      `xml.etree.ElementTree.parse()`/`fromstring()` on this module's DOCX
+      path as an XXE/entity-expansion risk - correctly, since this content
+      is genuinely untrusted (any signed-in role can upload an arbitrary
+      `.docx`). Fixed with a zero-dependency guard
+      (`_reject_xml_entity_declarations()` - rejects any `document.xml`
+      containing a `DOCTYPE`/`ENTITY` declaration, which a real Word
+      document never legitimately has) rather than adding `defusedxml`
+      (a new-library approval the user wasn't available to give), with a
+      documented `# nosec B314` on the remaining call once the real
+      mitigation was in place right above it - not a blind suppression.
+      New test proves a crafted DOCTYPE payload is rejected, not parsed.
+    - **Full live verification, real OpenAI calls, before writing any
+      fakes:** a real PDF question ("How many weeks of parental leave?")
+      correctly called `ReadDocument`, read the real file, answered "16
+      weeks" (matching the source document); a real CSV question answered
+      correctly and the **output guardrail genuinely masked a name**
+      ("Bob" → "`<PERSON>`") - confirming it's actually wired in, not just
+      present in the code. Invalid file type and >3-files both correctly
+      rejected with `422`/`INVALID_FILE_TYPE` before reaching the agent.
+    - Tests (all faked - no real API calls, matching this project's
+      convention): 5 extraction, 3 SES client, 7 agent loop, 8 route-level
+      (including all 3 roles allowed, malformed JSON → 422 not 500,
+      file-size limit). Full suite: 479 passed, 6 deselected, 0 new
+      bandit findings project-wide beyond the one fixed above.
+  - **Frontend built, verified via `tsc --noEmit`/`oxlint`/`npm run build`
+    (no browser automation tool available this session - real interactive
+    browser testing not performed, flagged rather than assumed):**
+    `ChatPage.tsx` gained an attach-file control (paperclip icon) in the
+    composer - up to 3 files, `.pdf`/`.docx`/`.csv`, 10MB each, mirroring
+    `models/adhoc_chat.py`'s real limits exactly, with visible rejections
+    (no silent drops). Attaching a file makes `handleSend()` call the new
+    `askAdhocDocumentChat()` instead of the mode-based branching,
+    regardless of which pipeline is selected - the dropdown's displayed
+    value is untouched, per the explicit "stays on GenAI RAG" instruction.
+    An optional "email the answer to" field threads `recipient_email`
+    through. New `ChatMessage.adhoc` field + a separate `AdhocExplainability`
+    component in `ExplainabilityModal.tsx` - files read, latency/tokens,
+    email-sent confirmation; none of the vector-store-oriented sections
+    (Knowledge Sources/Citations/LLM Context chunk attribution) render for
+    an ad-hoc message, since none of that applies.
+  - **Deployment status:** backend committed + pushed to
+    `feature-hrb-chatbot-subdomain`, included in open PR #21 into
+    `develop` - **not yet live in production** (the PR merge itself was
+    blocked by a safety classifier, needs the user's own approval/click,
+    same as Phases 127-135 in that same PR). Frontend **is** live
+    (`hrb-chatbot-ui.rvsree.dev`, deployed same as the rest of this
+    session's frontend work) - deployed anyway despite the backend not
+    being live yet, a deliberate call: attaching a file is a new, opt-in
+    code path, so deploying the frontend early doesn't touch or risk any
+    existing functionality (genai-rag/single-agentic-rag/multi-agentic-rag
+    chat all work completely unchanged); a user who tries the new attach-
+    file feature before the backend PR is merged will see a real,
+    handled error (the existing `ApiRequestError`/catch path), not a
+    silent failure or a broken page. **Before the email tool can actually
+    send anything in production**, two real AWS steps remain, neither
+    done this session: adding `SES_SENDER_EMAIL` as a new App Runner
+    environment variable, and verifying that sender identity in the SES
+    console (sandbox mode default) - flagged, not done silently.
+
+- [x] **Phase 137 — User-reported bug: 3 documents permanently stuck
+  "Downloading" in production AWS; local RAG retrieval erroring; adhoc
+  document chat 404s in AWS while working locally.**
+  - **Spec:**
+    - **Root cause 1 (confirmed via CloudWatch, not assumed):** the
+      `hrb-chatbot-index-document` Lambda's cold-start import chain
+      (chromadb + llama-index + langchain/langgraph + nemoguardrails/
+      presidio/spaCy) was landing at 9999-10000ms - AWS hard-caps the
+      Lambda INIT phase at 10 seconds regardless of the function's own
+      configured `Timeout`, not adjustable. All 3 stuck documents'
+      `INIT_REPORT` lines show `Status: timeout` at exactly that boundary.
+      SQS retried 3x then parked all 3 in `hrb-chatbot-ingest-dlq`.
+      **Fix:** bumped the function's memory 1024MB -> 3008MB (proportionally
+      more CPU, applied live via `update-function-configuration`), then
+      redrove the 3 DLQ messages back onto the main queue via
+      `sqs:StartMessageMoveTask`.
+    - **Root cause 2 (confirmed via `git log` + `aws apprunner
+      describe-service`):** the production App Runner service's deployed
+      image (`hrb-chatbot:latest`) was last updated 2026-09-07 - over a
+      month before Phases 127-136 were committed. None of that work,
+      including the entire `/v1/adhoc-document-chat/query` route added in
+      Phase 136, has ever actually been deployed to the backend App Runner
+      service, despite PR #21 existing and the Lambda/`hrb_lms_mcp` having
+      been redeployed separately. This is why the adhoc-chat composer
+      produces a real 404 in the hosted UI while working locally - the
+      route genuinely does not exist in the running container. **Fix:**
+      rebuild the Docker image from current `feature-hrb-chatbot-subdomain`
+      HEAD, push to ECR, trigger a fresh App Runner deployment.
+    - **Root cause 3, a real latent bug found during this investigation,
+      not previously known (see `common/clients/db_client/db_gateway.py`):**
+      `vector_store(provider)`/`metadata_store(provider)` let a per-request
+      value override the environment's configured backend down to local
+      `chromadb`/`sqlite` - which are per-instance local-disk stores, never
+      shared across App Runner's multiple instances and never reachable by
+      the separate Lambda ingestion worker at all. In production this is
+      never a legitimate choice, only a footgun (a request or default that
+      resolves to chromadb/sqlite there silently reads/writes data nothing
+      else can see). **Fix:** add `get_app_environment()` to `settings.py`;
+      `db_gateway.py`'s two dispatch methods raise a clear, typed error
+      instead of returning the local client when
+      `APP_ENVIRONMENT=="production"` and the resolved provider is
+      CHROMADB/SQLITE. Local/dev/test behavior is unchanged (still defaults
+      to chromadb/sqlite there, matching this project's whole local-first
+      testing convention). New `error_codes.LOCAL_STORE_DISABLED_IN_PRODUCTION`.
+    - **Root cause 4, found chasing why `/health` reported chromadb/sqlite
+      despite correct production env vars - a real bug, not an artifact of
+      the stale image:** `api/dependencies.py`'s `VECTOR_PROVIDER_QUERY`/
+      `METADATA_PROVIDER_QUERY` hardcode `default=VectorDB.CHROMADB`/
+      `MetadataStore.SQLITE` with descriptions literally claiming "(the
+      active store)" - stale from whenever chromadb/sqlite genuinely were
+      the only defaults, never updated once production switched to
+      pinecone/postgres via env vars. A bare `GET /health` (what any real
+      uptime monitor calls) has therefore always checked the *wrong*
+      backend in production - validating a store nothing reads or writes,
+      while never checking the one that matters, unless a caller remembers
+      to pass `?vector_provider=pinecone&metadata_provider=postgres`
+      explicitly every time. **Fix:** both defaults now resolve from
+      `get_active_vector_db()`/the `RAG_METADATA_STORE` setting at import
+      time (same source of truth every other dispatch point already uses),
+      so a bare `/health` call reflects whatever is actually active per
+      environment.
+    - **Out of scope:** a general audit of every other possible AWS/local
+      config drift - flagged as a standing risk (an App Runner image
+      silently going stale again, as happened here) rather than solved
+      structurally in this phase.
+  - **Built and verified (real AWS actions, not a local-only phase):**
+    Lambda memory 1024MB -> 3008MB (live, confirmed `LastUpdateStatus:
+    Successful`); 3 DLQ messages redriven via `sqs:StartMessageMoveTask`.
+    **A second real bug found mid-fix:** the first attempt at rebuilding
+    both container images reported exit code 0 but never actually ran -
+    Docker Desktop wasn't running locally, and the build command was
+    piped through `tail`, which silently swallowed the real (non-zero)
+    `docker buildx build` failure behind `tail`'s own successful exit
+    code. Caught by checking the ECR image's actual `imagePushedAt`
+    timestamp after the "successful" build instead of trusting the exit
+    code - it hadn't moved. Started Docker Desktop, rebuilt both images
+    for real (confirmed via new digests + fresh push timestamps), pushed
+    to ECR, redeployed both App Runner (`start-deployment`) and the
+    Lambda (`update-function-code`). **Live verification, no fakes:**
+    `GET /health` on the hosted backend now reports `pinecone`/`postgres`
+    (previously `chromadb`/`sqlite` despite correct env vars - Root cause
+    4's fix confirmed live); `POST /v1/adhoc-document-chat/query` against
+    the hosted backend with a real PDF returned a real, correctly-grounded
+    answer (previously a 404); all 3 originally-stuck documents manually
+    re-invoked through the rebuilt Lambda and confirmed `"status":
+    "indexed"` via the real `/documents` list endpoint (9/9 documents
+    indexed, 0 stuck) - the stale-image root cause also explains why their
+    exception text was never visible in CloudWatch despite `exc_info=True`
+    being correctly set in the source the whole time.
+
+- [x] **Phase 138 — User-directed: content-safety/compliance guardrails on
+  ad-hoc document chat uploads, and a real pre-send exfiltration gap found
+  while scoping it.**
+  - **Spec:**
+    - **Problem 1:** Phase 136's `/v1/adhoc-document-chat/query` runs
+      `check_input()` on the typed question only - the uploaded files'
+      extracted text goes straight into the agent's context with zero
+      content-safety screening, unlike this project's position on every
+      other untrusted-input path.
+    - **Problem 2, a real security gap found reading `adhoc_document_agent.py`
+      while scoping Problem 1, not something the user reported directly:**
+      the `SendEmailWithAnswer` tool calls `send_email()` with the agent's
+      raw generated text immediately, inside the tool-calling loop. The
+      route's own `check_output()` call only happens *after* `run_agent()`
+      returns, on the final HTTP response - meaning an email can already be
+      sent, unmasked, before any output guardrail ever sees it. A user
+      could upload a document containing PII and ask the agent to email a
+      summary to an arbitrary address, and the existing PII-masking rail
+      would never get a chance to run on that outbound email body at all.
+    - **Approach (both fixes reuse the existing, already-approved NeMo
+      Guardrails pipeline - no new library):**
+      1. In `api/adhoc_chat/adhoc_document_chat.py`, after extracting each
+         file's text and before building `file_texts`, run it through the
+         same `check_input()` used for the question. A
+         `GuardrailBlockedError` on any file rejects the whole request with
+         422/`INPUT_GUARDRAIL_BLOCKED` (reusing the existing code, not a new
+         one), naming which file triggered it. The masked/sanitized text
+         `check_input()` returns is what actually goes into `file_texts`,
+         same precedent as the question path.
+      2. In `ai/agents/workflow_agents/adhoc_document_agent.py`'s
+         `SendEmailWithAnswer` branch, `await check_output(question,
+         answer_text)` and send *that* result, never the raw tool-call
+         argument. `run_agent()` already has `question` in scope - no new
+         parameter needed.
+    - **Honest scope note:** this reuses NeMo Guardrails' existing
+      jailbreak/injection/PII-masking rail categories - it is not a
+      bespoke "legal risk" or "compliance document" classifier. Framed that
+      way to the user rather than overclaiming broader coverage.
+    - **Out of scope:** the equivalent gap on the main S3/KB document
+      upload pipeline (`ingest_document.py`) - flagged previously as
+      needing its own scoping, not re-opened here since this phase is
+      specifically about the ad-hoc chat path the user is currently
+      testing. A `recipient_email` allowlist/domain restriction - not
+      requested, would need a product decision on what's allowed.
+  - **Built and verified:** both fixes implemented as specced. New tests:
+    a file whose extracted text trips `check_input()` is rejected 422/
+    `INPUT_GUARDRAIL_BLOCKED` naming the file; the `SendEmailWithAnswer`
+    tool test now asserts the text actually passed to `send_email()` is
+    the `check_output()`-masked version, not the agent's raw tool-call
+    argument (a fake masking function swaps a literal SSN for `<SSN>` and
+    the test asserts the captured email body reflects that, not the
+    original). Full suite: 487 passed, 6 deselected, 0 regressions.
+    Bandit: 0 new findings (2 pre-existing, unrelated findings in untouched
+    files - flagged, not fixed this phase). Deployed to production as part
+    of this phase's combined redeploy (see Phase 137's own build/deploy
+    note - same two images).
+
+- [ ] **Phase 139 — User-reported: ad-hoc chat's attached-files panel
+  overlapping the response area; bulk document delete feels synchronous
+  (10-15s UI block) despite already using `Promise.all` on the frontend.**
+  - **Spec:**
+    - **Problem 1:** `ChatPage.tsx`'s adhoc attached-files panel
+      (file list + email field + rejections) renders permanently expanded
+      with no way to collapse it, so 3 attached files + the email field
+      can grow tall enough to crowd the response area directly above it -
+      exactly what the user's screenshot shows. **Fix:** wrap it in a
+      native `<details>/<summary>`, same pattern `ExplainabilityModal.tsx`'s
+      `CollapsibleSection` already established (not duplicating that
+      component - it's local to that file - just reusing the same
+      `<details>` + `.explainability-section` CSS classes for visual
+      consistency). Defaults to collapsed (closed) specifically because
+      this is the UI being complained about for taking up too much space;
+      the summary line always shows the file count so it's clear files are
+      attached even collapsed.
+    - **Problem 2, a real backend bug, not a frontend one:** the frontend's
+      `handleBulkDelete()` already fires every delete via `Promise.all` -
+      genuinely concurrent from the browser's side. The actual
+      serialization is server-side: `documents_service.py::delete_document()`
+      calls three blocking, synchronous SDK calls directly inside an
+      `async def` with no `asyncio.to_thread()` wrapper - `PineconeClient.
+      delete()`/`ChromaDBClient.delete()` (plain `def`, not `async def`)
+      and `delete_uploaded_object()` (a synchronous `boto3` S3 call). Each
+      one blocks the single asyncio event loop for its full network
+      round-trip, so N concurrent HTTP delete requests still execute one
+      at a time server-side regardless of the frontend's concurrency -
+      this is the actual 10-15s. (`answer_cache().clear_all()` is already
+      genuinely async/non-blocking via `redis.asyncio`, so it doesn't
+      contribute to this - flagged as separately wasteful, doing a full
+      cache scan once per document instead of once per batch, but not a
+      blocking-event-loop bug like the other two.) **Fix:** wrap the
+      Pinecone/Chroma `.delete()` call and `delete_uploaded_object()` in
+      `asyncio.to_thread()` - same established pattern already used in
+      `conversation_store.py`/`feedback_store.py`/`mcp_registry_client.py`
+      for exactly this reason, not a new pattern invented here.
+    - **Out of scope:** de-duplicating the N redundant `clear_all()` calls
+      across one bulk-delete batch into a single call - flagged as a minor
+      efficiency note, not the reported symptom (it doesn't block the
+      event loop, so it doesn't explain the 10-15s). Any other document
+      route's sync-call-in-async pattern beyond `delete_document()` -
+      not audited here, scoped to the reported symptom only.
+
+- [x] **Phase 140 — User-reported: conditional attach-icon visibility,
+  two real caching bugs found investigating a wrong-answer report, and
+  Explainability clarity/consistency fixes.**
+  - **Spec:**
+    - **Problem 1 (real bug, confirmed via live testing):** a user-reported
+      wrong answer ("check the My Rewards Portal" instead of a real PTO
+      balance) for `single-agentic-rag` was investigated by running the
+      exact same query against this backend twice, live - both times the
+      agent correctly called `GetLeaveBalance` and `served_from_cache` was
+      `false`. This means the reported bad answer most likely came from a
+      **stale cache entry written by an earlier, different run** - and
+      reading `orchestration_agent.py:217` confirms the actual bug that
+      makes this possible: `cache_eligible = not any(call["tool_name"] in
+      LIVE_DATA_TOOLS for call in result["tools_used"])` only looks at
+      which tools the LLM *actually* called that one time, not at whether
+      the query *should* require live data. If the LLM ever
+      non-deterministically answers a leave-balance/history question
+      without calling the live-data tool (an LLM mistake, not impossible),
+      that wrong answer passes this check and gets cached for
+      `DEFAULT_TTL_SECONDS` (6h) - served to every future identical query
+      with zero chance for the agent to get it right, since the cache
+      short-circuits before the agent ever runs again. **Fix:** also gate
+      `cache_eligible` on the same keyword heuristic the codebase already
+      uses for this exact purpose elsewhere -
+      `mcp_tools.is_leave_balance_query()`/`is_leave_history_query()`
+      (already used by `lms_ops_agent.py` for multi-agentic-rag's own live-
+      data routing, not a new heuristic invented here) - so a query that
+      *looks* like it's asking for personal leave data is never cached
+      regardless of which tool the LLM happened to call.
+    - **Problem 2, a related but distinct bug found auditing for the same
+      pattern in genai-rag (`pipeline.py`):** the top-level
+      `try_route_to_mcp()` check (`pipeline.py:150`) is safe - it's a
+      deterministic keyword match re-evaluated on every single call, never
+      cached, so it can't go stale. But genai-rag's **decomposition** path
+      has no such protection: `_answer_sub_question()` calls
+      `try_route_to_mcp()` per sub-question too, and a correctly-routed
+      live MCP answer (e.g. a real PTO balance) for one sub-question of a
+      multi-part query still flows into the overall merged result, which
+      the unconditional `await
+      get_db_gateway().answer_cache().set(cache_key, checked_query,
+      result)` at `pipeline.py:384` caches **regardless of whether any
+      sub-question used live MCP data** - baking a point-in-time balance
+      number into a 6-hour cache entry even when the MCP call was
+      correct. **Fix:** add the same `cache_eligible` gate
+      `orchestration_agent.py` already has (`result["tools_used"]` is
+      already populated with each sub-question's MCP tool call, if any -
+      no new tracking needed) before the write at line 384.
+    - **Problem 3:** `ChatPage.tsx`'s paperclip attach-file control is
+      visible regardless of which pipeline is selected in the dropdown,
+      even though ad-hoc document chat only makes sense for (and only
+      ever gets wired to) "GenAI RAG" mode. **Fix:** only render the
+      attach control when `mode === "genai-rag"`.
+    - **Problem 4, a real copy bug, not a logic bug:** the Latency &
+      Tokens panel's hardcoded "Tokens: n/a (**no LLM call this time**)"
+      is misleading for single/multi-agentic-rag, which show a real
+      nonzero `llm_call_count` alongside it - `token_usage` is `null`
+      there because per-agent token capture isn't built yet (a real,
+      already-logged `BACKLOG.md` gap), not because no LLM call happened.
+      **Fix:** branch the copy on `llm_call_count` - "n/a (no LLM call
+      made)" only when it's actually 0, else "not tracked per-agent yet"
+      when calls did happen but `token_usage` is still null.
+    - **Problem 5:** the "reviewer merge (prompt capture not yet built for
+      this step)" LLM Context label (`pipeline.py:324`) is an internal
+      engineering TODO note leaking into user-facing UI, not an
+      explanation a user can act on. It's real and logical - created only
+      when `decompose()` splits a query into 2+ sub-questions
+      (`pipeline.py:311`), where `reviewer_agent.review()` makes a genuine
+      extra LLM call to merge the sub-answers into one coherent response
+      (`reviewer_agent.py:42`) - but the label doesn't say any of that.
+      **Fix:** relabel to something a user can understand on its own
+      ("Merging N sub-answers into one response") and keep the technical
+      "prompt capture not yet built" detail as a secondary, clearly-
+      internal note rather than the whole label.
+    - **Problem 6:** eval (judge) LLM calls are real and already separate
+      from answer-generation calls in every pipeline (`_score_live_answer`
+      makes exactly 2 calls - groundedness + completeness - confirmed by
+      reading `golden_dataset_harness.py`, not DeepEval, matching the IK
+      FDE Module 5 pattern already documented in the UI), but today's
+      single `llm_call_count` number doesn't separate them from
+      generation/decomposition calls. **Fix:** add an explicit
+      `eval_llm_call_count` (0 or 2, derived from whether `eval_scores` is
+      populated - deterministic, no new tracking needed) to the response
+      in all 3 pipelines, and for genai-rag specifically a
+      `decomposition_llm_call_count` (0 or 1 - `decompose()` always runs
+      exactly once per call). Frontend shows a breakdown next to the
+      existing total: "LLM calls: 5 (answer: 2, eval: 2, decompose: 1)" -
+      omitting the decompose term for single/multi-agentic-rag, which
+      have no decomposition step.
+    - **Out of scope:** a full redesign of the answer-cache's correctness
+      model beyond these two confirmed gaps - not auditing every other
+      cache-eligibility path in the codebase speculatively. Per-domain-
+      agent real token capture for multi-agentic-rag (the actual
+      `BACKLOG.md`-logged gap Problem 4 only relabels around, doesn't
+      solve) - a separate, larger phase touching all 7 agent files, not
+      started here.
+  - **Built and verified:**
+    - Problems 1/2 (caching): `orchestration_agent.py` and `pipeline.py`
+      fixed as specced. New tests prove it with real call-count assertions
+      (`test_a_leave_balance_question_answered_without_the_tool_is_still_
+      never_cached`, `test_a_compound_kb_and_mcp_answer_is_never_cached`),
+      plus **live verification against the running local backend** (not
+      just fakes): the exact reported query run twice back-to-back both
+      times correctly called `GetLeaveBalance` with `served_from_cache:
+      false`; a pure-KB query cached normally on the 2nd identical call
+      (`served_from_cache: true`, `llm_call_count: 0` - unaffected by this
+      phase); the compound decomposition+MCP query run twice both times
+      showed `served_from_cache: false` with a real fresh
+      `get_leave_history` call each time - confirming the fix holds
+      end-to-end, not just against test fakes.
+    - Problem 3: `ChatPage.tsx`'s attach control now renders only when
+      `selectedMode === "genai-rag"`; switching away from GenAI RAG also
+      clears any already-attached files via the existing `clearAdhocFiles`.
+    - Problem 4: `ExplainabilityModal.tsx`'s Tokens line now reads "not
+      tracked per-agent yet" when `llm_call_count > 0` but `token_usage`
+      is null, vs. "no LLM call made" only when `llm_call_count` is
+      actually 0.
+    - Problem 5: relabeled to `f"Merging {len(sub_results)} sub-answers
+      into one response"` (`pipeline.py`); frontend badges this turn
+      "Merge" instead of "Q{n}", skips the (inapplicable) "Question:" and
+      "Response KB source:" blocks for it, and replaces the old fragile
+      `turn.label.includes("not yet built")` string-match with an explicit
+      `isMergeTurn` check plus a real explanatory sentence.
+    - Problem 6: `llmCallsBreakdownLabel()` (new, `ExplainabilityModal.tsx`)
+      derives the answer/eval/decompose split entirely from fields already
+      in the response (`llm_context !== null` as the "fresh genai-rag
+      call" signal, `eval_scores` presence for eval calls) - no backend
+      field needed, confirmed by tracing the eval mechanism first: exactly
+      2 hand-rolled LLM-as-judge calls per fresh query
+      (`golden_dataset_harness.py` - not DeepEval, matches the existing UI
+      copy), and genai-rag's `decompose()` always makes exactly 1 call
+      per fresh (non-cached, non-MCP-fast-path) query.
+    - Full suite: 490 passed, 6 deselected, 0 regressions. Bandit: 0 new
+      findings (same 2 pre-existing, untouched-file findings as before).
+      Frontend: clean `tsc -b && vite build`.
+    - **Investigated, not changed (research/analysis only, reported
+      directly to the user, not written here):** whether multi-agentic-
+      rag's KB retrieval is equivalent to genai-rag's (confirmed: same
+      `retrieve_chunks()`/same persistent Pinecone KB/same citation shape,
+      but a separately-keyed cache and a separate, parallel MCP-routing
+      implementation - not literal reuse); whether any dynamic/automatic
+      routing exists between the 3 top-level pipeline modes (confirmed:
+      none - 100% a manual per-request client choice today); real-world
+      production pattern for this (web research: a server-side router
+      escalating simple queries to a fixed pipeline and complex/multi-hop
+      ones to an agent loop is the common pattern, not a user-facing mode
+      picker - this project has no such router).
